@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { authenticateUser } from "@/lib/db/users";
 import { recordActivity } from "@/lib/db/activity";
 import { loginSchema } from "@/lib/db/validators";
-import { applyAuthCookies, issueTokens } from "@/lib/auth/session";
+import { applyAuthCookies, authConfigErrorResponse, issueTokens } from "@/lib/auth/session";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 export async function POST(request: Request) {
@@ -20,13 +20,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: result.error }, { status: result.status });
     }
     const user = result.user;
-    await recordActivity({
-      actorUserId: user.id,
-      action: "auth.login",
-      entityType: "user",
-      entityId: user.id,
-      summary: `${user.name} signed in as ${user.role}`,
-    });
+    // Audit logging is best-effort: a failed activity write must never block a
+    // sign-in that has already been authenticated.
+    try {
+      await recordActivity({
+        actorUserId: user.id,
+        action: "auth.login",
+        entityType: "user",
+        entityId: user.id,
+        summary: `${user.name} signed in as ${user.role}`,
+      });
+    } catch (activityError) {
+      console.error("[POST /api/auth/login] activity log write failed", activityError);
+    }
     const tokens = await issueTokens({
       sub: user.id,
       email: user.email,
@@ -40,6 +46,11 @@ export async function POST(request: Request) {
     });
     return applyAuthCookies(res, tokens);
   } catch (error) {
+    const misconfigured = authConfigErrorResponse(error);
+    if (misconfigured) {
+      console.error("[POST /api/auth/login] auth misconfigured", error);
+      return misconfigured;
+    }
     console.error("[POST /api/auth/login]", error);
     return NextResponse.json({ error: "Login failed." }, { status: 500 });
   }

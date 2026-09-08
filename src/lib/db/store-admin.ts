@@ -1,7 +1,8 @@
 import { ensureLocationPricingSchema, mapLocationPricing } from "@/lib/db/location-pricing";
+import { ensureInventoryVisibilityColumn } from "@/lib/db/inventory-visibility";
 import { DEFAULT_FULFILLMENT_PRICING } from "@/lib/fulfillment-pricing";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
-import { ensureColumn } from "@/lib/db/ensure-column";
+import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import { mapEvent, mapLocation } from "@/lib/db/mappers";
 import { recordActivity } from "@/lib/db/activity";
 import { hasPermission } from "@/lib/auth/permissions";
@@ -21,7 +22,7 @@ let eventSchemaReady = false;
 /** Ensures events.active exists for older databases without a full migrate. */
 export async function ensureEventSchema() {
   if (!isDbConfigured() || eventSchemaReady) return;
-  await ensureColumn("events", "active", "BOOLEAN NOT NULL DEFAULT true");
+  await addColumnIfMissing("events", "active", "BOOLEAN NOT NULL DEFAULT true");
   eventSchemaReady = true;
 }
 
@@ -106,6 +107,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
   }
   if (!isDbConfigured()) return { error: "Database is not configured.", status: 503 as const };
   await ensureLocationPricingSchema();
+  await ensureInventoryVisibilityColumn();
 
   const shortName = input.shortName.trim();
   const name = input.name.trim() || `Sam's Discount Liquor — ${shortName}`;
@@ -198,6 +200,7 @@ export async function updateStoreLocation(
   }
   if (!isDbConfigured()) return { error: "Database is not configured.", status: 503 as const };
   await ensureLocationPricingSchema();
+  await ensureInventoryVisibilityColumn();
   const existing = await prisma.location.findUnique({ where: { id: locationId } });
   if (!existing) return { error: "Location not found.", status: 404 as const };
 

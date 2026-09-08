@@ -2,31 +2,33 @@ import type { DeliveryAddress, DeliveryStatus, Driver, Order } from "@/types";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { drivers as seedDrivers } from "@/data/drivers";
 import { recordActivity } from "@/lib/db/activity";
-import { ensureColumn } from "@/lib/db/ensure-column";
 import { accessibleLocations, hasAllLocationAccess } from "@/lib/auth/location-access";
+import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import type { UserProfile } from "@/types";
 
 let ready = false;
 
 export async function ensureDeliverySchema() {
   if (!isDbConfigured() || ready) return;
+  // MySQL cannot index a TEXT primary key without a prefix length, so ids are
+  // VARCHAR(191) here to match what Prisma's migration creates.
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS drivers (
-      id VARCHAR(191) PRIMARY KEY,
-      name TEXT NOT NULL,
-      phone TEXT NOT NULL,
-      email TEXT,
-      vehicle TEXT NOT NULL,
+      id VARCHAR(191) NOT NULL PRIMARY KEY,
+      name VARCHAR(191) NOT NULL,
+      phone VARCHAR(191) NOT NULL,
+      email VARCHAR(191),
+      vehicle VARCHAR(191) NOT NULL,
       location_id VARCHAR(191) NOT NULL,
       status VARCHAR(191) NOT NULL DEFAULT 'available',
       active BOOLEAN NOT NULL DEFAULT true,
-      photo_url TEXT
-    )
+      photo_url VARCHAR(512)
+    ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
-  await ensureColumn("orders", "driver_id", "VARCHAR(191) NULL");
-  await ensureColumn("orders", "delivery_status", "VARCHAR(191) NULL");
-  await ensureColumn("orders", "delivery_phone", "TEXT NULL");
-  await ensureColumn("orders", "delivery_address", "JSON NULL");
+  await addColumnIfMissing("orders", "driver_id", "VARCHAR(191) NULL");
+  await addColumnIfMissing("orders", "delivery_status", "VARCHAR(191) NULL");
+  await addColumnIfMissing("orders", "delivery_phone", "VARCHAR(191) NULL");
+  await addColumnIfMissing("orders", "delivery_address", "JSON NULL");
   for (const driver of seedDrivers) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO drivers (id, name, phone, email, vehicle, location_id, status, active, photo_url)
@@ -282,7 +284,7 @@ export async function updateDeliveryStatus(
   if (status === "delivered" || status === "unassigned") {
     await prisma.$executeRawUnsafe(
       `UPDATE drivers SET status = 'available'
-       WHERE id = (SELECT driver_id FROM (SELECT driver_id FROM orders WHERE id = ?) AS t)`,
+       WHERE id = (SELECT driver_id FROM orders WHERE id = ?)`,
       orderId,
     );
   }

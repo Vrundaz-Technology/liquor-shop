@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { fetchUserById } from "@/lib/db/queries";
 import {
   applyAuthCookies,
+  authConfigErrorResponse,
   clearAuthCookies,
   issueTokens,
   readRefreshTokenFromRequest,
@@ -50,6 +51,11 @@ export async function POST(request: Request) {
     });
     return applyAuthCookies(res, tokens);
   } catch (error) {
+    const misconfigured = authConfigErrorResponse(error);
+    if (misconfigured) {
+      console.error("[POST /api/auth/refresh] auth misconfigured", error);
+      return misconfigured;
+    }
     console.error("[POST /api/auth/refresh]", error);
     return NextResponse.json({ error: "Token refresh failed." }, { status: 500 });
   }

@@ -63,7 +63,7 @@ export async function listDriversForAdmin(
     filters.push("active = true");
   }
   if (opts?.locationId) {
-    filters.push(`location_id = ?`);
+    filters.push("location_id = ?");
     params.push(opts.locationId);
   } else if (!allowAll && ids?.length) {
     filters.push(`location_id IN (${ids.map(() => "?").join(",")})`);
@@ -89,7 +89,7 @@ async function getDriverRow(driverId: string) {
 }
 
 async function driverHasActiveRuns(driverId: string) {
-  const rows = await prisma.$queryRawUnsafe<{ count: bigint | number }[]>(
+  const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
     `SELECT COUNT(*) AS count FROM orders
      WHERE driver_id = ?
        AND fulfillment = 'delivery'

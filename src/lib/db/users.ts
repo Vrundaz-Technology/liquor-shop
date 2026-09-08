@@ -3,7 +3,6 @@ import { Prisma } from "@prisma/client";
 import { mapUser } from "@/lib/db/mappers";
 import { mapOrder } from "@/lib/db/mappers";
 import { recordActivity } from "@/lib/db/activity";
-import { ensureColumn } from "@/lib/db/ensure-column";
 import { hashPassword, validatePassword, verifyPassword } from "@/lib/auth/password";
 import { canAssignRole, canDeactivateUser, canEditUser, canResetPassword, DEMO_PASSWORD, isDemoAccountEmail } from "@/lib/auth/roles";
 import { isKnownRole } from "@/lib/auth/role-catalog";
@@ -20,6 +19,7 @@ import {
   sanitizeAssignedLocations,
 } from "@/lib/auth/location-access";
 import { listLocationIds } from "@/lib/db/store-admin";
+import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import type { ManagedUser, UserProfile } from "@/types";
 
 function userInclude() {
@@ -35,10 +35,14 @@ let extraColumnsReady = false;
 
 async function ensureUserColumns() {
   if (extraColumnsReady) return;
-  await ensureColumn("users", "avatar_url", "TEXT NULL");
-  await ensureColumn("users", "permission_grants", "JSON NULL");
-  await ensureColumn("users", "permission_revokes", "JSON NULL");
-  await ensureColumn("users", "allowed_location_ids", "JSON NULL");
+  // MySQL forbids a literal DEFAULT on JSON columns, and back-filling a NOT NULL
+  // JSON column on a populated table would fail. These are added NULL instead;
+  // parsePermissions()/parseLocationIds() already map NULL to an empty list, so
+  // the effective default is unchanged.
+  await addColumnIfMissing("users", "avatar_url", "TEXT NULL");
+  await addColumnIfMissing("users", "permission_grants", "JSON NULL");
+  await addColumnIfMissing("users", "permission_revokes", "JSON NULL");
+  await addColumnIfMissing("users", "allowed_location_ids", "JSON NULL");
   extraColumnsReady = true;
 }
 
@@ -62,8 +66,8 @@ export async function attachProfileExtras(user: UserProfile): Promise<UserProfil
     SELECT
       avatar_url,
       COALESCE(active, true) AS active,
-      COALESCE(permission_grants, CAST('[]' AS JSON)) AS permission_grants,
-      COALESCE(permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
+      permission_grants,
+      permission_revokes,
       allowed_location_ids
     FROM users
     WHERE id = ${user.id}
@@ -104,7 +108,7 @@ async function loadAuthColumns(email: string) {
   const rows = await prisma.$queryRaw<AuthColumns[]>`
     SELECT id, password_hash, active
     FROM users
-    WHERE LOWER(email) = ${email.trim().toLowerCase()}
+    WHERE lower(email) = ${email.trim().toLowerCase()}
     LIMIT 1
   `;
   return rows[0] ?? null;
@@ -285,10 +289,10 @@ async function fetchManagedById(id: string) {
       u.preferred_branch_id,
       u.created_at,
       u.avatar_url,
-      COALESCE(u.permission_grants, CAST('[]' AS JSON)) AS permission_grants,
-      COALESCE(u.permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
+      u.permission_grants,
+      u.permission_revokes,
       u.allowed_location_ids,
-      (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
+      (SELECT CAST(COUNT(*) AS SIGNED) FROM orders o WHERE o.user_id = u.id) AS order_count
     FROM users u
     WHERE u.id = ${id}
     LIMIT 1
@@ -296,12 +300,14 @@ async function fetchManagedById(id: string) {
   return rows[0] ? toManagedUserFromSql(rows[0]) : null;
 }
 
+// MySQL has no `NULLS LAST`. `(col IS NULL)` yields 0/1, so sorting on that
+// first pushes NULLs to the end and reproduces the Postgres ordering exactly.
 function userOrderBy(sortKey?: string, sortDir?: string) {
   const desc = sortDir === "desc";
   switch (sortKey) {
     case "name":
       return desc
-        ? Prisma.sql`ORDER BY (u.name IS NULL), u.name DESC, u.email ASC`
+        ? Prisma.sql`ORDER BY (u.name IS NULL) ASC, u.name DESC, u.email ASC`
         : Prisma.sql`ORDER BY u.name ASC, u.email ASC`;
     case "role":
       return desc
@@ -315,8 +321,8 @@ function userOrderBy(sortKey?: string, sortDir?: string) {
     default: {
       const newestFirst = sortDir !== "asc";
       return newestFirst
-        ? Prisma.sql`ORDER BY (u.created_at IS NULL), u.created_at DESC, u.email ASC`
-        : Prisma.sql`ORDER BY (u.created_at IS NULL), u.created_at ASC, u.email ASC`;
+        ? Prisma.sql`ORDER BY (u.created_at IS NULL) ASC, u.created_at DESC, u.email ASC`
+        : Prisma.sql`ORDER BY (u.created_at IS NULL) ASC, u.created_at ASC, u.email ASC`;
     }
   }
 }
@@ -352,21 +358,21 @@ export async function listManagedUsers(filters: {
         u.preferred_branch_id,
         u.created_at,
         u.avatar_url,
-        COALESCE(u.permission_grants, CAST('[]' AS JSON)) AS permission_grants,
-        COALESCE(u.permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
+        u.permission_grants,
+        u.permission_revokes,
       u.allowed_location_ids,
-        (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
+        (SELECT CAST(COUNT(*) AS SIGNED) FROM orders o WHERE o.user_id = u.id) AS order_count
       FROM users u
       WHERE (${role} IS NULL OR u.role = ${role})
-        AND (${like} IS NULL OR LOWER(u.name) LIKE LOWER(${like}) OR LOWER(u.email) LIKE LOWER(${like}))
+        AND (${like} IS NULL OR u.name LIKE ${like} OR u.email LIKE ${like})
       ${orderBy}
       LIMIT ${limit} OFFSET ${offset}
     `,
     prisma.$queryRaw<Array<{ count: number | bigint }>>`
-      SELECT COUNT(*) AS count
+      SELECT CAST(COUNT(*) AS SIGNED) AS count
       FROM users u
       WHERE (${role} IS NULL OR u.role = ${role})
-        AND (${like} IS NULL OR LOWER(u.name) LIKE LOWER(${like}) OR LOWER(u.email) LIKE LOWER(${like}))
+        AND (${like} IS NULL OR u.name LIKE ${like} OR u.email LIKE ${like})
     `,
   ]);
 
@@ -379,7 +385,7 @@ export async function listManagedUsers(filters: {
 export async function countOwners() {
   if (!isDbConfigured()) return 1;
   const rows = await prisma.$queryRaw<Array<{ count: number | bigint }>>`
-    SELECT COUNT(*) AS count
+    SELECT CAST(COUNT(*) AS SIGNED) AS count
     FROM users
     WHERE role = 'owner' AND COALESCE(active, true) = true
   `;
@@ -388,7 +394,7 @@ export async function countOwners() {
 
 async function emailTaken(email: string, exceptUserId?: string) {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM users WHERE LOWER(email) = ${email} LIMIT 1
+    SELECT id FROM users WHERE lower(email) = ${email} LIMIT 1
   `;
   const hit = rows[0];
   if (!hit) return false;
@@ -455,9 +461,9 @@ export async function createManagedUser(
       password_hash = ${passwordHash},
       active = true,
       avatar_url = ${avatar},
-      permission_grants = CAST(${grantsJson} AS JSON),
-      permission_revokes = CAST(${revokesJson} AS JSON),
-      allowed_location_ids = CAST(${allowedJson} AS JSON)
+      permission_grants = ${grantsJson},
+      permission_revokes = ${revokesJson},
+      allowed_location_ids = ${allowedJson}
     WHERE id = ${id}
   `;
 
@@ -513,8 +519,8 @@ export async function patchManagedUser(
   >`
     SELECT
       id, name, email, role, COALESCE(active, true) AS active,
-      COALESCE(permission_grants, CAST('[]' AS JSON)) AS permission_grants,
-      COALESCE(permission_revokes, CAST('[]' AS JSON)) AS permission_revokes
+      permission_grants,
+      permission_revokes AS permission_revokes
     FROM users
     WHERE id = ${input.userId}
     LIMIT 1
@@ -659,8 +665,8 @@ export async function patchManagedUser(
     await prisma.$executeRaw`
       UPDATE users
       SET
-        permission_grants = CAST(${grantsJson} AS JSON),
-        permission_revokes = CAST(${revokesJson} AS JSON)
+        permission_grants = ${grantsJson},
+        permission_revokes = ${revokesJson}
       WHERE id = ${input.userId}
     `;
     const remappedPrevious = normalizeOverrides(
@@ -688,7 +694,7 @@ export async function patchManagedUser(
     const allowedJson = allowed ? JSON.stringify(allowed) : null;
     await prisma.$executeRaw`
       UPDATE users
-      SET allowed_location_ids = CAST(${allowedJson} AS JSON)
+      SET allowed_location_ids = ${allowedJson}
       WHERE id = ${input.userId}
     `;
   }

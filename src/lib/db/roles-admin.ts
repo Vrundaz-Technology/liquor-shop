@@ -8,6 +8,7 @@ import {
 import { hasPermission, parsePermissions, PERMISSIONS, effectivePermissions, type Permission } from "@/lib/auth/permissions";
 import { recordActivity } from "@/lib/db/activity";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
+import { createIndexIfMissing } from "@/lib/db/schema-guard";
 import type { UserProfile } from "@/types";
 
 type RoleRow = {
@@ -25,30 +26,22 @@ let schemaReady = false;
 
 export async function ensureRoleDefinitionsSchema() {
   if (schemaReady) return;
+  // TEXT cannot be a MySQL key without a prefix length, and JSON columns cannot
+  // carry a literal DEFAULT — hence VARCHAR(191) keys and a nullable permissions
+  // column (parsePermissions maps NULL to []).
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS role_definitions (
-      id VARCHAR(191) PRIMARY KEY,
+      id VARCHAR(191) NOT NULL PRIMARY KEY,
       slug VARCHAR(191) NOT NULL UNIQUE,
       label VARCHAR(191) NOT NULL,
-      description VARCHAR(191) NOT NULL DEFAULT '',
-      permissions JSON NOT NULL,
-      \`rank\` INT NOT NULL DEFAULT 1,
+      description TEXT NULL,
+      permissions JSON NULL,
+      \`rank\` INTEGER NOT NULL DEFAULT 1,
       created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
-      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
-    )
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3)
+    ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
-  const indexRows = await prisma.$queryRawUnsafe<Array<{ cnt: number | bigint }>>(
-    `SELECT COUNT(*) AS cnt
-     FROM information_schema.STATISTICS
-     WHERE TABLE_SCHEMA = DATABASE()
-       AND TABLE_NAME = 'role_definitions'
-       AND INDEX_NAME = 'role_definitions_rank_idx'`,
-  );
-  if (Number(indexRows[0]?.cnt ?? 0) === 0) {
-    await prisma.$executeRawUnsafe(
-      `CREATE INDEX role_definitions_rank_idx ON role_definitions (\`rank\`)`,
-    );
-  }
+  await createIndexIfMissing("role_definitions", "role_definitions_rank_idx", "`rank`");
   schemaReady = true;
 }
 
@@ -143,8 +136,8 @@ export async function createRoleDefinition(
   const description = (input.description ?? "").trim();
 
   await prisma.$executeRaw`
-    INSERT INTO role_definitions (id, slug, label, description, permissions, rank)
-    VALUES (${id}, ${slug}, ${label}, ${description}, CAST(${permissionsJson} AS JSON), ${rank})
+    INSERT INTO role_definitions (id, slug, label, description, permissions, \`rank\`)
+    VALUES (${id}, ${slug}, ${label}, ${description}, ${permissionsJson}, ${rank})
   `;
 
   await refreshCatalog();
@@ -225,9 +218,9 @@ export async function updateRoleDefinition(
       slug = ${slug},
       label = ${label},
       description = ${description},
-      permissions = CAST(${permissionsJson} AS JSON),
-      rank = ${rank},
-      updated_at = CURRENT_TIMESTAMP(3)
+      permissions = ${permissionsJson},
+      \`rank\` = ${rank},
+      updated_at = NOW()
     WHERE id = ${roleId}
   `;
 
@@ -265,7 +258,7 @@ export async function deleteRoleDefinition(
   if (!existing) return { error: "Role not found.", status: 404 };
 
   const usage = await prisma.$queryRaw<Array<{ count: number | bigint }>>`
-    SELECT COUNT(*) AS count FROM users WHERE role = ${existing.slug}
+    SELECT CAST(COUNT(*) AS SIGNED) AS count FROM users WHERE role = ${existing.slug}
   `;
   if (Number(usage[0]?.count ?? 0) > 0) {
     return { error: "Reassign users on this role before deleting it.", status: 409 };

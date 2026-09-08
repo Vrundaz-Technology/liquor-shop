@@ -162,6 +162,8 @@ async function seedLocations() {
 }
 
 async function seedEvents() {
+  // `events.active` is created by prisma/migrations/0_init, which `db:setup`
+  // applies before this seed runs — no ad-hoc ALTER needed.
   for (const e of events) {
     const row = {
       slug: e.slug,

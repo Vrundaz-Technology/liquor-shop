@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { signupCustomer } from "@/lib/db/users";
 import { signupSchema } from "@/lib/db/validators";
-import { applyAuthCookies, issueTokens } from "@/lib/auth/session";
+import { applyAuthCookies, authConfigErrorResponse, issueTokens } from "@/lib/auth/session";
 import { validatePassword } from "@/lib/auth/password";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
@@ -37,6 +37,11 @@ export async function POST(request: Request) {
     });
     return applyAuthCookies(res, tokens);
   } catch (error) {
+    const misconfigured = authConfigErrorResponse(error);
+    if (misconfigured) {
+      console.error("[POST /api/auth/signup] auth misconfigured", error);
+      return misconfigured;
+    }
     console.error("[POST /api/auth/signup]", error);
     return NextResponse.json({ error: "Sign up failed." }, { status: 500 });
   }

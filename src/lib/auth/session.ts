@@ -28,16 +28,57 @@ export type IssuedTokens = {
   expiresIn: number;
 };
 
-function secretKey() {
-  const fallback = "liquor-shop-dev-auth-secret-2026";
-  const secret = process.env.AUTH_SECRET || "";
-  if (process.env.NODE_ENV === "production") {
-    if (!secret || secret === fallback || secret.length < 32) {
-      throw new Error("AUTH_SECRET must be a unique 32+ character value in production.");
-    }
-    return new TextEncoder().encode(secret);
+/**
+ * Raised when server auth configuration is missing or invalid.
+ *
+ * This is an operator problem, not a user problem, so callers surface it as a
+ * 503 with the cause named rather than an opaque 500 that can only be diagnosed
+ * from server logs.
+ */
+export class AuthConfigError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "AuthConfigError";
   }
-  return new TextEncoder().encode(secret || fallback);
+}
+
+const DEV_SECRET_FALLBACK = "liquor-shop-dev-auth-secret-2026";
+const MIN_SECRET_LENGTH = 32;
+
+/** Describes why AUTH_SECRET is unusable in production, or null when it is fine. */
+export function authSecretProblem(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.NODE_ENV !== "production") return null;
+  const secret = env.AUTH_SECRET || "";
+  if (!secret) return "AUTH_SECRET is not set on this deployment.";
+  if (secret === DEV_SECRET_FALLBACK) {
+    return "AUTH_SECRET is still the built-in development value and must be replaced in production.";
+  }
+  if (secret.length < MIN_SECRET_LENGTH) {
+    return `AUTH_SECRET is ${secret.length} characters; it must be at least ${MIN_SECRET_LENGTH}.`;
+  }
+  return null;
+}
+
+function secretKey() {
+  const problem = authSecretProblem();
+  if (problem) throw new AuthConfigError(problem);
+  return new TextEncoder().encode(process.env.AUTH_SECRET || DEV_SECRET_FALLBACK);
+}
+
+/**
+ * Turns an auth-configuration failure into a 503 naming the misconfigured
+ * variable. Returns null for every other error so callers keep their own
+ * handling. The message names an environment variable, never its value.
+ */
+export function authConfigErrorResponse(error: unknown): NextResponse | null {
+  if (!(error instanceof AuthConfigError)) return null;
+  return NextResponse.json(
+    {
+      error: "Sign-in is unavailable: server authentication is misconfigured.",
+      detail: error.message,
+    },
+    { status: 503 },
+  );
 }
 
 function cookieBase(path = "/") {

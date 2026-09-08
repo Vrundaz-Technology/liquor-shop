@@ -47,8 +47,8 @@ model Product {
   isImported     Boolean  @map("is_imported")
   tags           Json
   nutrition      Json?
-  glbUrl         String?  @map("glb_url")
-  usdzUrl        String?  @map("usdz_url")
+  glbUrl         String?  @map("glb_url") @db.VarChar(512)
+  usdzUrl        String?  @map("usdz_url") @db.VarChar(512)
   isCustom       Boolean  @default(false) @map("is_custom")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
@@ -77,7 +77,7 @@ model Location {
   hours            Json
   lat              Float
   lng              Float
-  heroImage        String   @map("hero_image")
+  heroImage        String   @map("hero_image") @db.VarChar(512)
   gallery          Json
   staff            Json
   services         Json
@@ -108,7 +108,7 @@ model Driver {
   locationId String  @map("location_id")
   status     String  @default("available")
   active     Boolean @default(true)
-  photoUrl   String? @map("photo_url")
+  photoUrl   String? @map("photo_url") @db.VarChar(512)
 
   location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
   orders   Order[]
@@ -149,7 +149,7 @@ model Event {
   price          Float
   seatsTotal     Int     @map("seats_total")
   seatsAvailable Int     @map("seats_available")
-  image          String
+  image          String  @db.VarChar(512)
   hosts          Json
   active         Boolean @default(true)
 
@@ -191,8 +191,8 @@ model User {
   addresses         Json
   recentlyViewed    Json     @map("recently_viewed")
   avatarUrl         String?  @map("avatar_url") @db.Text
-  permissionGrants  Json     @map("permission_grants")
-  permissionRevokes Json     @map("permission_revokes")
+  permissionGrants  Json     @default("[]") @map("permission_grants")
+  permissionRevokes Json     @default("[]") @map("permission_revokes")
   allowedLocationIds Json?    @map("allowed_location_ids")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
@@ -292,8 +292,9 @@ model RoleDefinition {
   id          String   @id
   slug        String   @unique
   label       String
-  description String   @default("")
-  permissions Json
+  // VARCHAR, not TEXT: MySQL rejects a DEFAULT on TEXT/BLOB/JSON columns.
+  description String   @default("") @db.VarChar(1000)
+  permissions Json     @default("[]")
   rank        Int      @default(1)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")

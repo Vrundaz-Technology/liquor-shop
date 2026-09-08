@@ -401,6 +401,30 @@ function BottleFallback({
   );
 }
 
+/**
+ * Isolates one bottle's texture failure.
+ *
+ * `Suspense` only covers the *pending* state — when a texture request rejects
+ * (a 404 product image, say) `useTexture` throws during render, which would
+ * otherwise escape to `StoreErrorBoundary` and take the entire showroom down.
+ * Catching it per bottle degrades that single bottle to its placeholder.
+ */
+class BottleErrorBoundary extends Component<
+  { fallback: ReactNode; children: ReactNode },
+  { failed: boolean }
+> {
+  state = { failed: false };
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+  componentDidCatch(error: Error) {
+    console.warn("Virtual store: bottle image unavailable, showing placeholder.", error.message);
+  }
+  render() {
+    return this.state.failed ? this.props.fallback : this.props.children;
+  }
+}
+
 function ShelfBottle(props: {
   product: Product;
   position: [number, number, number];
@@ -408,10 +432,15 @@ function ShelfBottle(props: {
   soldOut?: boolean;
   onSelect: () => void;
 }) {
+  const fallback = <BottleFallback product={props.product} position={props.position} />;
+  // No image at all — skip the loader entirely rather than suspending forever.
+  if (!props.product.images[0]) return fallback;
   return (
-    <Suspense fallback={<BottleFallback product={props.product} position={props.position} />}>
-      <PhotoBottle {...props} />
-    </Suspense>
+    <BottleErrorBoundary fallback={fallback}>
+      <Suspense fallback={fallback}>
+        <PhotoBottle {...props} />
+      </Suspense>
+    </BottleErrorBoundary>
   );
 }
 
@@ -930,14 +959,16 @@ export function VirtualStoreExperience() {
           />
           <aside className="absolute inset-x-0 bottom-0 z-20 flex max-h-[70vh] w-full flex-col overflow-y-auto rounded-t-md border border-white/10 border-b-0 bg-[#0a0908]/98 pb-[env(safe-area-inset-bottom,0px)] backdrop-blur-xl lg:inset-y-0 lg:bottom-auto lg:right-0 lg:left-auto lg:max-h-none lg:max-w-sm lg:rounded-none lg:border-b lg:border-l lg:border-t-0 lg:border-r-0 lg:pb-0">
           <div className="relative h-40 w-full shrink-0 bg-[#14110d] sm:h-48">
-            <Image
-              src={selected.images[0]}
-              alt={selected.name}
-              fill
-              className="object-cover"
-              sizes="360px"
-              priority
-            />
+            {selected.images[0] ? (
+              <Image
+                src={selected.images[0]}
+                alt={selected.name}
+                fill
+                className="object-cover"
+                sizes="360px"
+                priority
+              />
+            ) : null}
             <div className="absolute inset-0 bg-gradient-to-t from-[#0a0908] to-transparent" />
             <button
               type="button"
