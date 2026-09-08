@@ -58,18 +58,15 @@ export async function listStoreOrders(
   if (filters.locationId && filters.locationId !== "all") {
     if (!canAccessLocation(actor, filters.locationId)) return [];
     params.push(filters.locationId);
-    where.push(`o.location_id = $${params.length}`);
+    where.push(`o.location_id = ?`);
   } else if (!allowAll) {
-    const start = params.length + 1;
     accessibleIds.forEach((id) => params.push(id));
-    where.push(
-      `o.location_id IN (${accessibleIds.map((_, i) => `$${start + i}`).join(",")})`,
-    );
+    where.push(`o.location_id IN (${accessibleIds.map(() => "?").join(",")})`);
   }
 
   if (filters.status && filters.status !== "all" && STATUS_VALUES.has(filters.status)) {
     params.push(filters.status);
-    where.push(`o.status = $${params.length}`);
+    where.push(`o.status = ?`);
   }
 
   if (
@@ -78,20 +75,20 @@ export async function listStoreOrders(
     FULFILLMENT_VALUES.has(filters.fulfillment)
   ) {
     params.push(filters.fulfillment);
-    where.push(`o.fulfillment = $${params.length}`);
+    where.push(`o.fulfillment = ?`);
   }
 
   const q = filters.q?.trim();
   if (q) {
     params.push(`%${q}%`);
-    const i = params.length;
     where.push(
-      `(o.id ILIKE $${i} OR u.name ILIKE $${i} OR u.email ILIKE $${i} OR COALESCE(o.tracking, '') ILIKE $${i})`,
+      `(LOWER(o.id) LIKE LOWER(?) OR LOWER(u.name) LIKE LOWER(?) OR LOWER(u.email) LIKE LOWER(?) OR LOWER(COALESCE(o.tracking, '')) LIKE LOWER(?))`,
     );
+    // MySQL needs one bound value per `?`
+    params.push(`%${q}%`, `%${q}%`, `%${q}%`);
   }
 
   params.push(limit);
-  const limitParam = `$${params.length}`;
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const rows = await prisma.$queryRawUnsafe<OrderListRow[]>(
@@ -101,7 +98,7 @@ export async function listStoreOrders(
      INNER JOIN users u ON u.id = o.user_id
      ${whereSql}
      ORDER BY o.created_at DESC
-     LIMIT ${limitParam}`,
+     LIMIT ?`,
     ...params,
   );
 

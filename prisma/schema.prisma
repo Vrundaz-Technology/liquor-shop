@@ -3,7 +3,7 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
+  provider = "mysql"
   url      = env("DATABASE_URL")
 }
 
@@ -191,8 +191,8 @@ model User {
   addresses         Json
   recentlyViewed    Json     @map("recently_viewed")
   avatarUrl         String?  @map("avatar_url") @db.Text
-  permissionGrants  Json     @default("[]") @map("permission_grants")
-  permissionRevokes Json     @default("[]") @map("permission_revokes")
+  permissionGrants  Json     @map("permission_grants")
+  permissionRevokes Json     @map("permission_revokes")
   allowedLocationIds Json?    @map("allowed_location_ids")
   createdAt         DateTime @default(now()) @map("created_at")
   updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
@@ -292,8 +292,8 @@ model RoleDefinition {
   id          String   @id
   slug        String   @unique
   label       String
-  description String   @default("") @db.Text
-  permissions Json     @default("[]")
+  description String   @default("")
+  permissions Json
   rank        Int      @default(1)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")

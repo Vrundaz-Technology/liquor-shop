@@ -1,24 +1,24 @@
 # Sam's Discount Liquor — Premium AR Liquor Store
 
-Next.js 15 storefront with a PostgreSQL backend: cinematic landing, 3D virtual showroom (React Three Fiber), AR product viewing, branch-aware inventory, cart/checkout, loyalty dashboard, events, and luxury UI.
+Next.js 15 storefront with a MySQL backend: cinematic landing, 3D virtual showroom (React Three Fiber), AR product viewing, branch-aware inventory, cart/checkout, loyalty dashboard, events, and luxury UI.
 
 ## Stack
 
 - Next.js 15 (App Router) · React 19 · TypeScript · Tailwind CSS 4
-- PostgreSQL · Prisma 6 · Next.js Route Handlers
+- MySQL · Prisma 6 · Next.js Route Handlers
 - Framer Motion · GSAP · Three.js · R3F · Drei
 - Zustand · TanStack Query · Fuse.js · Zod · Lucide
 
 ## Setup
 
-1. Copy `.env.example` to `.env` and set your pgAdmin credentials:
+1. Copy `.env.example` to `.env` and set your MySQL credentials:
 
 ```env
-DATABASE_URL="postgresql://USER:PASSWORD@localhost:5432/liquorshop?schema=public"
+DATABASE_URL="mysql://USER:PASSWORD@localhost:3306/liquor_shop"
 AUTH_SECRET="replace-with-a-long-random-string"
 ```
 
-2. Create the `liquorshop` database in pgAdmin if it does not exist.
+2. Create the `liquor_shop` database in MySQL / phpMyAdmin if it does not exist.
 
 3. Install, push the schema, and seed catalog data:
 

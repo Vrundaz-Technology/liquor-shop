@@ -30,7 +30,7 @@ async function assertOrderLocationAccess(
   orderId: string,
 ) {
   const rows = await prisma.$queryRawUnsafe<{ location_id: string; fulfillment: string }[]>(
-    `SELECT location_id, fulfillment FROM orders WHERE id = $1 LIMIT 1`,
+    `SELECT location_id, fulfillment FROM orders WHERE id = ? LIMIT 1`,
     orderId,
   );
   const order = rows[0];

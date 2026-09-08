@@ -135,10 +135,10 @@ export async function fetchActivityLogs(filters: {
   if (filters.q) {
     andParts.push({
       OR: [
-        { summary: { contains: filters.q, mode: "insensitive" } },
-        { actorName: { contains: filters.q, mode: "insensitive" } },
-        { actorEmail: { contains: filters.q, mode: "insensitive" } },
-        { entityId: { contains: filters.q, mode: "insensitive" } },
+        { summary: { contains: filters.q } },
+        { actorName: { contains: filters.q } },
+        { actorEmail: { contains: filters.q } },
+        { entityId: { contains: filters.q } },
       ],
     });
   }

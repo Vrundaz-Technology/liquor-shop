@@ -58,18 +58,16 @@ export async function listDriversForAdmin(
   const ids = accessibleLocationIds(actor);
   const filters: string[] = [];
   const params: unknown[] = [];
-  let n = 1;
 
   if (!opts?.includeInactive) {
     filters.push("active = true");
   }
   if (opts?.locationId) {
-    filters.push(`location_id = $${n++}`);
+    filters.push(`location_id = ?`);
     params.push(opts.locationId);
   } else if (!allowAll && ids?.length) {
-    filters.push(`location_id IN (${ids.map((_, i) => `$${n + i}`).join(",")})`);
+    filters.push(`location_id IN (${ids.map(() => "?").join(",")})`);
     params.push(...ids);
-    n += ids.length;
   } else if (!allowAll) {
     return [];
   }
@@ -84,16 +82,16 @@ export async function listDriversForAdmin(
 
 async function getDriverRow(driverId: string) {
   const rows = await prisma.$queryRawUnsafe<DriverRow[]>(
-    `SELECT * FROM drivers WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM drivers WHERE id = ? LIMIT 1`,
     driverId,
   );
   return rows[0] ?? null;
 }
 
 async function driverHasActiveRuns(driverId: string) {
-  const rows = await prisma.$queryRawUnsafe<{ count: bigint }[]>(
-    `SELECT COUNT(*)::bigint AS count FROM orders
-     WHERE driver_id = $1
+  const rows = await prisma.$queryRawUnsafe<{ count: bigint | number }[]>(
+    `SELECT COUNT(*) AS count FROM orders
+     WHERE driver_id = ?
        AND fulfillment = 'delivery'
        AND status <> 'cancelled'
        AND COALESCE(delivery_status, 'unassigned') <> 'delivered'`,
@@ -118,7 +116,7 @@ export async function createDriver(actor: UserProfile, input: DriverInput) {
 
   await prisma.$executeRawUnsafe(
     `INSERT INTO drivers (id, name, phone, email, vehicle, location_id, status, active, photo_url)
-     VALUES ($1,$2,$3,$4,$5,$6,'available',true,$7)`,
+     VALUES (?,?,?,?,?,?,'available',true,?)`,
     id,
     input.name.trim(),
     input.phone.trim(),
@@ -191,16 +189,15 @@ export async function updateDriver(
 
   await prisma.$executeRawUnsafe(
     `UPDATE drivers SET
-      name = $2,
-      phone = $3,
-      email = $4,
-      vehicle = $5,
-      location_id = $6,
-      status = $7,
-      active = $8,
-      photo_url = $9
-     WHERE id = $1`,
-    driverId,
+      name = ?,
+      phone = ?,
+      email = ?,
+      vehicle = ?,
+      location_id = ?,
+      status = ?,
+      active = ?,
+      photo_url = ?
+     WHERE id = ?`,
     (input.name ?? existing.name).trim(),
     (input.phone ?? existing.phone).trim(),
     input.email !== undefined ? input.email.trim().toLowerCase() || null : existing.email,
@@ -209,6 +206,7 @@ export async function updateDriver(
     nextStatus,
     input.active ?? existing.active,
     input.photoUrl !== undefined ? input.photoUrl.trim() || null : existing.photo_url,
+    driverId,
   );
 
   const row = await getDriverRow(driverId);

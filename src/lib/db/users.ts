@@ -3,6 +3,7 @@ import { Prisma } from "@prisma/client";
 import { mapUser } from "@/lib/db/mappers";
 import { mapOrder } from "@/lib/db/mappers";
 import { recordActivity } from "@/lib/db/activity";
+import { ensureColumn } from "@/lib/db/ensure-column";
 import { hashPassword, validatePassword, verifyPassword } from "@/lib/auth/password";
 import { canAssignRole, canDeactivateUser, canEditUser, canResetPassword, DEMO_PASSWORD, isDemoAccountEmail } from "@/lib/auth/roles";
 import { isKnownRole } from "@/lib/auth/role-catalog";
@@ -34,18 +35,10 @@ let extraColumnsReady = false;
 
 async function ensureUserColumns() {
   if (extraColumnsReady) return;
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url TEXT`,
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS permission_grants JSONB NOT NULL DEFAULT '[]'::jsonb`,
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS permission_revokes JSONB NOT NULL DEFAULT '[]'::jsonb`,
-  );
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE users ADD COLUMN IF NOT EXISTS allowed_location_ids JSONB`,
-  );
+  await ensureColumn("users", "avatar_url", "TEXT NULL");
+  await ensureColumn("users", "permission_grants", "JSON NULL");
+  await ensureColumn("users", "permission_revokes", "JSON NULL");
+  await ensureColumn("users", "allowed_location_ids", "JSON NULL");
   extraColumnsReady = true;
 }
 
@@ -69,8 +62,8 @@ export async function attachProfileExtras(user: UserProfile): Promise<UserProfil
     SELECT
       avatar_url,
       COALESCE(active, true) AS active,
-      COALESCE(permission_grants, '[]'::jsonb) AS permission_grants,
-      COALESCE(permission_revokes, '[]'::jsonb) AS permission_revokes,
+      COALESCE(permission_grants, CAST('[]' AS JSON)) AS permission_grants,
+      COALESCE(permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
       allowed_location_ids
     FROM users
     WHERE id = ${user.id}
@@ -111,7 +104,7 @@ async function loadAuthColumns(email: string) {
   const rows = await prisma.$queryRaw<AuthColumns[]>`
     SELECT id, password_hash, active
     FROM users
-    WHERE lower(email) = ${email.trim().toLowerCase()}
+    WHERE LOWER(email) = ${email.trim().toLowerCase()}
     LIMIT 1
   `;
   return rows[0] ?? null;
@@ -184,6 +177,8 @@ export async function signupCustomer(input: {
     data: {
       id: `u-${crypto.randomUUID()}`,
       ...data,
+      permissionGrants: [],
+      permissionRevokes: [],
     },
     include: userInclude(),
   });
@@ -290,10 +285,10 @@ async function fetchManagedById(id: string) {
       u.preferred_branch_id,
       u.created_at,
       u.avatar_url,
-      COALESCE(u.permission_grants, '[]'::jsonb) AS permission_grants,
-      COALESCE(u.permission_revokes, '[]'::jsonb) AS permission_revokes,
+      COALESCE(u.permission_grants, CAST('[]' AS JSON)) AS permission_grants,
+      COALESCE(u.permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
       u.allowed_location_ids,
-      (SELECT COUNT(*)::int FROM orders o WHERE o.user_id = u.id) AS order_count
+      (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
     FROM users u
     WHERE u.id = ${id}
     LIMIT 1
@@ -306,7 +301,7 @@ function userOrderBy(sortKey?: string, sortDir?: string) {
   switch (sortKey) {
     case "name":
       return desc
-        ? Prisma.sql`ORDER BY u.name DESC NULLS LAST, u.email ASC`
+        ? Prisma.sql`ORDER BY (u.name IS NULL), u.name DESC, u.email ASC`
         : Prisma.sql`ORDER BY u.name ASC, u.email ASC`;
     case "role":
       return desc
@@ -320,8 +315,8 @@ function userOrderBy(sortKey?: string, sortDir?: string) {
     default: {
       const newestFirst = sortDir !== "asc";
       return newestFirst
-        ? Prisma.sql`ORDER BY u.created_at DESC NULLS LAST, u.email ASC`
-        : Prisma.sql`ORDER BY u.created_at ASC NULLS LAST, u.email ASC`;
+        ? Prisma.sql`ORDER BY (u.created_at IS NULL), u.created_at DESC, u.email ASC`
+        : Prisma.sql`ORDER BY (u.created_at IS NULL), u.created_at ASC, u.email ASC`;
     }
   }
 }
@@ -357,21 +352,21 @@ export async function listManagedUsers(filters: {
         u.preferred_branch_id,
         u.created_at,
         u.avatar_url,
-        COALESCE(u.permission_grants, '[]'::jsonb) AS permission_grants,
-        COALESCE(u.permission_revokes, '[]'::jsonb) AS permission_revokes,
+        COALESCE(u.permission_grants, CAST('[]' AS JSON)) AS permission_grants,
+        COALESCE(u.permission_revokes, CAST('[]' AS JSON)) AS permission_revokes,
       u.allowed_location_ids,
-        (SELECT COUNT(*)::int FROM orders o WHERE o.user_id = u.id) AS order_count
+        (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id) AS order_count
       FROM users u
-      WHERE (${role}::text IS NULL OR u.role = ${role})
-        AND (${like}::text IS NULL OR u.name ILIKE ${like} OR u.email ILIKE ${like})
+      WHERE (${role} IS NULL OR u.role = ${role})
+        AND (${like} IS NULL OR LOWER(u.name) LIKE LOWER(${like}) OR LOWER(u.email) LIKE LOWER(${like}))
       ${orderBy}
       LIMIT ${limit} OFFSET ${offset}
     `,
     prisma.$queryRaw<Array<{ count: number | bigint }>>`
-      SELECT COUNT(*)::int AS count
+      SELECT COUNT(*) AS count
       FROM users u
-      WHERE (${role}::text IS NULL OR u.role = ${role})
-        AND (${like}::text IS NULL OR u.name ILIKE ${like} OR u.email ILIKE ${like})
+      WHERE (${role} IS NULL OR u.role = ${role})
+        AND (${like} IS NULL OR LOWER(u.name) LIKE LOWER(${like}) OR LOWER(u.email) LIKE LOWER(${like}))
     `,
   ]);
 
@@ -384,7 +379,7 @@ export async function listManagedUsers(filters: {
 export async function countOwners() {
   if (!isDbConfigured()) return 1;
   const rows = await prisma.$queryRaw<Array<{ count: number | bigint }>>`
-    SELECT COUNT(*)::int AS count
+    SELECT COUNT(*) AS count
     FROM users
     WHERE role = 'owner' AND COALESCE(active, true) = true
   `;
@@ -393,7 +388,7 @@ export async function countOwners() {
 
 async function emailTaken(email: string, exceptUserId?: string) {
   const rows = await prisma.$queryRaw<Array<{ id: string }>>`
-    SELECT id FROM users WHERE lower(email) = ${email} LIMIT 1
+    SELECT id FROM users WHERE LOWER(email) = ${email} LIMIT 1
   `;
   const hit = rows[0];
   if (!hit) return false;
@@ -450,6 +445,8 @@ export async function createManagedUser(
       loyaltyTier: "Member",
       addresses: [],
       recentlyViewed: [],
+      permissionGrants: [],
+      permissionRevokes: [],
     },
   });
   await prisma.$executeRaw`
@@ -458,9 +455,9 @@ export async function createManagedUser(
       password_hash = ${passwordHash},
       active = true,
       avatar_url = ${avatar},
-      permission_grants = ${grantsJson}::jsonb,
-      permission_revokes = ${revokesJson}::jsonb,
-      allowed_location_ids = ${allowedJson}::jsonb
+      permission_grants = CAST(${grantsJson} AS JSON),
+      permission_revokes = CAST(${revokesJson} AS JSON),
+      allowed_location_ids = CAST(${allowedJson} AS JSON)
     WHERE id = ${id}
   `;
 
@@ -516,8 +513,8 @@ export async function patchManagedUser(
   >`
     SELECT
       id, name, email, role, COALESCE(active, true) AS active,
-      COALESCE(permission_grants, '[]'::jsonb) AS permission_grants,
-      COALESCE(permission_revokes, '[]'::jsonb) AS permission_revokes
+      COALESCE(permission_grants, CAST('[]' AS JSON)) AS permission_grants,
+      COALESCE(permission_revokes, CAST('[]' AS JSON)) AS permission_revokes
     FROM users
     WHERE id = ${input.userId}
     LIMIT 1
@@ -632,7 +629,7 @@ export async function patchManagedUser(
     await prisma.$executeRaw`
       UPDATE users
       SET
-        active = COALESCE(${typeof input.active === "boolean" ? input.active : null}::boolean, active),
+        active = COALESCE(${typeof input.active === "boolean" ? input.active : null}, active),
         password_hash = COALESCE(${nextHash}, password_hash),
         avatar_url = CASE WHEN ${touchAvatar} THEN ${avatar} ELSE avatar_url END
       WHERE id = ${input.userId}
@@ -662,8 +659,8 @@ export async function patchManagedUser(
     await prisma.$executeRaw`
       UPDATE users
       SET
-        permission_grants = ${grantsJson}::jsonb,
-        permission_revokes = ${revokesJson}::jsonb
+        permission_grants = CAST(${grantsJson} AS JSON),
+        permission_revokes = CAST(${revokesJson} AS JSON)
       WHERE id = ${input.userId}
     `;
     const remappedPrevious = normalizeOverrides(
@@ -691,7 +688,7 @@ export async function patchManagedUser(
     const allowedJson = allowed ? JSON.stringify(allowed) : null;
     await prisma.$executeRaw`
       UPDATE users
-      SET allowed_location_ids = ${allowedJson}::jsonb
+      SET allowed_location_ids = CAST(${allowedJson} AS JSON)
       WHERE id = ${input.userId}
     `;
   }

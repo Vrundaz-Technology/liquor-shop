@@ -1,4 +1,5 @@
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
+import { ensureColumn } from "@/lib/db/ensure-column";
 import {
   mapCategory,
   mapEvent,
@@ -272,8 +273,10 @@ let visibilityColumnReady = false;
 
 async function ensureInventoryVisibilityColumn() {
   if (!isDbConfigured() || visibilityColumnReady) return;
-  await prisma.$executeRawUnsafe(
-    `ALTER TABLE location_inventory ADD COLUMN IF NOT EXISTS hidden BOOLEAN NOT NULL DEFAULT false`,
+  await ensureColumn(
+    "location_inventory",
+    "hidden",
+    "BOOLEAN NOT NULL DEFAULT false",
   );
   visibilityColumnReady = true;
 }
@@ -914,6 +917,8 @@ async function ensureCustomer(
       loyaltyTier: "Member",
       addresses: [],
       recentlyViewed: [],
+      permissionGrants: [],
+      permissionRevokes: [],
     },
   });
 }

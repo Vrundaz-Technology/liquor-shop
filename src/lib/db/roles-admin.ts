@@ -27,19 +27,28 @@ export async function ensureRoleDefinitionsSchema() {
   if (schemaReady) return;
   await prisma.$executeRawUnsafe(`
     CREATE TABLE IF NOT EXISTS role_definitions (
-      id TEXT PRIMARY KEY,
-      slug TEXT NOT NULL UNIQUE,
-      label TEXT NOT NULL,
-      description TEXT NOT NULL DEFAULT '',
-      permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
-      rank INTEGER NOT NULL DEFAULT 1,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      id VARCHAR(191) PRIMARY KEY,
+      slug VARCHAR(191) NOT NULL UNIQUE,
+      label VARCHAR(191) NOT NULL,
+      description VARCHAR(191) NOT NULL DEFAULT '',
+      permissions JSON NOT NULL,
+      \`rank\` INT NOT NULL DEFAULT 1,
+      created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+      updated_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)
     )
   `);
-  await prisma.$executeRawUnsafe(
-    `CREATE INDEX IF NOT EXISTS role_definitions_rank_idx ON role_definitions (rank)`,
+  const indexRows = await prisma.$queryRawUnsafe<Array<{ cnt: number | bigint }>>(
+    `SELECT COUNT(*) AS cnt
+     FROM information_schema.STATISTICS
+     WHERE TABLE_SCHEMA = DATABASE()
+       AND TABLE_NAME = 'role_definitions'
+       AND INDEX_NAME = 'role_definitions_rank_idx'`,
   );
+  if (Number(indexRows[0]?.cnt ?? 0) === 0) {
+    await prisma.$executeRawUnsafe(
+      `CREATE INDEX role_definitions_rank_idx ON role_definitions (\`rank\`)`,
+    );
+  }
   schemaReady = true;
 }
 
@@ -135,7 +144,7 @@ export async function createRoleDefinition(
 
   await prisma.$executeRaw`
     INSERT INTO role_definitions (id, slug, label, description, permissions, rank)
-    VALUES (${id}, ${slug}, ${label}, ${description}, ${permissionsJson}::jsonb, ${rank})
+    VALUES (${id}, ${slug}, ${label}, ${description}, CAST(${permissionsJson} AS JSON), ${rank})
   `;
 
   await refreshCatalog();
@@ -174,7 +183,7 @@ export async function updateRoleDefinition(
   await ensureRoleDefinitionsSchema();
 
   const rows = await prisma.$queryRawUnsafe<RoleRow[]>(
-    `SELECT * FROM role_definitions WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM role_definitions WHERE id = ? LIMIT 1`,
     roleId,
   );
   const existing = rows[0];
@@ -216,9 +225,9 @@ export async function updateRoleDefinition(
       slug = ${slug},
       label = ${label},
       description = ${description},
-      permissions = ${permissionsJson}::jsonb,
+      permissions = CAST(${permissionsJson} AS JSON),
       rank = ${rank},
-      updated_at = NOW()
+      updated_at = CURRENT_TIMESTAMP(3)
     WHERE id = ${roleId}
   `;
 
@@ -249,14 +258,14 @@ export async function deleteRoleDefinition(
   await ensureRoleDefinitionsSchema();
 
   const rows = await prisma.$queryRawUnsafe<RoleRow[]>(
-    `SELECT * FROM role_definitions WHERE id = $1 LIMIT 1`,
+    `SELECT * FROM role_definitions WHERE id = ? LIMIT 1`,
     roleId,
   );
   const existing = rows[0];
   if (!existing) return { error: "Role not found.", status: 404 };
 
   const usage = await prisma.$queryRaw<Array<{ count: number | bigint }>>`
-    SELECT COUNT(*)::int AS count FROM users WHERE role = ${existing.slug}
+    SELECT COUNT(*) AS count FROM users WHERE role = ${existing.slug}
   `;
   if (Number(usage[0]?.count ?? 0) > 0) {
     return { error: "Reassign users on this role before deleting it.", status: 409 };

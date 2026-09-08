@@ -3,6 +3,7 @@ import { hydrateRuntimeData } from "@/lib/runtime-data";
 const CONNECTION_ERROR_PATTERNS = [
   /database is not configured/i,
   /unable to reach the server/i,
+  /connect mysql/i,
   /connect postgresql/i,
   /connect the database/i,
   /failed to fetch/i,
@@ -14,7 +15,7 @@ export function isConnectionError(message: string) {
   return CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
-/** User-safe message — never mention PostgreSQL or internal setup. */
+/** User-safe message — never mention MySQL/PostgreSQL or internal setup. */
 export function sanitizeApiError(message: string) {
   if (isConnectionError(message)) {
     return SERVER_UNAVAILABLE_MESSAGE;
