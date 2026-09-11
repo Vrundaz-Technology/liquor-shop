@@ -24,6 +24,12 @@ import { Modal } from "@/components/ui/Modal";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { compareValues, MobileSortBar, SortableTh, tableCellClass, tableHeadRowClass, tableRowClass, tableWrapClass, useTableSort } from "@/components/ui/SortableTh";
 import { formatDeliveryPricingSummary } from "@/lib/fulfillment-pricing";
+import {
+  moneyAmountAtMost,
+  parseFiniteNumber,
+  sanitizeMoneyInput,
+  taxPercentSchema,
+} from "@/lib/validation/money";
 
 type LocationForm = {
   name: string;
@@ -41,12 +47,21 @@ type LocationForm = {
   deliveryRadiusKm: string;
   deliveryFee: string;
   deliveryFreeMinimum: string;
+  minimumOrderAmount: string;
   taxRatePercent: string;
   lat: string;
   lng: string;
   heroImage: string;
   gallery: string[];
+  hours: { day: string; open: string; close: string }[];
+  holidayHours: { date: string; open: string; close: string; closed: boolean }[];
 };
+
+const DEFAULT_FORM_HOURS = [
+  { day: "Mon–Thu", open: "11:00", close: "21:00" },
+  { day: "Fri–Sat", open: "10:00", close: "23:00" },
+  { day: "Sun", open: "12:00", close: "20:00" },
+];
 
 const emptyForm = (): LocationForm => ({
   name: "",
@@ -64,11 +79,14 @@ const emptyForm = (): LocationForm => ({
   deliveryRadiusKm: "8",
   deliveryFee: "12.5",
   deliveryFreeMinimum: "150",
+  minimumOrderAmount: "0",
   taxRatePercent: "8.875",
   lat: "",
   lng: "",
   heroImage: "",
   gallery: [],
+  hours: DEFAULT_FORM_HOURS.map((h) => ({ ...h })),
+  holidayHours: [],
 });
 
 function validateLocationForm(form: LocationForm) {
@@ -84,17 +102,31 @@ function validateLocationForm(form: LocationForm) {
   if (form.deliveryRadiusKm.trim() && (!Number.isFinite(radius) || radius < 0 || radius > 200)) {
     return "Delivery radius must be between 0 and 200 km.";
   }
-  const deliveryFee = Number(form.deliveryFee);
-  if (!Number.isFinite(deliveryFee) || deliveryFee < 0 || deliveryFee > 500) {
-    return "Delivery fee must be between $0 and $500.";
+  const deliveryFee = parseFiniteNumber(form.deliveryFee);
+  const feeCheck = moneyAmountAtMost(500, "Delivery fee cannot exceed $500").safeParse(deliveryFee);
+  if (!feeCheck.success) {
+    return feeCheck.error.issues[0]?.message ?? "Enter a valid delivery fee.";
   }
-  const deliveryFreeMinimum = Number(form.deliveryFreeMinimum);
-  if (!Number.isFinite(deliveryFreeMinimum) || deliveryFreeMinimum < 0 || deliveryFreeMinimum > 10000) {
-    return "Free delivery minimum must be between $0 and $10,000.";
+  const deliveryFreeMinimum = parseFiniteNumber(form.deliveryFreeMinimum);
+  const freeCheck = moneyAmountAtMost(
+    10_000,
+    "Free delivery minimum cannot exceed $10,000",
+  ).safeParse(deliveryFreeMinimum);
+  if (!freeCheck.success) {
+    return freeCheck.error.issues[0]?.message ?? "Enter a valid free-delivery minimum.";
   }
-  const taxRatePercent = Number(form.taxRatePercent);
-  if (!Number.isFinite(taxRatePercent) || taxRatePercent < 0 || taxRatePercent > 25) {
-    return "Tax rate must be between 0% and 25%.";
+  const minimumOrderAmount = parseFiniteNumber(form.minimumOrderAmount);
+  const minOrderCheck = moneyAmountAtMost(
+    10_000,
+    "Minimum order cannot exceed $10,000",
+  ).safeParse(minimumOrderAmount);
+  if (!minOrderCheck.success) {
+    return minOrderCheck.error.issues[0]?.message ?? "Enter a valid minimum order amount.";
+  }
+  const taxRatePercent = parseFiniteNumber(form.taxRatePercent);
+  const taxCheck = taxPercentSchema.safeParse(taxRatePercent);
+  if (!taxCheck.success) {
+    return taxCheck.error.issues[0]?.message ?? "Enter a valid tax percent.";
   }
   if (form.lat.trim()) {
     const lat = Number(form.lat);
@@ -106,6 +138,17 @@ function validateLocationForm(form: LocationForm) {
       return "Longitude must be between -180 and 180.";
     }
   }
+  if (form.hours.length === 0) return "Add at least one business-hours row.";
+  for (const row of form.hours) {
+    if (!row.day.trim()) return "Each hours row needs a day label.";
+    if (!row.open.trim() || !row.close.trim()) return "Each hours row needs open and close times.";
+  }
+  for (const row of form.holidayHours) {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(row.date)) return "Holiday dates must use YYYY-MM-DD.";
+    if (!row.closed && (!row.open.trim() || !row.close.trim())) {
+      return "Holiday hours need open/close times, or mark Closed.";
+    }
+  }
   return null;
 }
 
@@ -113,7 +156,7 @@ function toLocationPayload(form: LocationForm) {
   const radius = Number(form.deliveryRadiusKm);
   const lat = form.lat.trim() ? Number(form.lat) : undefined;
   const lng = form.lng.trim() ? Number(form.lng) : undefined;
-  const taxRatePercent = Number(form.taxRatePercent);
+  const taxRatePercent = parseFiniteNumber(form.taxRatePercent);
   return {
     name: form.name.trim(),
     shortName: form.shortName.trim(),
@@ -128,9 +171,21 @@ function toLocationPayload(form: LocationForm) {
     pickupAvailable: form.pickupAvailable,
     deliveryAvailable: form.deliveryAvailable,
     deliveryRadiusKm: Number.isFinite(radius) ? radius : 8,
-    deliveryFee: Number(form.deliveryFee),
-    deliveryFreeMinimum: Number(form.deliveryFreeMinimum),
-    taxRate: Number.isFinite(taxRatePercent) ? taxRatePercent / 100 : 0.08875,
+    deliveryFee: parseFiniteNumber(form.deliveryFee) ?? 0,
+    deliveryFreeMinimum: parseFiniteNumber(form.deliveryFreeMinimum) ?? 0,
+    minimumOrderAmount: parseFiniteNumber(form.minimumOrderAmount) ?? 0,
+    taxRate: taxRatePercent != null ? taxRatePercent / 100 : 0.08875,
+    hours: form.hours.map((h) => ({
+      day: h.day.trim(),
+      open: h.open.trim(),
+      close: h.close.trim(),
+    })),
+    holidayHours: form.holidayHours.map((h) => ({
+      date: h.date,
+      open: h.closed ? "" : h.open.trim(),
+      close: h.closed ? "" : h.close.trim(),
+      closed: h.closed,
+    })),
     heroImage: form.heroImage.trim(),
     gallery: form.gallery,
     ...(lat != null && Number.isFinite(lat) ? { lat } : {}),
@@ -145,7 +200,9 @@ export function LocationsPanel() {
     () => accessibleLocations(actor, getAllLocations()),
     [actor, tick],
   );
-  const { sortKey, sortDir, toggleSort } = useTableSort<"store" | "address" | "contact">("store");
+  const { sortKey, sortDir, toggleSort } = useTableSort<"store" | "address" | "delivery" | "contact">(
+    "store",
+  );
   const sortedLocations = useMemo(() => {
     return [...locations].sort((a, b) => {
       if (sortKey === "address") {
@@ -154,6 +211,13 @@ export function LocationsPanel() {
           `${b.city} ${b.address}`,
           sortDir,
         );
+      }
+      if (sortKey === "delivery") {
+        const deliveryValue = (loc: (typeof locations)[number]) => {
+          if (!loc.deliveryAvailable) return -1;
+          return loc.deliveryFee * 1000 + loc.taxRate;
+        };
+        return compareValues(deliveryValue(a), deliveryValue(b), sortDir);
       }
       if (sortKey === "contact") return compareValues(a.email, b.email, sortDir);
       return compareValues(a.shortName, b.shortName, sortDir);
@@ -191,11 +255,22 @@ export function LocationsPanel() {
       deliveryRadiusKm: String(location.deliveryRadiusKm ?? 8),
       deliveryFee: String(location.deliveryFee ?? 12.5),
       deliveryFreeMinimum: String(location.deliveryFreeMinimum ?? 150),
+      minimumOrderAmount: String(location.minimumOrderAmount ?? 0),
       taxRatePercent: String(Number(((location.taxRate ?? 0.08875) * 100).toFixed(3))),
       lat: location.lat != null ? String(location.lat) : "",
       lng: location.lng != null ? String(location.lng) : "",
       heroImage: location.heroImage,
       gallery: location.gallery.filter((url) => url !== location.heroImage),
+      hours:
+        location.hours?.length > 0
+          ? location.hours.map((h) => ({ ...h }))
+          : DEFAULT_FORM_HOURS.map((h) => ({ ...h })),
+      holidayHours: (location.holidayHours ?? []).map((h) => ({
+        date: h.date,
+        open: h.open ?? "",
+        close: h.close ?? "",
+        closed: Boolean(h.closed),
+      })),
     });
     setError("");
     setEditing(location);
@@ -286,6 +361,7 @@ export function LocationsPanel() {
         columns={[
           { key: "store", label: "Store" },
           { key: "address", label: "Address" },
+          { key: "delivery", label: "Delivery & tax" },
           { key: "contact", label: "Contact" },
         ]}
         sortKey={sortKey}
@@ -348,7 +424,13 @@ export function LocationsPanel() {
             <tr className={tableHeadRowClass}>
               <SortableTh label="Store" column="store" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Address" column="address" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th className="px-4 py-3 font-medium">Delivery & tax</th>
+              <SortableTh
+                label="Delivery & tax"
+                column="delivery"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+              />
               <SortableTh label="Contact" column="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
@@ -555,6 +637,174 @@ export function LocationsPanel() {
           </label>
 
           <div className="sm:col-span-2">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Business hours</p>
+            <p className="mt-1 text-xs text-muted">Day ranges and open/close times for this store.</p>
+            <div className="mt-3 space-y-2">
+              {form.hours.map((row, idx) => (
+                <div key={`hours-${idx}`} className="grid grid-cols-1 gap-2 sm:grid-cols-4">
+                  <Input
+                    value={row.day}
+                    placeholder="Mon–Thu"
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        hours: f.hours.map((h, i) =>
+                          i === idx ? { ...h, day: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="time"
+                    value={row.open}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        hours: f.hours.map((h, i) =>
+                          i === idx ? { ...h, open: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="time"
+                    value={row.close}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        hours: f.hours.map((h, i) =>
+                          i === idx ? { ...h, close: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    disabled={form.hours.length <= 1}
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        hours: f.hours.filter((_, i) => i !== idx),
+                      }))
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    hours: [...f.hours, { day: "", open: "10:00", close: "20:00" }],
+                  }))
+                }
+              >
+                Add hours row
+              </Button>
+            </div>
+          </div>
+
+          <div className="sm:col-span-2">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Holiday hours</p>
+            <p className="mt-1 text-xs text-muted">Optional exceptions for specific dates.</p>
+            <div className="mt-3 space-y-2">
+              {form.holidayHours.map((row, idx) => (
+                <div key={`hol-${idx}`} className="grid grid-cols-1 gap-2 sm:grid-cols-5">
+                  <Input
+                    type="date"
+                    value={row.date}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        holidayHours: f.holidayHours.map((h, i) =>
+                          i === idx ? { ...h, date: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="time"
+                    value={row.open}
+                    disabled={row.closed}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        holidayHours: f.holidayHours.map((h, i) =>
+                          i === idx ? { ...h, open: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <Input
+                    type="time"
+                    value={row.close}
+                    disabled={row.closed}
+                    onChange={(e) =>
+                      setForm((f) => ({
+                        ...f,
+                        holidayHours: f.holidayHours.map((h, i) =>
+                          i === idx ? { ...h, close: e.target.value } : h,
+                        ),
+                      }))
+                    }
+                  />
+                  <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
+                    <input
+                      type="checkbox"
+                      className="h-4 w-4 accent-(--gold)"
+                      checked={row.closed}
+                      onChange={(e) =>
+                        setForm((f) => ({
+                          ...f,
+                          holidayHours: f.holidayHours.map((h, i) =>
+                            i === idx ? { ...h, closed: e.target.checked } : h,
+                          ),
+                        }))
+                      }
+                    />
+                    Closed
+                  </label>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() =>
+                      setForm((f) => ({
+                        ...f,
+                        holidayHours: f.holidayHours.filter((_, i) => i !== idx),
+                      }))
+                    }
+                  >
+                    Remove
+                  </Button>
+                </div>
+              ))}
+              <Button
+                type="button"
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  setForm((f) => ({
+                    ...f,
+                    holidayHours: [
+                      ...f.holidayHours,
+                      { date: "", open: "10:00", close: "18:00", closed: false },
+                    ],
+                  }))
+                }
+              >
+                Add holiday
+              </Button>
+            </div>
+          </div>
+
+          <div className="sm:col-span-2">
             <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Delivery & pricing</p>
             <p className="mt-1 text-xs text-muted">
               Cart, checkout, and orders use these rates for this store only.
@@ -564,40 +814,58 @@ export function LocationsPanel() {
             Delivery fee ($)
             <Input
               className="mt-1"
-              type="number"
-              min={0}
-              max={500}
-              step={0.01}
+              inputMode="decimal"
               value={form.deliveryFee}
               disabled={!form.deliveryAvailable}
-              onChange={(e) => setForm((f) => ({ ...f, deliveryFee: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, deliveryFee: sanitizeMoneyInput(e.target.value, 2) }))
+              }
             />
           </label>
           <label className="block text-xs text-muted">
             Free delivery over ($)
             <Input
               className="mt-1"
-              type="number"
-              min={0}
-              max={10000}
-              step={1}
+              inputMode="decimal"
               value={form.deliveryFreeMinimum}
               disabled={!form.deliveryAvailable}
-              onChange={(e) => setForm((f) => ({ ...f, deliveryFreeMinimum: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  deliveryFreeMinimum: sanitizeMoneyInput(e.target.value, 2),
+                }))
+              }
             />
             <span className="mt-1 block text-[10px] text-muted/80">Use 0 if delivery is never free.</span>
+          </label>
+          <label className="block text-xs text-muted">
+            Minimum order ($)
+            <Input
+              className="mt-1"
+              inputMode="decimal"
+              value={form.minimumOrderAmount}
+              onChange={(e) =>
+                setForm((f) => ({
+                  ...f,
+                  minimumOrderAmount: sanitizeMoneyInput(e.target.value, 2),
+                }))
+              }
+            />
+            <span className="mt-1 block text-[10px] text-muted/80">
+              Cart must reach this amount before checkout. Use 0 for no minimum.
+            </span>
           </label>
           <label className="block text-xs text-muted">
             Tax rate (%)
             <Input
               className="mt-1"
-              type="number"
-              min={0}
-              max={25}
-              step={0.001}
+              inputMode="decimal"
               value={form.taxRatePercent}
-              onChange={(e) => setForm((f) => ({ ...f, taxRatePercent: e.target.value }))}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, taxRatePercent: sanitizeMoneyInput(e.target.value, 4) }))
+              }
             />
+            <span className="mt-1 block text-[10px] text-muted/80">0–25%, up to 4 decimals.</span>
           </label>
           <label className="block text-xs text-muted">
             Delivery radius (km)
@@ -652,7 +920,7 @@ export function LocationsPanel() {
             <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setEditing(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" className="w-full sm:w-auto" disabled={busy}>
+            <Button type="submit" className="w-full sm:w-auto" loading={busy}>
               {busy ? "Saving…" : "Save store"}
             </Button>
           </div>

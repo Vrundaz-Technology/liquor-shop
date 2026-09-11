@@ -14,10 +14,12 @@ type Props = {
   subtitle?: string;
   onClose: () => void;
   children: ReactNode;
+  /** Pinned below the scrollable body — use for Cancel/Save so actions never cover fields. */
+  footer?: ReactNode;
   className?: string;
 };
 
-export function Modal({ open, title, subtitle, onClose, children, className }: Props) {
+export function Modal({ open, title, subtitle, onClose, children, footer, className }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -74,7 +76,7 @@ export function Modal({ open, title, subtitle, onClose, children, className }: P
         aria-labelledby="modal-title"
         tabIndex={-1}
         className={cn(
-          "relative z-10 flex max-h-[min(92dvh,820px)] w-full max-w-full flex-col rounded-t-xl border border-white/10 bg-(--bg-elevated) pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:rounded-sm sm:max-w-xl sm:pt-0",
+          "relative z-10 flex max-h-[min(92dvh,900px)] w-full max-w-full flex-col rounded-t-xl border border-white/10 bg-(--bg-elevated) pt-[env(safe-area-inset-top,0px)] pb-[env(safe-area-inset-bottom,0px)] shadow-[0_24px_80px_rgba(0,0,0,0.55)] sm:rounded-sm sm:max-w-xl sm:pt-0",
           className,
         )}
       >
@@ -94,7 +96,14 @@ export function Modal({ open, title, subtitle, onClose, children, className }: P
             <X size={16} />
           </button>
         </div>
-        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5">{children}</div>
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:px-5 sm:py-5">
+          {children}
+        </div>
+        {footer ? (
+          <div className="shrink-0 border-t border-white/10 bg-(--bg-elevated) px-4 py-3 sm:px-5 sm:py-4">
+            {footer}
+          </div>
+        ) : null}
       </div>
     </div>,
     document.body,

@@ -12,6 +12,7 @@ import {
 } from "react";
 import { getCategories } from "@/data/categories";
 import { products } from "@/data/products";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 
 const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
@@ -499,7 +500,8 @@ export function ExperienceCollections() {
             </LineReveal>
             <Reveal delay={0.2}>
               <p className="mt-5 max-w-xl text-sm leading-relaxed text-[var(--muted)] md:text-base">
-                Explore categories with filters for brand, country, price, rating, and ABV.
+                Explore categories with filters for brand, country, price, rating, and{" "}
+                <AbbrTooltip term="ABV" />.
               </p>
             </Reveal>
           </div>

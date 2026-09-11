@@ -8,6 +8,8 @@ export const ACCESS_COOKIE = "sams_access";
 export const REFRESH_COOKIE = "sams_refresh";
 /** Legacy single-session cookie — cleared on logout / login. */
 export const LEGACY_SESSION_COOKIE = "sams_session";
+/** Readable hint so the client can avoid a logged-out flash before /me resolves. */
+export const AUTH_HINT_COOKIE = "sams_auth";
 
 export const ACCESS_TTL_SECONDS = 15 * 60;
 export const REFRESH_TTL_SECONDS = 7 * 24 * 60 * 60;
@@ -262,6 +264,13 @@ export function applyAuthCookies(res: NextResponse, tokens: IssuedTokens) {
     ...cookieBase("/"),
     maxAge: REFRESH_TTL_SECONDS,
   });
+  res.cookies.set(AUTH_HINT_COOKIE, "1", {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: REFRESH_TTL_SECONDS,
+  });
   // Drop legacy opaque-looking session cookie name.
   res.cookies.set(LEGACY_SESSION_COOKIE, "", {
     ...cookieBase(),
@@ -277,9 +286,17 @@ export function clearAuthCookies(res: NextResponse) {
   res.cookies.set(ACCESS_COOKIE, "", { ...cookieBase(), ...expired });
   res.cookies.set(REFRESH_COOKIE, "", { ...cookieBase("/"), ...expired });
   res.cookies.set(LEGACY_SESSION_COOKIE, "", { ...cookieBase(), ...expired });
+  res.cookies.set(AUTH_HINT_COOKIE, "", {
+    httpOnly: false,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    ...expired,
+  });
   res.cookies.delete(ACCESS_COOKIE);
   res.cookies.delete(REFRESH_COOKIE);
   res.cookies.delete(LEGACY_SESSION_COOKIE);
+  res.cookies.delete(AUTH_HINT_COOKIE);
   return res;
 }
 

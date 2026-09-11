@@ -47,6 +47,7 @@ export function DataBootstrap() {
             data.inventory.stocks,
             data.inventory.seats,
             data.inventory.hidden,
+            data.inventory.reserved,
           );
         } else {
           setHydrated(true);

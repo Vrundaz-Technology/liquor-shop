@@ -13,10 +13,12 @@ import {
   UserRound,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { getLocationById } from "@/data/locations";
 import { getProductById } from "@/data/products";
 import { pricingFromLocation } from "@/lib/fulfillment-pricing";
 import { cn, formatPrice } from "@/lib/utils";
+import { buildTrackingSteps } from "@/lib/commerce/order-tracking";
 import type { Order } from "@/types";
 
 export type SummaryOrder = Order & {
@@ -26,26 +28,53 @@ export type SummaryOrder = Order & {
 };
 
 const STATUS_STYLES: Record<Order["status"], string> = {
+  new: "bg-amber-500/15 text-amber-200 border-amber-500/35",
+  accepted: "bg-amber-500/15 text-amber-200 border-amber-500/35",
+  preparing: "bg-orange-500/15 text-orange-200 border-orange-500/35",
+  ready: "bg-emerald-500/15 text-emerald-200 border-emerald-500/35",
+  assigned: "bg-sky-500/15 text-sky-200 border-sky-500/35",
+  out_for_delivery: "bg-sky-500/15 text-sky-200 border-sky-500/35",
+  delivered: "bg-(--gold)/15 text-gold border-(--gold)/40",
+  ready_for_pickup: "bg-emerald-500/15 text-emerald-200 border-emerald-500/35",
+  picked_up: "bg-(--gold)/15 text-gold border-(--gold)/40",
+  completed: "bg-(--gold)/15 text-gold border-(--gold)/40",
+  cancelled: "bg-(--danger)/15 text-(--danger) border-(--danger)/35",
   processing: "bg-amber-500/15 text-amber-200 border-amber-500/35",
   shipped: "bg-sky-500/15 text-sky-200 border-sky-500/35",
-  ready: "bg-emerald-500/15 text-emerald-200 border-emerald-500/35",
-  delivered: "bg-(--gold)/15 text-gold border-(--gold)/40",
-  cancelled: "bg-(--danger)/15 text-(--danger) border-(--danger)/35",
 };
 
 const STATUS_LABEL: Record<Order["status"], string> = {
+  new: "New",
+  accepted: "Accepted",
+  preparing: "Preparing",
+  ready: "Ready",
+  assigned: "Assigned",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  ready_for_pickup: "Ready for pickup",
+  picked_up: "Picked up",
+  completed: "Completed",
+  cancelled: "Cancelled",
   processing: "Processing",
   shipped: "Out for delivery",
-  ready: "Ready for pickup",
-  delivered: "Completed",
-  cancelled: "Cancelled",
 };
 
 const FULFILLMENT_LABEL: Record<Order["fulfillment"], string> = {
   delivery: "Delivery",
   pickup: "Pickup",
-  pos: "In-store / POS",
+  pos: "In-store",
 };
+
+function FulfillmentLabel({ type }: { type: Order["fulfillment"] }) {
+  if (type === "pos") {
+    return (
+      <>
+        In-store / <AbbrTooltip term="POS" />
+      </>
+    );
+  }
+  return <>{FULFILLMENT_LABEL[type]}</>;
+}
 
 function bottleCount(order: Order) {
   return order.items.reduce((sum, item) => sum + item.quantity, 0);
@@ -58,84 +87,12 @@ function formatAddress(order: Order) {
 }
 
 function activitySteps(order: Order) {
-  const steps: { label: string; done: boolean; current: boolean; note?: string }[] = [
-    {
-      label: "Placed",
-      done: true,
-      current: order.status === "processing" && order.fulfillment !== "pos",
-      note: order.date,
-    },
-  ];
-
-  if (order.fulfillment === "pos") {
-    steps.push({
-      label: order.status === "cancelled" ? "Cancelled" : "Completed at register",
-      done: order.status === "delivered" || order.status === "cancelled",
-      current: order.status === "delivered" || order.status === "cancelled",
-      note: order.status === "cancelled" ? "Sale voided / cancelled" : "Paid in store",
-    });
-    return steps;
-  }
-
-  if (order.fulfillment === "pickup") {
-    if (order.status === "cancelled") {
-      steps.push({
-        label: "Cancelled",
-        done: true,
-        current: true,
-        note: "Order cancelled before pickup",
-      });
-      return steps;
-    }
-    steps.push(
-      {
-        label: "Preparing",
-        done: ["ready", "delivered", "shipped"].includes(order.status),
-        current: order.status === "processing",
-      },
-      {
-        label: "Ready for pickup",
-        done: ["ready", "delivered"].includes(order.status),
-        current: order.status === "ready",
-      },
-      {
-        label: "Picked up",
-        done: order.status === "delivered",
-        current: order.status === "delivered",
-      },
-    );
-    return steps;
-  }
-
-  if (order.status === "cancelled") {
-    steps.push({
-      label: "Cancelled",
-      done: true,
-      current: true,
-      note: "Order cancelled",
-    });
-    return steps;
-  }
-
-  steps.push(
-    {
-      label: "Processing",
-      done: ["shipped", "delivered"].includes(order.status),
-      current: order.status === "processing",
-    },
-    {
-      label: "Out for delivery",
-      done: ["shipped", "delivered"].includes(order.status),
-      current: order.status === "shipped" || order.deliveryStatus === "en_route",
-      note: order.driver ? `Driver ${order.driver.name}` : undefined,
-    },
-    {
-      label: "Delivered",
-      done: order.status === "delivered",
-      current: order.status === "delivered",
-    },
-  );
-  return steps;
+  return buildTrackingSteps(order).map((step) => ({
+    label: step.label,
+    done: step.done,
+    current: step.current,
+    note: step.current && order.driver ? `Driver ${order.driver.name}` : undefined,
+  }));
 }
 
 function paymentCopy(order: Order) {
@@ -202,7 +159,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
               {order.id}
             </h2>
             <p className="mt-2 text-sm text-muted">
-              {FULFILLMENT_LABEL[order.fulfillment]}
+              <FulfillmentLabel type={order.fulfillment} />
               {location ? ` · ${location.shortName}` : ""}
               {" · Placed "}
               {order.date}
@@ -268,7 +225,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
                 <div>
                   <p className="text-[10px] uppercase tracking-[0.16em] text-muted">Type</p>
                   <p className="mt-1 text-sm text-cream">
-                    {FULFILLMENT_LABEL[order.fulfillment]}
+                    <FulfillmentLabel type={order.fulfillment} />
                   </p>
                 </div>
               </div>
@@ -388,7 +345,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
                       {product?.name ?? item.productId}
                     </p>
                     <p className="mt-0.5 text-[11px] text-muted">
-                      Qty {item.quantity}
+                      <AbbrTooltip term="Qty" /> {item.quantity}
                       {product?.brand ? ` · ${product.brand}` : ""}
                     </p>
                   </div>

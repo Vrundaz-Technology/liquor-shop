@@ -13,15 +13,46 @@ import { categories as seedCategories } from "@/data/categories";
 import { products as seedProducts } from "@/data/products";
 import { locations as seedLocations } from "@/data/locations";
 import { events as seedEvents, reviews as seedReviews, demoUser } from "@/data/events";
-import { getCouponDiscount } from "@/lib/commerce";
+import { getCouponDiscount, resolvePromotionDiscount } from "@/lib/commerce";
+import {
+  loyaltyDiscountFromPoints,
+} from "@/lib/commerce/cart-pricing";
 import { calculateShipping, calculateTax } from "@/lib/fulfillment-pricing";
 import { ensureLocationPricingSchema, mapLocationPricing } from "@/lib/db/location-pricing";
 import { ensureInventoryVisibilityColumn } from "@/lib/db/inventory-visibility";
 import type { Prisma } from "@prisma/client";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { attachProfileExtras } from "@/lib/db/users";
 import { saveOrderDelivery, hydrateOrderDelivery } from "@/lib/db/delivery";
 import type { DeliveryAddress } from "@/types";
+import {
+  ensureOrganizationSchema,
+  resolveLocationOrganizationId,
+  SAMS_ORG_ID,
+} from "@/lib/db/organization";
+import { initialOrderStatus, availableStock } from "@/lib/commerce/order-status";
+import * as loyaltyDb from "@/lib/db/loyalty";
+import { syncOrganizationCustomer } from "@/lib/db/crm";
+
+import { moneyNumber } from "@/lib/db/money";
+
+function unitPriceForInventory(
+  productPrice: number,
+  inv?: {
+    basePrice?: unknown;
+    salePrice?: unknown;
+    promoPrice?: unknown;
+  } | null,
+) {
+  const sale = moneyNumber(inv?.salePrice);
+  if (inv?.salePrice != null && sale > 0) return sale;
+  const promo = moneyNumber(inv?.promoPrice);
+  if (inv?.promoPrice != null && promo > 0) return promo;
+  const base = moneyNumber(inv?.basePrice);
+  if (inv?.basePrice != null && base > 0) return base;
+  return productPrice;
+}
 
 function slugify(value: string) {
   return value
@@ -69,12 +100,24 @@ export async function fetchProductById(id: string) {
   return row ? mapProduct(row) : undefined;
 }
 
-export async function fetchAllLocations() {
-  if (!isDbConfigured()) return seedLocations;
+export async function fetchAllLocations(opts?: { inventoryMode?: "full" | "featured" }) {
+  const inventoryMode = opts?.inventoryMode ?? "full";
+  if (!isDbConfigured()) {
+    if (inventoryMode === "full") return seedLocations;
+    return seedLocations.map((loc) => ({
+      ...loc,
+      inventory: loc.inventory.filter((row) => row.featured),
+    }));
+  }
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
   const rows = await prisma.location.findMany({
-    include: { inventory: true },
+    include: {
+      inventory:
+        inventoryMode === "featured"
+          ? { where: { featured: true } }
+          : true,
+    },
     orderBy: { name: "asc" },
   });
   return rows.map(mapLocation);
@@ -145,6 +188,9 @@ export async function createShopCategory(
     entityType: "category",
     entityId: category.slug,
     summary: `Added category “${category.name}”`,
+    metadata: {
+      changes: [{ field: "created", to: category.name }],
+    },
   });
   return { category };
 }
@@ -167,12 +213,26 @@ export async function updateShopCategory(
     },
   });
   const category = mapCategory(row);
+  const changes = [];
+  if (input.name !== undefined && input.name.trim() && input.name.trim() !== existing.name) {
+    changes.push({ field: "name", from: existing.name, to: category.name });
+  }
+  if (input.tagline !== undefined && input.tagline.trim() !== existing.tagline) {
+    changes.push({ field: "tagline", from: existing.tagline, to: category.tagline });
+  }
+  if (input.description !== undefined && input.description.trim() !== existing.description) {
+    changes.push({ field: "description", from: existing.description, to: category.description });
+  }
+  if (input.color && normalizeColor(input.color) !== existing.color) {
+    changes.push({ field: "color", from: existing.color, to: category.color });
+  }
   await recordActivity({
     actorUserId,
     action: "category.updated",
     entityType: "category",
     entityId: category.slug,
     summary: `Updated category “${category.name}”`,
+    metadata: changes.length ? { changes } : undefined,
   });
   return { category };
 }
@@ -199,6 +259,9 @@ export async function deleteShopCategory(slug: string, actorUserId?: string) {
     entityType: "category",
     entityId: slug,
     summary: `Removed category “${existing.name}”`,
+    metadata: {
+      changes: [{ field: "deleted", from: existing.name, to: "(deleted)" }],
+    },
   });
   return { ok: true as const, slug };
 }
@@ -239,31 +302,79 @@ export async function fetchReviewsForProduct(productId: string) {
 export async function fetchInventoryState() {
   if (!isDbConfigured()) {
     const stocks: Record<string, number> = {};
+    const reserved: Record<string, number> = {};
+    const prices: Record<
+      string,
+      {
+        basePrice: number | null;
+        salePrice: number | null;
+        costPrice: number | null;
+        promoPrice: number | null;
+      }
+    > = {};
     const hidden: Record<string, boolean> = {};
     for (const loc of seedLocations) {
       for (const row of loc.inventory) {
-        stocks[`${loc.id}:${row.productId}`] = row.stock;
-        if (row.hidden) hidden[`${loc.id}:${row.productId}`] = true;
+        const key = `${loc.id}:${row.productId}`;
+        stocks[key] = row.stock;
+        reserved[key] = 0;
+        prices[key] = {
+          basePrice: null,
+          salePrice: null,
+          costPrice: null,
+          promoPrice: null,
+        };
+        if (row.hidden) hidden[key] = true;
       }
     }
     const seats: Record<string, number> = {};
     for (const e of seedEvents) seats[e.id] = e.seatsAvailable;
-    return { stocks, seats, hidden };
+    return { stocks, reserved, prices, seats, hidden };
   }
 
   await ensureInventoryVisibilityColumn();
 
   const rows = await prisma.$queryRaw<
-    { location_id: string; product_id: string; on_hand: number; hidden: boolean }[]
+    {
+      location_id: string;
+      product_id: string;
+      on_hand: number;
+      reserved: number;
+      hidden: boolean;
+      base_price: unknown;
+      sale_price: unknown;
+      cost_price: unknown;
+      promo_price: unknown;
+    }[]
   >`
-    SELECT location_id, product_id, on_hand, COALESCE(hidden, false) AS hidden
+    SELECT location_id, product_id, on_hand,
+           COALESCE(reserved, 0) AS reserved,
+           COALESCE(hidden, false) AS hidden,
+           base_price, sale_price, cost_price, promo_price
     FROM location_inventory
   `;
   const stocks: Record<string, number> = {};
+  const reserved: Record<string, number> = {};
+  const prices: Record<
+    string,
+    {
+      basePrice: number | null;
+      salePrice: number | null;
+      costPrice: number | null;
+      promoPrice: number | null;
+    }
+  > = {};
   const hidden: Record<string, boolean> = {};
   for (const row of rows) {
     const key = `${row.location_id}:${row.product_id}`;
     stocks[key] = row.on_hand;
+    reserved[key] = row.reserved ?? 0;
+    prices[key] = {
+      basePrice: row.base_price == null ? null : moneyNumber(row.base_price),
+      salePrice: row.sale_price == null ? null : moneyNumber(row.sale_price),
+      costPrice: row.cost_price == null ? null : moneyNumber(row.cost_price),
+      promoPrice: row.promo_price == null ? null : moneyNumber(row.promo_price),
+    };
     if (row.hidden) hidden[key] = true;
   }
 
@@ -271,7 +382,7 @@ export async function fetchInventoryState() {
   const seats: Record<string, number> = {};
   for (const e of events) seats[e.id] = e.seatsAvailable;
 
-  return { stocks, seats, hidden };
+  return { stocks, reserved, prices, seats, hidden };
 }
 
 export async function setProductVisibility(
@@ -316,7 +427,16 @@ export async function setProductVisibility(
     entityId: productId,
     locationId,
     summary: `${hidden ? "Hid" : "Showed"} bottle on this store's website`,
-    metadata: { productId, hidden },
+    metadata: activityChanges(
+      [
+        {
+          field: "visibility",
+          from: existing?.hidden ? "Hidden" : "Visible",
+          to: hidden ? "Hidden" : "Visible",
+        },
+      ],
+      { productId, hidden },
+    ),
   });
 
   return { hidden, inventory: await fetchInventoryState() };
@@ -339,6 +459,17 @@ export async function fetchUserByEmail(email: string): Promise<UserProfile | nul
   if (!row) return null;
   const orders = await Promise.all(row.orders.map((order) => hydrateOrderDelivery(mapOrder(order))));
   return attachProfileExtras(mapUser(row, orders));
+}
+
+/** Auth/session profile — no order history (keeps refresh + /me fast). */
+export async function fetchSessionUser(id: string): Promise<UserProfile | null> {
+  if (!isDbConfigured()) {
+    if (id === demoUser.id) return { ...demoUser, orders: [] };
+    return null;
+  }
+  const row = await prisma.user.findUnique({ where: { id } });
+  if (!row) return null;
+  return attachProfileExtras(mapUser(row, []));
 }
 
 export async function fetchUserById(id: string): Promise<UserProfile | null> {
@@ -367,43 +498,77 @@ export async function updateUserProfile(
   >,
 ) {
   if (!isDbConfigured()) return;
+  const existing = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { preferredBranchId: true, addresses: true },
+  });
   await prisma.user.update({
     where: { id: userId },
     data: patch,
   });
   if (patch.preferredBranchId || patch.addresses) {
-    await recordActivity({
-      actorUserId: userId,
-      action: "user.profile_updated",
-      entityType: "profile",
-      entityId: userId,
-      summary: patch.preferredBranchId
-        ? `Updated preferred branch to ${patch.preferredBranchId}`
-        : "Updated saved addresses",
-      metadata: {
-        fields: Object.keys(patch).filter((k) => k !== "recentlyViewed"),
+    const changes = onlyChanged([
+      {
+        field: "preferred branch",
+        from: existing?.preferredBranchId ?? "(none)",
+        to: patch.preferredBranchId ?? existing?.preferredBranchId ?? "(none)",
       },
+      {
+        field: "addresses",
+        from: Array.isArray(existing?.addresses) ? existing.addresses.length : 0,
+        to: Array.isArray(patch.addresses)
+          ? patch.addresses.length
+          : Array.isArray(existing?.addresses)
+            ? existing.addresses.length
+            : 0,
+      },
+    ]).filter((c) => {
+      if (c.field === "preferred branch" && !patch.preferredBranchId) return false;
+      if (c.field === "addresses" && !patch.addresses) return false;
+      return true;
     });
+    if (changes.length) {
+      await recordActivity({
+        actorUserId: userId,
+        action: "user.profile_updated",
+        entityType: "profile",
+        entityId: userId,
+        summary: patch.preferredBranchId
+          ? `Updated preferred branch to ${patch.preferredBranchId}`
+          : "Updated saved addresses",
+        metadata: activityChanges(changes),
+      });
+    }
   }
 }
 
-export async function redeemLoyaltyPoints(userId: string, points: number) {
+export async function redeemUserLoyaltyPoints(
+  userId: string,
+  points: number,
+  organizationId?: string,
+  orderId?: string | null,
+) {
   if (!isDbConfigured()) return true;
-  const result = await prisma.user.updateMany({
-    where: { id: userId, loyaltyPoints: { gte: points } },
-    data: { loyaltyPoints: { decrement: points } },
+  const orgId = organizationId ?? SAMS_ORG_ID;
+  await loyaltyDb.redeemLoyaltyPoints({
+    organizationId: orgId,
+    userId,
+    points,
+    orderId,
   });
-  if (result.count === 1) {
-    await recordActivity({
-      actorUserId: userId,
-      action: "user.points_redeemed",
-      entityType: "profile",
-      entityId: userId,
-      summary: `Redeemed ${points} loyalty points`,
-      metadata: { points },
-    });
-  }
-  return result.count === 1;
+  await recordActivity({
+    actorUserId: userId,
+    action: "user.points_redeemed",
+    entityType: "profile",
+    entityId: userId,
+    summary: `Redeemed ${points} loyalty points`,
+    metadata: activityChanges([{ field: "points", to: `-${points}` }], {
+      points,
+      organizationId: orgId,
+      orderId: orderId ?? null,
+    }),
+  });
+  return true;
 }
 
 type Tx = Prisma.TransactionClient;
@@ -494,6 +659,11 @@ export async function createCustomProduct(
     volumeMl: input.volumeMl,
     price: input.price,
     compareAtPrice: input.compareAtPrice && input.compareAtPrice > 0 ? input.compareAtPrice : undefined,
+    costPrice: input.costPrice && input.costPrice > 0 ? input.costPrice : undefined,
+    sku: input.sku?.trim() || undefined,
+    upc: input.upc?.trim() || undefined,
+    minQty: input.minQty ?? 1,
+    maxQty: input.maxQty ?? undefined,
     rating: 0,
     reviewCount: 0,
     tastingNotes: notes,
@@ -528,6 +698,11 @@ export async function createCustomProduct(
         volumeMl: product.volumeMl,
         price: product.price,
         compareAtPrice: product.compareAtPrice ?? null,
+        costPrice: product.costPrice ?? null,
+        sku: product.sku ?? null,
+        upc: product.upc ?? null,
+        minQty: product.minQty ?? 1,
+        maxQty: product.maxQty ?? null,
         rating: product.rating,
         reviewCount: product.reviewCount,
         tastingNotes: product.tastingNotes,
@@ -572,12 +747,21 @@ export async function createCustomProduct(
     entityType: "product",
     entityId: product.id,
     summary: `Added bottle “${product.name}” (${product.brand}) with ${Math.floor(input.initialStock)} units`,
-    metadata: {
-      brand: product.brand,
-      category: product.category,
-      initialStock: Math.floor(input.initialStock),
-      stockLocationIds: input.stockLocationIds ?? "all",
-    },
+    metadata: activityChanges(
+      [
+        { field: "created", to: product.name },
+        { field: "brand", to: product.brand },
+        { field: "category", to: product.category },
+        { field: "price", to: `$${Number(product.price).toFixed(2)}` },
+        { field: "initial stock", to: Math.floor(input.initialStock) },
+      ],
+      {
+        brand: product.brand,
+        category: product.category,
+        initialStock: Math.floor(input.initialStock),
+        stockLocationIds: input.stockLocationIds ?? "all",
+      },
+    ),
   });
 
   return { product, inventory: await fetchInventoryState() };
@@ -606,6 +790,10 @@ export async function deleteCustomProduct(productId: string, actorUserId?: strin
     entityType: "product",
     entityId: productId,
     summary: `Removed bottle “${existing.name}” (${existing.brand})`,
+    metadata: activityChanges([
+      { field: "deleted", from: existing.name, to: "(deleted)" },
+      { field: "brand", from: existing.brand, to: "(deleted)" },
+    ]),
   });
   return { ok: true as const, id: productId, inventory: await fetchInventoryState() };
 }
@@ -643,6 +831,21 @@ export async function updateCatalogProduct(
       volumeMl: input.volumeMl ?? existing.volumeMl,
       price: input.price ?? existing.price,
       compareAtPrice,
+      costPrice:
+        input.costPrice === undefined
+          ? existing.costPrice
+          : input.costPrice && input.costPrice > 0
+            ? input.costPrice
+            : null,
+      sku: input.sku !== undefined ? input.sku.trim() || null : existing.sku,
+      upc: input.upc !== undefined ? input.upc.trim() || null : existing.upc,
+      minQty: input.minQty ?? existing.minQty,
+      maxQty:
+        input.maxQty === undefined
+          ? existing.maxQty
+          : input.maxQty && input.maxQty > 0
+            ? input.maxQty
+            : null,
       tastingNotes,
       foodPairings,
       images,
@@ -651,18 +854,76 @@ export async function updateCatalogProduct(
     },
   });
   const product = mapProduct(row);
-  await recordActivity({
-    actorUserId,
-    action: "catalog.updated",
-    entityType: "product",
-    entityId: product.id,
-    summary: `Updated bottle “${product.name}” (${product.brand})`,
-    metadata: {
-      brand: product.brand,
-      category: product.category,
-      price: product.price,
+  const money = (n: number | null | undefined) =>
+    n == null || n <= 0 ? "(none)" : `$${Number(n).toFixed(2)}`;
+  const list = (arr: string[]) => (arr.length ? arr.join(", ") : "(none)");
+  const changes = onlyChanged([
+    { field: "name", from: mapped.name, to: product.name },
+    { field: "brand", from: mapped.brand, to: product.brand },
+    { field: "category", from: mapped.category, to: product.category },
+    { field: "description", from: mapped.description, to: product.description },
+    { field: "brand story", from: mapped.brandStory, to: product.brandStory },
+    { field: "origin", from: mapped.origin, to: product.origin },
+    { field: "country", from: mapped.country, to: product.country },
+    { field: "abv", from: mapped.abv, to: product.abv },
+    { field: "volume", from: `${mapped.volumeMl}ml`, to: `${product.volumeMl}ml` },
+    { field: "price", from: money(mapped.price), to: money(product.price) },
+    {
+      field: "compare at",
+      from: money(mapped.compareAtPrice),
+      to: money(product.compareAtPrice),
     },
-  });
+    { field: "cost", from: money(mapped.costPrice), to: money(product.costPrice) },
+    { field: "sku", from: mapped.sku ?? "(none)", to: product.sku ?? "(none)" },
+    { field: "upc", from: mapped.upc ?? "(none)", to: product.upc ?? "(none)" },
+    { field: "min qty", from: mapped.minQty, to: product.minQty },
+    {
+      field: "max qty",
+      from: mapped.maxQty ?? "(none)",
+      to: product.maxQty ?? "(none)",
+    },
+    {
+      field: "tasting notes",
+      from: list(mapped.tastingNotes),
+      to: list(product.tastingNotes),
+    },
+    {
+      field: "food pairings",
+      from: list(mapped.foodPairings),
+      to: list(product.foodPairings),
+    },
+    {
+      field: "images",
+      from: mapped.images.length,
+      to: product.images.length,
+    },
+    {
+      field: "premium",
+      from: mapped.isPremium ? "Yes" : "No",
+      to: product.isPremium ? "Yes" : "No",
+    },
+    {
+      field: "imported",
+      from: mapped.isImported ? "Yes" : "No",
+      to: product.isImported ? "Yes" : "No",
+    },
+  ]);
+  if (changes.length) {
+    await recordActivity({
+      actorUserId,
+      action: "catalog.updated",
+      entityType: "product",
+      entityId: product.id,
+      summary: `Updated bottle “${product.name}” (${product.brand}) — ${changes.length} field${
+        changes.length === 1 ? "" : "s"
+      }`,
+      metadata: activityChanges(changes, {
+        brand: product.brand,
+        category: product.category,
+        price: product.price,
+      }),
+    });
+  }
   return { product };
 }
 
@@ -672,6 +933,7 @@ async function logStockActivity(opts: {
   productId?: string;
   reason: string;
   quantity?: number;
+  previousQuantity?: number;
   delta?: number;
 }) {
   const location =
@@ -706,6 +968,22 @@ async function logStockActivity(opts: {
           ? `Adjusted ${bottle} at ${branch} by ${opts.delta > 0 ? "+" : ""}${opts.delta}`
           : `Set ${bottle} at ${branch} to ${opts.quantity ?? 0} on hand`;
 
+  const changes: { field: string; from?: unknown; to?: unknown }[] = [];
+  if (typeof opts.previousQuantity === "number" && typeof opts.quantity === "number") {
+    changes.push({ field: "quantity", from: opts.previousQuantity, to: opts.quantity });
+  } else if (typeof opts.quantity === "number") {
+    changes.push({ field: "quantity", to: opts.quantity });
+  }
+  if (typeof opts.delta === "number") {
+    changes.push({
+      field: "delta",
+      to: `${opts.delta > 0 ? "+" : ""}${opts.delta}`,
+    });
+  }
+  if (action === "inventory.reset") {
+    changes.push({ field: "reset", to: "seed stock" });
+  }
+
   await recordActivity({
     actorUserId: opts.actorUserId,
     action,
@@ -713,11 +991,11 @@ async function logStockActivity(opts: {
     entityId: opts.productId,
     summary,
     locationId: opts.locationId === "all" ? undefined : opts.locationId,
-    metadata: {
+    metadata: activityChanges(changes, {
       reason: opts.reason,
       quantity: opts.quantity,
       delta: opts.delta,
-    },
+    }),
   });
 }
 
@@ -731,6 +1009,11 @@ export async function setInventoryOnHand(
 ) {
   if (!isDbConfigured()) return quantity;
   const nextQty = Math.max(0, Math.floor(quantity));
+  const existing = await prisma.locationInventory.findUnique({
+    where: { locationId_productId: { locationId, productId } },
+    select: { onHand: true },
+  });
+  const previousQuantity = existing?.onHand ?? 0;
   await prisma.$transaction((tx) =>
     writeStockChange(tx, locationId, productId, nextQty, reason, orderId),
   );
@@ -739,7 +1022,9 @@ export async function setInventoryOnHand(
     locationId,
     productId,
     reason,
+    previousQuantity,
     quantity: nextQty,
+    delta: nextQty - previousQuantity,
   });
   return nextQty;
 }
@@ -757,26 +1042,28 @@ export async function adjustInventory(
 
   await ensureInventoryVisibilityColumn();
 
-  const ok = await prisma.$transaction(async (tx) => {
+  const result = await prisma.$transaction(async (tx) => {
     const existing = await tx.locationInventory.findUnique({
       where: { locationId_productId: { locationId, productId } },
     });
     const current = existing?.onHand ?? 0;
     const nextQty = current + delta;
-    if (nextQty < 0) return false;
+    if (nextQty < 0) return null;
     await writeStockChange(tx, locationId, productId, nextQty, reason, orderId);
-    return true;
+    return { previousQuantity: current, quantity: nextQty };
   });
-  if (ok) {
+  if (result) {
     await logStockActivity({
       actorUserId,
       locationId,
       productId,
       reason,
+      previousQuantity: result.previousQuantity,
+      quantity: result.quantity,
       delta,
     });
   }
-  return ok;
+  return Boolean(result);
 }
 
 async function deductOrderStockTx(
@@ -788,23 +1075,24 @@ async function deductOrderStockTx(
   const shortfalls: { productId: string; requested: number; onHand: number }[] = [];
 
   for (const item of items) {
-    const result = await tx.locationInventory.updateMany({
-      where: {
-        locationId,
-        productId: item.productId,
-        onHand: { gte: item.quantity },
-      },
-      data: { onHand: { decrement: item.quantity } },
-    });
+    // Atomic: POS / immediate sale cannot take bottles held for online orders.
+    const affected = await tx.$executeRaw`
+      UPDATE location_inventory
+      SET on_hand = on_hand - ${item.quantity}
+      WHERE location_id = ${locationId}
+        AND product_id = ${item.productId}
+        AND (on_hand - COALESCE(reserved, 0)) >= ${item.quantity}
+    `;
 
-    if (result.count !== 1) {
+    if (Number(affected) !== 1) {
       const row = await tx.locationInventory.findUnique({
         where: { locationId_productId: { locationId, productId: item.productId } },
       });
+      const reserved = (row as { reserved?: number } | null)?.reserved ?? 0;
       shortfalls.push({
         productId: item.productId,
         requested: item.quantity,
-        onHand: row?.onHand ?? 0,
+        onHand: availableStock(row?.onHand ?? 0, reserved),
       });
     }
   }
@@ -826,6 +1114,163 @@ async function deductOrderStockTx(
       },
     });
   }
+}
+
+/** Hold stock for online orders without decrementing on-hand yet. */
+async function reserveOrderStockTx(
+  tx: Tx,
+  locationId: string,
+  items: Pick<CartItem, "productId" | "quantity">[],
+  orderId: string,
+) {
+  const shortfalls: { productId: string; requested: number; onHand: number }[] = [];
+
+  for (const item of items) {
+    const affected = await tx.$executeRaw`
+      UPDATE location_inventory
+      SET reserved = COALESCE(reserved, 0) + ${item.quantity}
+      WHERE location_id = ${locationId}
+        AND product_id = ${item.productId}
+        AND (on_hand - COALESCE(reserved, 0)) >= ${item.quantity}
+    `;
+
+    if (Number(affected) !== 1) {
+      const row = await tx.locationInventory.findUnique({
+        where: { locationId_productId: { locationId, productId: item.productId } },
+      });
+      const reserved = (row as { reserved?: number } | null)?.reserved ?? 0;
+      shortfalls.push({
+        productId: item.productId,
+        requested: item.quantity,
+        onHand: availableStock(row?.onHand ?? 0, reserved),
+      });
+      continue;
+    }
+
+    const row = await tx.locationInventory.findUnique({
+      where: { locationId_productId: { locationId, productId: item.productId } },
+    });
+    await tx.inventoryLedger.create({
+      data: {
+        locationId,
+        productId: item.productId,
+        delta: item.quantity,
+        onHandAfter: row?.onHand ?? 0,
+        reason: "reserve",
+        orderId,
+      },
+    });
+  }
+
+  if (shortfalls.length) throw new StockConflictError(shortfalls);
+}
+
+/** Convert reserved → sold when staff accepts / starts preparing. */
+async function commitReservedStockTx(
+  tx: Tx,
+  locationId: string,
+  items: Pick<CartItem, "productId" | "quantity">[],
+  orderId: string,
+) {
+  for (const item of items) {
+    const before = await tx.locationInventory.findUnique({
+      where: { locationId_productId: { locationId, productId: item.productId } },
+    });
+    if (!before) continue;
+    const reservedBefore = (before as { reserved?: number }).reserved ?? 0;
+    const releaseQty = Math.min(reservedBefore, item.quantity);
+
+    const affected = await tx.$executeRaw`
+      UPDATE location_inventory
+      SET on_hand = on_hand - ${item.quantity},
+          reserved = GREATEST(0, COALESCE(reserved, 0) - ${item.quantity})
+      WHERE location_id = ${locationId}
+        AND product_id = ${item.productId}
+        AND on_hand >= ${item.quantity}
+    `;
+    if (Number(affected) !== 1) {
+      throw new StockConflictError([
+        {
+          productId: item.productId,
+          requested: item.quantity,
+          onHand: before.onHand ?? 0,
+        },
+      ]);
+    }
+
+    const row = await tx.locationInventory.findUnique({
+      where: { locationId_productId: { locationId, productId: item.productId } },
+    });
+    const nextOnHand = row?.onHand ?? 0;
+
+    await tx.inventoryLedger.create({
+      data: {
+        locationId,
+        productId: item.productId,
+        delta: -item.quantity,
+        onHandAfter: nextOnHand,
+        reason: "sale",
+        orderId,
+      },
+    });
+
+    if (releaseQty > 0) {
+      await tx.inventoryLedger.create({
+        data: {
+          locationId,
+          productId: item.productId,
+          delta: -releaseQty,
+          onHandAfter: nextOnHand,
+          reason: "release",
+          orderId,
+        },
+      });
+    }
+  }
+}
+
+async function releaseReservedStockTx(
+  tx: Tx,
+  locationId: string,
+  items: Pick<CartItem, "productId" | "quantity">[],
+  orderId: string,
+) {
+  for (const item of items) {
+    const before = await tx.locationInventory.findUnique({
+      where: { locationId_productId: { locationId, productId: item.productId } },
+    });
+    if (!before) continue;
+    const reserved = (before as { reserved?: number }).reserved ?? 0;
+    const releaseQty = Math.min(reserved, item.quantity);
+    if (!releaseQty) continue;
+
+    await tx.$executeRaw`
+      UPDATE location_inventory
+      SET reserved = GREATEST(0, COALESCE(reserved, 0) - ${releaseQty})
+      WHERE location_id = ${locationId}
+        AND product_id = ${item.productId}
+    `;
+
+    await tx.inventoryLedger.create({
+      data: {
+        locationId,
+        productId: item.productId,
+        delta: -releaseQty,
+        onHandAfter: before.onHand ?? 0,
+        reason: "release",
+        orderId,
+      },
+    });
+  }
+}
+
+export async function commitReservedStockForOrder(
+  tx: Prisma.TransactionClient,
+  locationId: string,
+  items: Pick<CartItem, "productId" | "quantity">[],
+  orderId: string,
+) {
+  await commitReservedStockTx(tx, locationId, items, orderId);
 }
 
 export async function deductOrderStock(
@@ -870,7 +1315,17 @@ export async function bookEventSeats(eventId: string, qty: number, actorUserId?:
       entityId: eventId,
       locationId: event.locationId,
       summary: `Booked ${qty} seat${qty === 1 ? "" : "s"} for “${event.title}”`,
-      metadata: { qty, guestName: actorUserId ? undefined : "guest" },
+      metadata: activityChanges(
+        [
+          {
+            field: "seats available",
+            from: event.seatsAvailable,
+            to: event.seatsAvailable - qty,
+          },
+          { field: "seats booked", to: qty },
+        ],
+        { qty, guestName: actorUserId ? undefined : "guest" },
+      ),
     });
   }
   return result.count === 1;
@@ -927,6 +1382,7 @@ export async function placeOrder(input: {
   fulfillment: Order["fulfillment"];
   items: Pick<CartItem, "productId" | "quantity">[];
   coupon?: string | null;
+  loyaltyPointsRedeem?: number;
   delivery?: DeliveryAddress;
   /** When set, activity log uses this actor (e.g. POS cashier) instead of the customer. */
   activityActorUserId?: string;
@@ -939,6 +1395,10 @@ export async function placeOrder(input: {
 
   await ensureInventoryVisibilityColumn();
   await ensureLocationPricingSchema();
+  await ensureOrganizationSchema();
+
+  const organizationId =
+    (await resolveLocationOrganizationId(input.locationId)) ?? SAMS_ORG_ID;
 
   const result = await prisma.$transaction(async (tx) => {
     const location = await tx.location.findUnique({
@@ -953,24 +1413,21 @@ export async function placeOrder(input: {
     if (input.fulfillment === "pickup" && !location.pickupAvailable) {
       throw new Error("Pickup is not available from this store.");
     }
-    // "pos" (in-store) sales are always allowed at any active location.
+
+    const productIds = [...new Set(input.items.map((i) => i.productId))];
+    const products = await tx.product.findMany({ where: { id: { in: productIds } } });
+    const productMap = new Map(products.map((p) => [p.id, p]));
 
     const orderItems: Order["items"] = [];
     let subtotal = 0;
     for (const item of input.items) {
-      const product = await tx.product.findUnique({ where: { id: item.productId } });
+      const product = productMap.get(item.productId);
       if (!product) throw new Error(`Unknown product: ${item.productId}`);
       const inv = location.inventory.find((row) => row.productId === item.productId);
-      const hiddenRows = await tx.$queryRaw<{ hidden: boolean }[]>`
-        SELECT COALESCE(hidden, false) AS hidden
-        FROM location_inventory
-        WHERE location_id = ${input.locationId} AND product_id = ${item.productId}
-        LIMIT 1
-      `;
-      if (hiddenRows[0]?.hidden) {
+      if ((inv as { hidden?: boolean } | undefined)?.hidden) {
         throw new Error(`${product.name} is not available at this store.`);
       }
-      const unitPrice = inv?.promoPrice ?? product.price;
+      const unitPrice = unitPriceForInventory(moneyNumber(product.price), inv);
       orderItems.push({
         productId: item.productId,
         quantity: item.quantity,
@@ -979,26 +1436,82 @@ export async function placeOrder(input: {
       subtotal += unitPrice * item.quantity;
     }
 
-    const discount = getCouponDiscount(input.coupon, subtotal);
-    const shipping = calculateShipping(subtotal - discount, input.fulfillment, pricing);
+    const promoItems = orderItems.map((item) => {
+      const product = productMap.get(item.productId);
+      return {
+        productId: item.productId,
+        quantity: item.quantity,
+        price: item.price,
+        category: product?.categorySlug,
+        brand: product?.brand,
+      };
+    });
+
+    let isFirstOrder: boolean | undefined;
+    if (input.userId) {
+      const prior = await tx.order.count({ where: { userId: input.userId } });
+      isFirstOrder = prior === 0;
+    }
+
+    const promo = await resolvePromotionDiscount({
+      code: input.coupon,
+      subtotal,
+      organizationId,
+      locationId: input.locationId,
+      items: promoItems,
+      isFirstOrder,
+    });
+    const promoDiscount =
+      promo?.discount ??
+      (input.coupon ? getCouponDiscount(input.coupon, subtotal) : 0);
+
+    let loyaltyDiscount = 0;
+    let loyaltyPointsUsed = 0;
+    const requestedPoints = Math.max(0, Math.trunc(input.loyaltyPointsRedeem ?? 0));
+    if (requestedPoints > 0 && input.userId) {
+      const program = await loyaltyDb.getLoyaltyProgram(organizationId);
+      if (!program?.active) {
+        throw new Error("Loyalty redemptions are not available right now.");
+      }
+      const orgBalance = await loyaltyDb.getOrgLoyaltyBalance(organizationId, input.userId);
+      const rate = program.redeemRate ?? 0.02;
+      const maxDiscount = Math.max(0, subtotal - promoDiscount);
+      const rewards = Array.isArray(program.rewards)
+        ? (program.rewards as { points: number; value: number }[])
+        : [];
+      const loyalty = loyaltyDiscountFromPoints({
+        points: Math.min(requestedPoints, orgBalance.points),
+        redeemRate: rate,
+        maxDiscount,
+        rewards,
+      });
+      loyaltyDiscount = loyalty.discount;
+      loyaltyPointsUsed = loyalty.points;
+    }
+
+    const discount = Math.round((promoDiscount + loyaltyDiscount) * 100) / 100;
+    let shipping = calculateShipping(subtotal - discount, input.fulfillment, pricing);
+    if (promo?.freeDelivery) shipping = 0;
     const tax = calculateTax(subtotal - discount, pricing);
-    const total = subtotal - discount + shipping + tax;
+    const total = Math.max(0, Math.round((subtotal - discount + shipping + tax) * 100) / 100);
     const orderId = `ORD-${Date.now().toString(36).toUpperCase()}-${Math.floor(
       Math.random() * 900 + 100,
     )}`;
+    const status = initialOrderStatus(input.fulfillment) as Order["status"];
     const order: Order = {
       id: orderId,
       date: new Date().toISOString().slice(0, 10),
-      status:
-        input.fulfillment === "pos"
-          ? "delivered"
-          : input.fulfillment === "pickup"
-            ? "ready"
-            : "processing",
+      status,
       items: orderItems,
       total,
+      subtotal,
+      taxAmount: tax,
+      discountAmount: discount,
+      deliveryFee: shipping,
+      paymentStatus: "paid",
       fulfillment: input.fulfillment,
       locationId: input.locationId,
+      organizationId,
       tracking:
         input.fulfillment === "delivery"
           ? `SDL-${Math.floor(Math.random() * 1e8)
@@ -1007,6 +1520,8 @@ export async function placeOrder(input: {
           : undefined,
       delivery: input.fulfillment === "delivery" ? input.delivery : undefined,
       deliveryStatus: input.fulfillment === "delivery" ? "unassigned" : undefined,
+      couponCode: input.coupon?.trim().toUpperCase() || undefined,
+      promotionId: promo?.id,
     };
 
     const user = await ensureCustomer(tx, {
@@ -1016,18 +1531,30 @@ export async function placeOrder(input: {
       preferredBranchId: input.locationId,
     });
 
-    await deductOrderStockTx(tx, input.locationId, input.items, order.id);
+    if (status === "completed" || input.fulfillment === "pos") {
+      await deductOrderStockTx(tx, input.locationId, input.items, order.id);
+    } else {
+      await reserveOrderStockTx(tx, input.locationId, input.items, order.id);
+    }
 
     await tx.order.create({
       data: {
         id: order.id,
         userId: user.id,
+        organizationId,
         date: order.date,
         status: order.status,
+        paymentStatus: "paid",
         total: order.total,
+        subtotal,
+        taxAmount: tax,
+        discountAmount: discount,
+        deliveryFee: shipping,
         fulfillment: order.fulfillment,
         locationId: order.locationId,
         tracking: order.tracking,
+        couponCode: order.couponCode,
+        promotionId: order.promotionId,
         items: {
           create: order.items.map((item) => ({
             productId: item.productId,
@@ -1038,16 +1565,11 @@ export async function placeOrder(input: {
       },
     });
 
-    const pointsEarned = Math.max(0, Math.floor(order.total));
-    const updatedUser = await tx.user.update({
-      where: { id: user.id },
-      data: { loyaltyPoints: { increment: pointsEarned } },
-    });
-
     return {
       order,
-      userId: updatedUser.id,
-      loyaltyPoints: updatedUser.loyaltyPoints,
+      userId: user.id,
+      loyaltyPointsUsed,
+      organizationId,
     };
   });
 
@@ -1057,6 +1579,52 @@ export async function placeOrder(input: {
     }
     await saveOrderDelivery(result.order.id, input.delivery);
   }
+
+  if (result.loyaltyPointsUsed > 0) {
+    try {
+      await redeemUserLoyaltyPoints(
+        result.userId,
+        result.loyaltyPointsUsed,
+        result.organizationId,
+        result.order.id,
+      );
+    } catch (error) {
+      console.error("[placeOrder] loyalty redeem failed — cancelling order", error);
+      try {
+        await cancelOrder(result.order.id, result.userId);
+      } catch (cancelError) {
+        console.error("[placeOrder] cancel after redeem failure failed", cancelError);
+      }
+      throw new Error(
+        error instanceof Error
+          ? error.message
+          : "Could not redeem loyalty points. Order was not completed.",
+      );
+    }
+  }
+
+  const skipEarn =
+    input.activityAction === "pos.sale" && Boolean(input.activityMetadata?.walkIn);
+
+  let loyalty = { points: 0, balance: 0 };
+  if (!skipEarn) {
+    const earnBase = Math.max(
+      0,
+      (result.order.subtotal ?? result.order.total) - (result.order.discountAmount ?? 0),
+    );
+    loyalty = await loyaltyDb.earnLoyaltyPoints({
+      organizationId: result.organizationId,
+      userId: result.userId,
+      orderTotal: earnBase,
+      orderId: result.order.id,
+    });
+  }
+
+  await syncOrganizationCustomer({
+    organizationId: result.organizationId,
+    userId: result.userId,
+    orderTotal: result.order.total,
+  });
 
   await recordActivity({
     actorUserId: input.activityActorUserId ?? result.userId,
@@ -1068,16 +1636,91 @@ export async function placeOrder(input: {
       input.activityAction === "pos.sale"
         ? `POS ${result.order.fulfillment} sale ${result.order.id} for $${result.order.total.toFixed(2)}`
         : `Placed ${result.order.fulfillment} order ${result.order.id} for $${result.order.total.toFixed(2)}`,
-    metadata: {
-      itemCount: result.order.items.length,
-      fulfillment: result.order.fulfillment,
-      total: result.order.total,
-      customerUserId: result.userId,
-      ...input.activityMetadata,
-    },
+    metadata: activityChanges(
+      [
+        { field: "created", to: result.order.id },
+        { field: "fulfillment", to: result.order.fulfillment },
+        { field: "total", to: `$${result.order.total.toFixed(2)}` },
+        { field: "items", to: result.order.items.length },
+      ],
+      {
+        itemCount: result.order.items.length,
+        fulfillment: result.order.fulfillment,
+        total: result.order.total,
+        customerUserId: result.userId,
+        ...input.activityMetadata,
+      },
+    ),
   });
 
-  return result;
+  if (input.activityAction !== "pos.sale" && result.order.fulfillment !== "pos") {
+    void (async () => {
+      try {
+        const { emitStaffNotification } = await import("@/lib/db/staff-notifications");
+        const { getLocationById } = await import("@/data/locations");
+        const store = getLocationById(result.order.locationId);
+        const storeLabel = store?.shortName ?? "store";
+        await emitStaffNotification({
+          organizationId: result.organizationId,
+          type: "order.new",
+          title: `New ${result.order.fulfillment} order`,
+          body: `${result.order.id} · ${storeLabel} · $${result.order.total.toFixed(2)} · ${result.order.items.length} item(s)`,
+          entityType: "order",
+          entityId: result.order.id,
+          locationId: result.order.locationId,
+          actorUserId: result.userId,
+          severity: "attention",
+          dedupeKey: `order.new:${result.order.id}`,
+          href: "/dashboard/orders",
+          metadata: {
+            fulfillment: result.order.fulfillment,
+            total: result.order.total,
+          },
+        });
+      } catch (error) {
+        console.error("[placeOrder staff notify]", error);
+      }
+    })();
+  }
+
+  if (input.activityAction !== "pos.sale" && result.order.fulfillment !== "pos") {
+    void (async () => {
+      try {
+        const { notifyOrderConfirmed, notifyLoyalty } = await import("@/lib/notifications");
+        const { loadNotifyRecipient } = await import("@/lib/notifications/recipients");
+        const { getLocationById } = await import("@/data/locations");
+        const recipient = await loadNotifyRecipient(result.userId);
+        const store = getLocationById(result.order.locationId);
+        await notifyOrderConfirmed({
+          orderId: result.order.id,
+          tracking: result.order.tracking,
+          storeName: store?.shortName,
+          userId: result.userId,
+          email: recipient?.email ?? input.email,
+          phone: input.phone ?? input.delivery?.phone,
+          prefs: recipient?.prefs,
+        });
+        if (loyalty.points > 0) {
+          await notifyLoyalty({
+            userId: result.userId,
+            email: recipient?.email ?? input.email,
+            phone: input.phone ?? input.delivery?.phone,
+            points: loyalty.points,
+            tier: "tier" in loyalty ? String(loyalty.tier) : undefined,
+            prefs: recipient?.prefs,
+          });
+        }
+      } catch (error) {
+        console.error("[placeOrder] notify failed", error);
+      }
+    })();
+  }
+
+  return {
+    order: result.order,
+    userId: result.userId,
+    loyaltyPoints: loyalty.balance,
+  };
 }
 
 export async function placePosOrder(input: {
@@ -1089,6 +1732,7 @@ export async function placePosOrder(input: {
   customerEmail?: string;
   customerPhone?: string;
   coupon?: string | null;
+  loyaltyPointsRedeem?: number;
   delivery?: DeliveryAddress;
   paymentMethod?: "cash" | "card" | "other";
 }) {
@@ -1103,7 +1747,8 @@ export async function placePosOrder(input: {
 
   const email = input.customerEmail?.trim().toLowerCase();
   const walkIn = !email;
-  let customerUserId: string | undefined = walkIn ? staff.id : undefined;
+  // Walk-in: do not attach staff as the loyalty customer.
+  let customerUserId: string | undefined = undefined;
   let customerName =
     input.customerName?.trim() || (walkIn ? "Walk-in Guest" : "");
 
@@ -1121,7 +1766,7 @@ export async function placePosOrder(input: {
   }
 
   return placeOrder({
-    email: email || staff.email,
+    email: email || `walkin+${staff.id.slice(0, 8)}@pos.local`,
     name: customerName,
     phone: input.customerPhone,
     userId: customerUserId,
@@ -1129,6 +1774,7 @@ export async function placePosOrder(input: {
     fulfillment: input.fulfillment,
     items: input.items,
     coupon: input.coupon,
+    loyaltyPointsRedeem: customerUserId ? input.loyaltyPointsRedeem : undefined,
     delivery: input.delivery,
     activityActorUserId: staff.id,
     activityAction: "pos.sale",
@@ -1175,7 +1821,19 @@ export async function createOrder(userId: string, order: Order) {
   return order;
 }
 
-const CANCELLABLE_STATUSES = new Set(["processing", "ready", "shipped"]);
+const CANCELLABLE_STATUSES = new Set([
+  "new",
+  "accepted",
+  "preparing",
+  "ready",
+  "assigned",
+  "out_for_delivery",
+  "ready_for_pickup",
+  "completed",
+  // legacy
+  "processing",
+  "shipped",
+]);
 
 export async function cancelOrder(
   orderId: string,
@@ -1196,6 +1854,7 @@ export async function cancelOrder(
       include: { items: true },
     });
     if (!order || !CANCELLABLE_STATUSES.has(order.status)) return null;
+    const previousStatus = order.status;
 
     await tx.order.update({
       where: { id: orderId },
@@ -1205,6 +1864,10 @@ export async function cancelOrder(
     const sales = await tx.inventoryLedger.findMany({
       where: { orderId, reason: "sale" },
     });
+    const reserves = await tx.inventoryLedger.findMany({
+      where: { orderId, reason: "reserve" },
+    });
+
     if (sales.length) {
       for (const item of order.items) {
         const existing = await tx.locationInventory.findUnique({
@@ -1218,9 +1881,19 @@ export async function cancelOrder(
         const nextQty = (existing?.onHand ?? 0) + item.quantity;
         await writeStockChange(tx, order.locationId, item.productId, nextQty, "cancel", orderId);
       }
+    } else if (reserves.length) {
+      await releaseReservedStockTx(
+        tx,
+        order.locationId,
+        order.items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
+        orderId,
+      );
     }
 
-    return mapOrder(order);
+    return {
+      order: mapOrder({ ...order, status: "cancelled" }),
+      previousStatus,
+    };
   });
 
   if (cancelled) {
@@ -1229,20 +1902,23 @@ export async function cancelOrder(
       actorUserId,
       action: "order.cancelled",
       entityType: "order",
-      entityId: cancelled.id,
-      locationId: cancelled.locationId,
+      entityId: cancelled.order.id,
+      locationId: cancelled.order.locationId,
       summary: opts?.asStaffForOwnerId
-        ? `${who} cancelled order ${cancelled.id}`
-        : `Cancelled order ${cancelled.id}`,
-      metadata: {
-        total: cancelled.total,
-        fulfillment: cancelled.fulfillment,
-        staff: Boolean(opts?.asStaffForOwnerId),
-      },
+        ? `${who} cancelled order ${cancelled.order.id}`
+        : `Cancelled order ${cancelled.order.id}`,
+      metadata: activityChanges(
+        [{ field: "status", from: cancelled.previousStatus, to: "cancelled" }],
+        {
+          total: cancelled.order.total,
+          fulfillment: cancelled.order.fulfillment,
+          staff: Boolean(opts?.asStaffForOwnerId),
+        },
+      ),
     });
   }
 
-  return cancelled;
+  return cancelled?.order ?? null;
 }
 
 export async function resetInventory(locationId?: string, actorUserId?: string) {
@@ -1275,17 +1951,22 @@ export async function resetInventory(locationId?: string, actorUserId?: string) 
   });
 }
 
-export async function fetchBootstrapPayload() {
-  const [products, locations, categories, events, reviews, inventory] = await Promise.all([
+export async function fetchBootstrapPayload(opts?: { includeReviews?: boolean }) {
+  await ensureOrganizationSchema();
+  const includeReviews = opts?.includeReviews === true;
+  const [products, locations, categories, events, inventory] = await Promise.all([
     fetchAllProducts(),
-    fetchAllLocations(),
+    fetchAllLocations({ inventoryMode: "featured" }),
     fetchCategories(),
     fetchEvents(),
-    isDbConfigured()
-      ? prisma.review.findMany().then((rows) => rows.map(mapReview))
-      : Promise.resolve(seedReviews),
     fetchInventoryState(),
   ]);
+
+  const reviews = includeReviews
+    ? isDbConfigured()
+      ? await prisma.review.findMany().then((rows) => rows.map(mapReview))
+      : seedReviews
+    : [];
 
   return {
     products,

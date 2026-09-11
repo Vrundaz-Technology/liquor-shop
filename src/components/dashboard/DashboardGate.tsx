@@ -11,7 +11,11 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
   const canOpenDashboard = isLoggedIn && hasPermission(profile, "dashboard.access");
 
   if (!authReady) {
-    return <DashboardLoading label="Checking session…" />;
+    return (
+      <DashboardLoading
+        label={isLoggedIn ? "Opening dashboard…" : "Checking session…"}
+      />
+    );
   }
 
   if (!isLoggedIn) {

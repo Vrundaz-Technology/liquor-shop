@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import Image from "next/image";
-import { useRouter } from "next/navigation";
-import { ChevronDown, Eye, EyeOff, Package, Pencil, RotateCcw, Search, Tags, Trash2 } from "lucide-react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { ChevronDown, Download, Eye, EyeOff, FileSpreadsheet, Package, Pencil, RotateCcw, Tags, Trash2, Upload, X } from "lucide-react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { getAllLocations, getLocationById } from "@/data/locations";
 import { dashboardPath } from "@/lib/dashboard/routes";
 import { getCategories } from "@/data/categories";
@@ -15,15 +16,24 @@ import {
   REORDER_POINT,
   stockStatus,
 } from "@/lib/inventory";
+import { apiFetch, apiFetchBlob, triggerBrowserDownload } from "@/lib/api-client";
+import { apiSetLocationPricing } from "@/lib/api-mutations";
+import { availableStock } from "@/lib/commerce/order-status";
+import { formatPrice } from "@/lib/utils";
+import { parseFiniteNumber, sanitizeMoneyInput } from "@/lib/validation/money";
 import type { CategorySlug, Product } from "@/types";
 import { BottleForm } from "@/components/dashboard/AddBottleForm";
 import { CategoriesPanel } from "@/components/dashboard/CategoriesPanel";
 import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import { Button } from "@/components/ui/Button";
+import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Pagination } from "@/components/ui/Pagination";
 import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
+import { NativeSelect } from "@/components/ui/NativeSelect";
 import { compareValues, MobileSortBar, SortableTh, tableCellClass, tableHeadRowClass, tableRowClass, tableWrapClass, useTableSort } from "@/components/ui/SortableTh";
 import { hasPermission } from "@/lib/auth/permissions";
 import { useUserStore } from "@/store/user";
@@ -36,15 +46,12 @@ type Props = {
 };
 
 type StockFilter = "all" | "low" | "out" | "ok";
-type SortKey = "name" | "status" | "stock";
+type SortKey = "name" | "status" | "stock" | "price";
 type InventoryView = "stock" | "categories";
 
 function productImage(product: Product) {
   return product.images?.[0] || "";
 }
-
-const selectClass =
-  "rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2.5 text-sm text-cream scheme-dark outline-none focus:border-(--gold)/40 [&_option]:bg-(--bg-elevated)";
 
 const QUICK_ADD_OPTIONS = [5, 10, 15] as const;
 
@@ -126,17 +133,41 @@ function QuickAddSelect({
 
 function StatusPill({ status }: { status: ReturnType<typeof stockStatus> }) {
   const label =
-    status === "out" ? "Out" : status === "low" ? "Low" : "OK";
+    status === "out" ? "Out" : status === "low" ? "Low" : "In stock";
   const tone =
     status === "out"
-      ? "text-red-300"
+      ? "border-red-400/25 bg-red-400/10 text-red-200"
       : status === "low"
-        ? "text-amber-200"
-        : "text-(--success)";
+        ? "border-amber-400/25 bg-amber-400/10 text-amber-100"
+        : "border-emerald-400/25 bg-emerald-400/10 text-emerald-200";
   return (
-    <span className={`text-[11px] uppercase tracking-[0.14em] ${tone}`}>
+    <span
+      className={`inline-flex whitespace-nowrap rounded-sm border px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.12em] ${tone}`}
+    >
       {label}
     </span>
+  );
+}
+
+function IconAction({
+  label,
+  onClick,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      title={label}
+      aria-label={label}
+      onClick={onClick}
+      className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-(--gold)/35 hover:bg-white/5 hover:text-cream focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold)"
+    >
+      {children}
+    </button>
   );
 }
 
@@ -198,6 +229,7 @@ export function InventoryPanel({
   initialView = "stock",
 }: Props) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const profile = useUserStore((s) => s.profile);
   const canAdjust = hasPermission(profile, "inventory.adjust");
   const canRestock = hasPermission(profile, "inventory.restock");
@@ -216,6 +248,7 @@ export function InventoryPanel({
   const resetToCatalog = useInventoryStore((s) => s.resetToCatalog);
   const isHidden = useInventoryStore((s) => s.isHidden);
   const setHidden = useInventoryStore((s) => s.setHidden);
+  const syncFromServer = useInventoryStore((s) => s.syncFromServer);
   const inventoryRevision = useInventoryStore((s) => s.revision);
   const catalogRevision = useCatalogStore((s) => s.revision);
   const removeBottle = useCatalogStore((s) => s.removeBottle);
@@ -254,12 +287,98 @@ export function InventoryPanel({
   const [query, setQuery] = useState("");
   const [stockFilter, setStockFilter] = useState<StockFilter>("all");
   const [category, setCategory] = useState<CategorySlug | "all">("all");
+
+  // Deep-links from overview (top products / low stock): ?q=&location=&status=
+  useEffect(() => {
+    const qParam = searchParams.get("q");
+    const statusParam = searchParams.get("status");
+    const locationParam = searchParams.get("location");
+    if (qParam !== null) setQuery(qParam);
+    if (
+      statusParam === "all" ||
+      statusParam === "low" ||
+      statusParam === "out" ||
+      statusParam === "ok"
+    ) {
+      setStockFilter(statusParam);
+    }
+    if (locationParam && locationParam !== "all") {
+      onLocationChange?.(locationParam);
+    }
+  }, [searchParams, onLocationChange]);
   const { sortKey, sortDir, toggleSort } = useTableSort<SortKey>("status");
   const [showLedger, setShowLedger] = useState(false);
   const [editor, setEditor] = useState<Product | "new" | null>(null);
+  const [pricingProduct, setPricingProduct] = useState<Product | null>(null);
+  const [priceForm, setPriceForm] = useState({
+    basePrice: "",
+    salePrice: "",
+    costPrice: "",
+    promoPrice: "",
+  });
+  const [priceBusy, setPriceBusy] = useState(false);
+  const [priceError, setPriceError] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [ioBusy, setIoBusy] = useState(false);
+  const [ioMessage, setIoMessage] = useState("");
+  const [ioError, setIoError] = useState("");
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const importInputRef = useRef<HTMLInputElement>(null);
   const stores = locations?.length ? locations : getAllLocations();
+  const qc = useQueryClient();
+
+  useEffect(() => {
+    if (!exportOpen) return;
+    const onPointer = (event: MouseEvent) => {
+      if (!exportMenuRef.current?.contains(event.target as Node)) setExportOpen(false);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setExportOpen(false);
+    };
+    document.addEventListener("mousedown", onPointer);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onPointer);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [exportOpen]);
+
+  useEffect(() => {
+    if (!ioMessage && !ioError) return;
+    const timer = window.setTimeout(() => {
+      setIoMessage("");
+      setIoError("");
+    }, 5000);
+    return () => window.clearTimeout(timer);
+  }, [ioMessage, ioError]);
+
+  const clearIoBanner = () => {
+    setIoMessage("");
+    setIoError("");
+  };
+
+  const { data: invMeta } = useQuery({
+    queryKey: ["inventory-meta"],
+    queryFn: async () =>
+      apiFetch<{
+        stocks: Record<string, number>;
+        reserved?: Record<string, number>;
+        prices?: Record<
+          string,
+          {
+            basePrice: number | null;
+            salePrice: number | null;
+            costPrice: number | null;
+            promoPrice: number | null;
+          }
+        >;
+        seats: Record<string, number>;
+        hidden?: Record<string, boolean>;
+      }>("/api/inventory"),
+    staleTime: 15_000,
+  });
 
   // Always one store — never list the same SKU across all branches
   const storeId =
@@ -277,6 +396,104 @@ export function InventoryPanel({
   const activeLocation = storeId
     ? getLocationById(storeId) ?? stores[0] ?? null
     : null;
+
+  const filtersActive =
+    Boolean(query.trim()) || category !== "all" || stockFilter !== "all";
+
+  const clearFilters = () => {
+    setQuery("");
+    setCategory("all");
+    setStockFilter("all");
+    setPage(1);
+  };
+
+  const downloadInventory = async (format: "csv" | "xlsx") => {
+    if (!storeId) return;
+    setExportOpen(false);
+    setIoBusy(true);
+    setIoError("");
+    setIoMessage("");
+    try {
+      const params = new URLSearchParams({
+        locationId: storeId,
+        format,
+      });
+      if (query.trim()) params.set("q", query.trim());
+      if (category !== "all") params.set("category", category);
+      if (stockFilter !== "all") params.set("status", stockFilter);
+
+      const { blob, filename, contentType } = await apiFetchBlob(
+        `/api/inventory/export?${params.toString()}`,
+      );
+      const fallbackName = `inventory-${(activeLocation?.shortName || storeId)
+        .replace(/[^\w.-]+/g, "-")
+        .toLowerCase()}.${format === "xlsx" ? "xlsx" : "csv"}`;
+      const mime =
+        format === "xlsx"
+          ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          : "text/csv;charset=utf-8";
+      triggerBrowserDownload(blob, filename || fallbackName, contentType || mime);
+      setIoMessage(
+        format === "xlsx"
+          ? `Excel file ready${filtersActive ? " (current filters)" : ""} — check your downloads.`
+          : `CSV file ready${filtersActive ? " (current filters)" : ""} — check your downloads.`,
+      );
+    } catch (err) {
+      setIoError(err instanceof Error ? err.message : "Export failed.");
+    } finally {
+      setIoBusy(false);
+    }
+  };
+
+  const importInventoryFile = async (file: File) => {
+    if (!storeId) return;
+    setIoBusy(true);
+    setIoError("");
+    setIoMessage("");
+    try {
+      const body = new FormData();
+      body.set("locationId", storeId);
+      body.set("file", file);
+      const result = await apiFetch<{
+        ok: true;
+        updated: number;
+        skipped: number;
+        errors?: string[];
+        inventory?: {
+          stocks: Record<string, number>;
+          seats?: Record<string, number>;
+          hidden?: Record<string, boolean>;
+          reserved?: Record<string, number>;
+        };
+      }>("/api/inventory/export", {
+        method: "POST",
+        body,
+      });
+      if (result.inventory?.stocks) {
+        syncFromServer(
+          result.inventory.stocks,
+          result.inventory.seats ?? {},
+          result.inventory.hidden,
+          result.inventory.reserved,
+        );
+      }
+      void qc.invalidateQueries({ queryKey: ["inventory-meta"] });
+      void qc.invalidateQueries({ queryKey: ["inventory"] });
+      setIoMessage(
+        `Imported ${result.updated} row${result.updated === 1 ? "" : "s"}` +
+          (result.skipped ? ` · ${result.skipped} skipped` : "") +
+          ".",
+      );
+      if (result.errors?.length) {
+        setIoError(result.errors.slice(0, 3).join(" · "));
+      }
+    } catch (err) {
+      setIoError(err instanceof Error ? err.message : "Import failed.");
+    } finally {
+      setIoBusy(false);
+      if (importInputRef.current) importInputRef.current.value = "";
+    }
+  };
 
   const rows = useMemo(() => {
     const catalog = getAllProducts();
@@ -317,12 +534,23 @@ export function InventoryPanel({
     }
 
     const rank = { out: 0, low: 1, ok: 2 };
+    const shelfPrice = (product: Product) => {
+      const key = `${storeId}:${product.id}`;
+      const locPrice = invMeta?.prices?.[key];
+      return (
+        locPrice?.salePrice ??
+        locPrice?.promoPrice ??
+        locPrice?.basePrice ??
+        product.price
+      );
+    };
     return list.sort((a, b) => {
       if (sortKey === "status") return compareValues(rank[a.status], rank[b.status], sortDir);
       if (sortKey === "stock") return compareValues(a.onHand, b.onHand, sortDir);
+      if (sortKey === "price") return compareValues(shelfPrice(a.product), shelfPrice(b.product), sortDir);
       return compareValues(a.product.name, b.product.name, sortDir);
     });
-  }, [storeId, stocks, query, stockFilter, category, sortKey, sortDir, catalogRevision, inventoryRevision, isHidden]);
+  }, [storeId, stocks, query, stockFilter, category, sortKey, sortDir, catalogRevision, inventoryRevision, isHidden, invMeta]);
 
   const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -416,6 +644,79 @@ export function InventoryPanel({
                 Add bottle
               </Button>
             )}
+            {canViewStock && storeId ? (
+              <div className="flex flex-wrap gap-2">
+                <div ref={exportMenuRef} className="relative">
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={ioBusy}
+                    onClick={() => setExportOpen((open) => !open)}
+                    aria-expanded={exportOpen}
+                    aria-haspopup="menu"
+                  >
+                    <Download size={14} />
+                    {filtersActive ? `Export (${rows.length})` : "Export"}
+                    <ChevronDown size={14} className={exportOpen ? "rotate-180" : ""} />
+                  </Button>
+                  {exportOpen ? (
+                    <div
+                      role="menu"
+                      className="absolute right-0 z-30 mt-1 min-w-[13rem] overflow-hidden rounded-sm border border-white/10 bg-(--bg-elevated) py-1 shadow-[0_12px_40px_rgba(0,0,0,0.55)]"
+                    >
+                      {filtersActive ? (
+                        <p className="border-b border-white/10 px-3 py-2 text-[11px] leading-snug text-muted">
+                          Exports the {rows.length} filtered bottle
+                          {rows.length === 1 ? "" : "s"} on screen.
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-cream transition hover:bg-white/5"
+                        onClick={() => void downloadInventory("csv")}
+                      >
+                        <Download size={14} className="text-muted" />
+                        CSV (.csv)
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm text-cream transition hover:bg-white/5"
+                        onClick={() => void downloadInventory("xlsx")}
+                      >
+                        <FileSpreadsheet size={14} className="text-muted" />
+                        Excel (.xlsx)
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+                {canAdjust ? (
+                  <>
+                    <input
+                      ref={importInputRef}
+                      type="file"
+                      accept=".csv,.xlsx,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                      className="hidden"
+                      onChange={(event) => {
+                        const file = event.target.files?.[0];
+                        if (file) void importInventoryFile(file);
+                      }}
+                    />
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={ioBusy}
+                      onClick={() => importInputRef.current?.click()}
+                      title="CSV or Excel with product_id/sku, on_hand, prices, hidden"
+                    >
+                      <Upload size={14} />
+                      {ioBusy ? "Working…" : "Import"}
+                    </Button>
+                  </>
+                ) : null}
+              </div>
+            ) : null}
             {canReset && (
               <Button
                 size="sm"
@@ -434,6 +735,27 @@ export function InventoryPanel({
           </div>
         ) : null}
       </div>
+
+      {ioMessage || ioError ? (
+        <div
+          className={`mt-3 flex items-start justify-between gap-3 rounded-sm border px-3 py-2.5 text-sm ${
+            ioError
+              ? "border-(--danger)/30 bg-(--danger)/10 text-(--danger)"
+              : "border-emerald-500/25 bg-emerald-500/10 text-emerald-200"
+          }`}
+          role="status"
+        >
+          <p className="min-w-0 leading-relaxed">{ioError || ioMessage}</p>
+          <button
+            type="button"
+            onClick={clearIoBanner}
+            className="shrink-0 rounded-sm p-1 text-current/70 transition hover:bg-white/10 hover:text-current"
+            aria-label="Dismiss"
+          >
+            <X size={14} />
+          </button>
+        </div>
+      ) : null}
 
       {canManageCategories || canViewStock ? (
         <div
@@ -492,7 +814,11 @@ export function InventoryPanel({
         </div>
         <dl className="flex flex-wrap gap-x-5 gap-y-1 text-sm">
           <div className="flex gap-1.5">
-            <dt className="text-muted">SKUs</dt>
+            <dt className="text-muted">
+              <AbbrTooltip term="SKU" full="Stock Keeping Units">
+                SKUs
+              </AbbrTooltip>
+            </dt>
             <dd className="tabular-nums text-cream">{stats.skuCount}</dd>
           </div>
           <div className="flex gap-1.5">
@@ -520,24 +846,19 @@ export function InventoryPanel({
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <label className="block text-xs text-muted sm:col-span-2 lg:col-span-1">
           Search
-          <div className="relative mt-1">
-            <Search
-              size={14}
-              className="pointer-events-none absolute top-1/2 left-3 -translate-y-1/2 text-muted"
-            />
-            <Input
-              className="py-2.5 pl-9"
-              placeholder="Search…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              aria-label="Search inventory"
-            />
-          </div>
+          <SearchInput
+            className="mt-1"
+            inputClassName="py-2.5"
+            placeholder="Search…"
+            value={query}
+            onChange={setQuery}
+            aria-label="Search inventory"
+          />
         </label>
         <label className="block text-xs text-muted">
           Category
-          <select
-            className={`${selectClass} mt-1 w-full`}
+          <NativeSelect
+            className="mt-1"
             value={category}
             onChange={(e) =>
               setCategory(e.target.value as CategorySlug | "all")
@@ -550,12 +871,12 @@ export function InventoryPanel({
                 {c.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
         <label className="block text-xs text-muted">
           Status
-          <select
-            className={`${selectClass} mt-1 w-full`}
+          <NativeSelect
+            className="mt-1"
             value={stockFilter}
             onChange={(e) => setStockFilter(e.target.value as StockFilter)}
             aria-label="Stock status"
@@ -564,12 +885,12 @@ export function InventoryPanel({
             <option value="ok">In stock</option>
             <option value="low">Low stock</option>
             <option value="out">Out of stock</option>
-          </select>
+          </NativeSelect>
         </label>
         <label className="block text-xs text-muted">
           Store
-          <select
-            className={`${selectClass} mt-1 w-full`}
+          <NativeSelect
+            className="mt-1"
             value={storeId}
             onChange={(e) => selectStore(e.target.value)}
             aria-label="Store inventory"
@@ -579,9 +900,52 @@ export function InventoryPanel({
                 {loc.shortName} · {loc.city}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </label>
       </div>
+
+      {filtersActive ? (
+        <ActiveFiltersBar
+          className="mt-4"
+          resultCount={rows.length}
+          chips={[
+            ...(query.trim()
+              ? [
+                  {
+                    id: "q",
+                    label: `“${query.trim()}”`,
+                    onRemove: () => setQuery(""),
+                  },
+                ]
+              : []),
+            ...(category !== "all"
+              ? [
+                  {
+                    id: "category",
+                    label:
+                      getCategories().find((c) => c.slug === category)?.name ?? category,
+                    onRemove: () => setCategory("all"),
+                  },
+                ]
+              : []),
+            ...(stockFilter !== "all"
+              ? [
+                  {
+                    id: "status",
+                    label:
+                      stockFilter === "ok"
+                        ? "In stock"
+                        : stockFilter === "low"
+                          ? "Low stock"
+                          : "Out of stock",
+                    onRemove: () => setStockFilter("all"),
+                  },
+                ]
+              : []),
+          ]}
+          onClearAll={clearFilters}
+        />
+      ) : null}
 
       <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <p className="text-xs text-muted">
@@ -604,6 +968,7 @@ export function InventoryPanel({
           { key: "name", label: "Bottle" },
           { key: "status", label: "Status" },
           { key: "stock", label: "On hand" },
+          { key: "price", label: "Price" },
         ]}
         sortKey={sortKey}
         sortDir={sortDir}
@@ -612,7 +977,7 @@ export function InventoryPanel({
 
       {/* Desktop / tablet table */}
       <div className={`mt-3 hidden lg:block ${tableWrapClass}`}>
-        <table className="w-full min-w-160 text-left text-sm">
+        <table className="w-full min-w-[72rem] text-left text-sm">
           <thead>
             <tr className={tableHeadRowClass}>
               <SortableTh
@@ -621,6 +986,7 @@ export function InventoryPanel({
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
+                className="min-w-[16rem]"
               />
               <SortableTh
                 label="Status"
@@ -628,6 +994,7 @@ export function InventoryPanel({
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
+                className="w-[7.5rem]"
               />
               <SortableTh
                 label="On hand"
@@ -635,25 +1002,63 @@ export function InventoryPanel({
                 sortKey={sortKey}
                 sortDir={sortDir}
                 onSort={toggleSort}
+                className="w-[11rem]"
               />
-              <th className="px-4 py-3 text-right font-medium">Quick add</th>
-              <th className="px-4 py-3 text-right font-medium">Action</th>
+              <SortableTh
+                label="Price"
+                column="price"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                className="w-[8.5rem]"
+              />
+              <th className="w-[6.5rem] whitespace-nowrap px-4 py-3 text-right font-medium">
+                Quick add
+              </th>
+              <th className="w-[7rem] whitespace-nowrap px-4 py-3 text-right font-medium">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody>
             {pageRows.length === 0 ? (
               <tr>
-                <td colSpan={5} className="px-4 py-12 text-center text-muted">
+                <td colSpan={6} className="px-4 py-12 text-center text-muted">
                   No bottles match these filters.
                 </td>
               </tr>
             ) : (
               pageRows.map(({ product, onHand, status, hidden }) => {
                 const img = productImage(product);
+                const key = `${storeId}:${product.id}`;
+                const reservedQty = invMeta?.reserved?.[key] ?? 0;
+                const avail = availableStock(onHand, reservedQty);
+                const locPrice = invMeta?.prices?.[key];
+                const shelf =
+                  locPrice?.salePrice ??
+                  locPrice?.promoPrice ??
+                  locPrice?.basePrice ??
+                  product.price;
+                const openPricing = () => {
+                  setPricingProduct(product);
+                  setPriceForm({
+                    basePrice:
+                      locPrice?.basePrice != null
+                        ? String(locPrice.basePrice)
+                        : String(product.price),
+                    salePrice:
+                      locPrice?.salePrice != null ? String(locPrice.salePrice) : "",
+                    costPrice:
+                      locPrice?.costPrice != null ? String(locPrice.costPrice) : "",
+                    promoPrice:
+                      locPrice?.promoPrice != null ? String(locPrice.promoPrice) : "",
+                  });
+                  setPriceError("");
+                };
                 return (
                   <tr key={product.id} className={tableRowClass}>
                     <td className={tableCellClass}>
-                      <div className="flex items-center gap-3">
+                      <div className="flex min-w-0 items-center gap-3">
                         <div className="relative h-12 w-9 shrink-0 overflow-hidden bg-black/30">
                           {img ? (
                             <Image
@@ -670,19 +1075,19 @@ export function InventoryPanel({
                           <p className="truncate font-medium text-cream">
                             {product.name}
                             {hidden ? (
-                              <span className="ml-2 text-[10px] uppercase tracking-wider text-muted">
+                              <span className="ml-2 align-middle text-[10px] uppercase tracking-wider text-white/45">
                                 Hidden
                               </span>
                             ) : null}
                           </p>
-                          <p className="truncate text-[11px] text-muted">
-                            {product.brand} · {product.category} · $
-                            {product.price.toFixed(0)}
+                          <p className="truncate text-[11px] text-white/50">
+                            {product.brand} · {product.category} · catalog{" "}
+                            {formatPrice(product.price)}
                           </p>
                         </div>
                       </div>
                     </td>
-                    <td className={tableCellClass}>
+                    <td className={`${tableCellClass} whitespace-nowrap`}>
                       <StatusPill status={status} />
                     </td>
                     <td className={tableCellClass}>
@@ -700,6 +1105,33 @@ export function InventoryPanel({
                           )
                         }
                       />
+                      <p className="mt-1.5 whitespace-nowrap text-[11px] tabular-nums text-white/55">
+                        <AbbrTooltip
+                          term="Rsv"
+                          abbrClassName="text-white/40"
+                        />{" "}
+                        {reservedQty}
+                        <span className="mx-1.5 text-white/25">·</span>
+                        <AbbrTooltip
+                          term="Avail"
+                          abbrClassName="text-white/40"
+                        />{" "}
+                        {avail}
+                      </p>
+                    </td>
+                    <td className={tableCellClass}>
+                      <p className="whitespace-nowrap tabular-nums text-cream">
+                        {formatPrice(shelf)}
+                      </p>
+                      {canAdjust ? (
+                        <button
+                          type="button"
+                          className="mt-1 whitespace-nowrap text-[11px] text-gold/90 transition hover:text-gold"
+                          onClick={openPricing}
+                        >
+                          Edit prices
+                        </button>
+                      ) : null}
                     </td>
                     <td className={`${tableCellClass} text-right`}>
                       {canRestock ? (
@@ -708,39 +1140,34 @@ export function InventoryPanel({
                           onAdd={(qty) => adjust(storeId, product.id, qty, "restock")}
                         />
                       ) : (
-                        <span className="text-[11px] text-muted">—</span>
+                        <span className="text-[11px] text-white/35">—</span>
                       )}
                     </td>
                     <td className={`${tableCellClass} text-right`}>
-                      <div className="inline-flex flex-nowrap items-center justify-end gap-1">
+                      <div className="inline-flex flex-nowrap items-center justify-end gap-1.5">
                         {canAdjust ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-9 px-2.5"
-                            onClick={() => setHidden(storeId, product.id, !hidden)}
-                            title={
+                          <IconAction
+                            label={
                               hidden
                                 ? "Show this bottle on the website for this store"
                                 : "Hide this bottle from the website for this store"
                             }
+                            onClick={() => setHidden(storeId, product.id, !hidden)}
                           >
-                            {hidden ? <Eye size={13} /> : <EyeOff size={13} />}
-                            {hidden ? "Show" : "Hide"}
-                          </Button>
+                            {hidden ? <Eye size={15} /> : <EyeOff size={15} />}
+                          </IconAction>
                         ) : null}
                         {canEditBottle ? (
-                          <Button
-                            size="sm"
-                            variant="ghost"
-                            className="h-9 px-2.5"
+                          <IconAction
+                            label={`Edit ${product.name}`}
                             onClick={() => setEditor(product)}
                           >
-                            <Pencil size={13} />
-                            Edit
-                          </Button>
+                            <Pencil size={15} />
+                          </IconAction>
                         ) : !canAdjust ? (
-                          <span className="text-[11px] text-muted">View only</span>
+                          <span className="whitespace-nowrap text-[11px] text-white/40">
+                            View only
+                          </span>
                         ) : null}
                       </div>
                     </td>
@@ -761,6 +1188,15 @@ export function InventoryPanel({
         ) : (
           pageRows.map(({ product, onHand, status, hidden }) => {
             const img = productImage(product);
+            const key = `${storeId}:${product.id}`;
+            const reservedQty = invMeta?.reserved?.[key] ?? 0;
+            const avail = availableStock(onHand, reservedQty);
+            const locPrice = invMeta?.prices?.[key];
+            const shelf =
+              locPrice?.salePrice ??
+              locPrice?.promoPrice ??
+              locPrice?.basePrice ??
+              product.price;
             return (
               <li key={product.id} className="py-4">
                 <div className="flex gap-3">
@@ -782,16 +1218,23 @@ export function InventoryPanel({
                         <p className="truncate text-cream">
                           {product.name}
                           {hidden ? (
-                            <span className="ml-2 text-[10px] uppercase tracking-wider text-muted">
+                            <span className="ml-2 text-[10px] uppercase tracking-wider text-white/45">
                               Hidden
                             </span>
                           ) : null}
                         </p>
-                        <p className="text-[11px] text-muted">{product.brand}</p>
+                        <p className="truncate text-[11px] text-white/50">
+                          {product.brand} · {formatPrice(shelf)}
+                        </p>
                       </div>
                       <StatusPill status={status} />
                     </div>
-                    <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <p className="mt-1 text-[11px] tabular-nums text-white/55">
+                      <AbbrTooltip term="Rsv" /> {reservedQty}
+                      {" · "}
+                      <AbbrTooltip term="Avail" /> {avail}
+                    </p>
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
                       <QtyControl
                         value={onHand}
                         label={`${product.name} count`}
@@ -813,24 +1256,44 @@ export function InventoryPanel({
                         />
                       ) : null}
                       {canAdjust ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-10 items-center gap-1 px-3 text-[11px] uppercase tracking-wider text-muted hover:text-cream"
+                        <IconAction
+                          label={hidden ? "Show on website" : "Hide from website"}
                           onClick={() => setHidden(storeId, product.id, !hidden)}
                         >
-                          {hidden ? <Eye size={12} /> : <EyeOff size={12} />}
-                          {hidden ? "Show" : "Hide"}
+                          {hidden ? <Eye size={15} /> : <EyeOff size={15} />}
+                        </IconAction>
+                      ) : null}
+                      {canAdjust ? (
+                        <button
+                          type="button"
+                          className="inline-flex h-9 items-center rounded-sm border border-white/10 px-3 text-[11px] text-gold transition hover:border-(--gold)/35 hover:bg-white/5"
+                          onClick={() => {
+                            setPricingProduct(product);
+                            setPriceForm({
+                              basePrice:
+                                locPrice?.basePrice != null
+                                  ? String(locPrice.basePrice)
+                                  : String(product.price),
+                              salePrice:
+                                locPrice?.salePrice != null ? String(locPrice.salePrice) : "",
+                              costPrice:
+                                locPrice?.costPrice != null ? String(locPrice.costPrice) : "",
+                              promoPrice:
+                                locPrice?.promoPrice != null ? String(locPrice.promoPrice) : "",
+                            });
+                            setPriceError("");
+                          }}
+                        >
+                          Price
                         </button>
                       ) : null}
                       {canEditBottle ? (
-                        <button
-                          type="button"
-                          className="inline-flex min-h-10 items-center gap-1 px-3 text-[11px] uppercase tracking-wider text-muted hover:text-cream"
+                        <IconAction
+                          label={`Edit ${product.name}`}
                           onClick={() => setEditor(product)}
                         >
-                          <Pencil size={12} />
-                          Edit
-                        </button>
+                          <Pencil size={15} />
+                        </IconAction>
                       ) : null}
                     </div>
                   </div>
@@ -905,7 +1368,17 @@ export function InventoryPanel({
                       {product
                         ? ` · ${product.name}`
                         : entry.productId === "*"
-                          ? " · all SKUs"
+                          ? (
+                              <>
+                                {" · all "}
+                                <AbbrTooltip
+                                  term="SKU"
+                                  full="Stock Keeping Units"
+                                >
+                                  SKUs
+                                </AbbrTooltip>
+                              </>
+                            )
                           : ""}
                       {loc ? ` @ ${loc.shortName}` : ""}
                       {entry.delta !== 0
@@ -920,20 +1393,100 @@ export function InventoryPanel({
         </div>
       )}
 
-      <Modal
+      <BottleForm
+        key={editor === "new" ? "new" : editor?.id ?? "closed"}
         open={Boolean(editor)}
+        product={editor && editor !== "new" ? editor : undefined}
+        defaultLocationId={storeId}
+        onSaved={() => setEditor(null)}
         onClose={() => setEditor(null)}
-        title={editor === "new" ? "Add bottle" : "Edit bottle"}
-        subtitle="Photos, price, and copy appear on the shop and product page."
-        className="sm:max-w-xl"
+      />
+
+      <Modal
+        open={Boolean(pricingProduct)}
+        onClose={() => setPricingProduct(null)}
+        title="Store pricing"
+        subtitle={
+          pricingProduct
+            ? `${pricingProduct.name} at ${activeLocation?.shortName ?? "this store"}`
+            : undefined
+        }
+        className="sm:max-w-md"
       >
-        <BottleForm
-          key={editor === "new" ? "new" : editor?.id ?? "closed"}
-          product={editor && editor !== "new" ? editor : undefined}
-          defaultLocationId={storeId}
-          onSaved={() => setEditor(null)}
-          onClose={() => setEditor(null)}
-        />
+        <form
+          className="space-y-3"
+          onSubmit={async (e) => {
+            e.preventDefault();
+            if (!pricingProduct || !storeId) return;
+            const parseOptional = (raw: string) => {
+              if (!raw.trim()) return null;
+              return parseFiniteNumber(raw);
+            };
+            const basePrice = parseOptional(priceForm.basePrice);
+            const salePrice = parseOptional(priceForm.salePrice);
+            const costPrice = parseOptional(priceForm.costPrice);
+            const promoPrice = parseOptional(priceForm.promoPrice);
+            if (
+              (priceForm.basePrice && basePrice == null) ||
+              (priceForm.salePrice && salePrice == null) ||
+              (priceForm.costPrice && costPrice == null) ||
+              (priceForm.promoPrice && promoPrice == null)
+            ) {
+              setPriceError("Enter valid amounts with at most 2 decimals.");
+              return;
+            }
+            setPriceBusy(true);
+            setPriceError("");
+            try {
+              await apiSetLocationPricing(storeId, pricingProduct.id, {
+                basePrice,
+                salePrice,
+                costPrice,
+                promoPrice,
+              });
+              await qc.invalidateQueries({ queryKey: ["inventory-meta"] });
+              setPricingProduct(null);
+            } catch (err) {
+              setPriceError(err instanceof Error ? err.message : "Could not save prices.");
+            } finally {
+              setPriceBusy(false);
+            }
+          }}
+        >
+          {(
+            [
+              ["basePrice", "Base price ($)"],
+              ["salePrice", "Sale price ($)"],
+              ["costPrice", "Cost price ($)"],
+              ["promoPrice", "Promo price ($)"],
+            ] as const
+          ).map(([key, label]) => (
+            <label key={key} className="block text-xs text-muted">
+              {label}
+              <Input
+                className="mt-1"
+                inputMode="decimal"
+                value={priceForm[key]}
+                onChange={(e) =>
+                  setPriceForm((f) => ({
+                    ...f,
+                    [key]: sanitizeMoneyInput(e.target.value, 2),
+                  }))
+                }
+                placeholder="Optional"
+              />
+            </label>
+          ))}
+          {priceError ? <p className="text-sm text-(--danger)">{priceError}</p> : null}
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="secondary" onClick={() => setPricingProduct(null)}>
+              Cancel
+            </Button>
+            <Button type="submit" loading={priceBusy}>
+              Save prices
+            </Button>
+          </div>
+        </form>
       </Modal>
         </>
       ) : null}

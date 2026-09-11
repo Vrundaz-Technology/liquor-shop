@@ -4,6 +4,14 @@ import Image, { type ImageProps } from "next/image";
 import { isInlineImage } from "@/lib/image-file";
 import { cn } from "@/lib/utils";
 
+function shouldSkipOptimizer(url: string) {
+  return (
+    isInlineImage(url) ||
+    url.startsWith("/uploads/") ||
+    url.startsWith("blob:")
+  );
+}
+
 export function SmartImage({
   src,
   alt,
@@ -12,8 +20,12 @@ export function SmartImage({
   style,
   sizes,
   priority,
-  quality,
-}: Pick<ImageProps, "src" | "alt" | "fill" | "className" | "style" | "sizes" | "priority" | "quality">) {
+  quality = 75,
+  unoptimized,
+}: Pick<
+  ImageProps,
+  "src" | "alt" | "fill" | "className" | "style" | "sizes" | "priority" | "quality" | "unoptimized"
+>) {
   const url = typeof src === "string" ? src : "";
   if (url && isInlineImage(url)) {
     return (
@@ -36,6 +48,7 @@ export function SmartImage({
       sizes={sizes}
       priority={priority}
       quality={quality}
+      unoptimized={unoptimized ?? (url ? shouldSkipOptimizer(url) : false)}
     />
   );
 }

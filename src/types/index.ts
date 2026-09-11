@@ -23,6 +23,12 @@ export type Product = {
   volumeMl: number;
   price: number;
   compareAtPrice?: number;
+  costPrice?: number;
+  sku?: string;
+  upc?: string;
+  minQty?: number;
+  maxQty?: number;
+  organizationId?: string;
   rating: number;
   reviewCount: number;
   tastingNotes: string[];
@@ -39,16 +45,24 @@ export type Product = {
   nutrition?: { calories: number; carbs: number; sugar: number };
   glbUrl?: string;
   usdzUrl?: string;
+  createdAt?: string;
+  /** Optional sales volume for best-selling sort (falls back to reviewCount). */
+  unitsSold?: number;
 };
 
 export type InventoryItem = {
   productId: string;
   /** Catalog / seed on-hand count for this branch. Live stock lives in the inventory store. */
   stock: number;
+  reserved?: number;
+  basePrice?: number;
+  salePrice?: number;
+  costPrice?: number;
   promoPrice?: number;
   featured?: boolean;
   /** Hidden from the public shop at this branch only. */
   hidden?: boolean;
+  lowStockThreshold?: number;
 };
 
 export type InventoryLedgerReason =
@@ -56,7 +70,13 @@ export type InventoryLedgerReason =
   | "restock"
   | "adjustment"
   | "cancel"
-  | "reset";
+  | "reset"
+  | "transfer_out"
+  | "transfer_in"
+  | "reserve"
+  | "release"
+  | "damaged"
+  | "receiving";
 
 export type InventoryLedgerEntry = {
   id: string;
@@ -109,7 +129,23 @@ export type ActivityAction =
   | "driver.deactivated"
   | "role.created"
   | "role.updated"
-  | "role.deleted";
+  | "role.deleted"
+  | "inventory.transfer"
+  | "inventory.pricing"
+  | "inventory.import"
+  | "inventory.export"
+  | "promotion.created"
+  | "promotion.updated"
+  | "promotion.deleted"
+  | "crm.updated"
+  | "loyalty.updated"
+  | "loyalty.birthday_claimed"
+  | "review.created"
+  | "review.moderate"
+  | "review.respond"
+  | "support.ticket_created"
+  | "support.ticket_updated"
+  | "support.reply";
 
 export type ActivityEntityType =
   | "user"
@@ -122,7 +158,12 @@ export type ActivityEntityType =
   | "profile"
   | "delivery"
   | "driver"
-  | "role";
+  | "role"
+  | "promotion"
+  | "customer"
+  | "loyalty"
+  | "review"
+  | "support";
 
 export type ActivityLogEntry = {
   id: string;
@@ -144,6 +185,7 @@ export type StoreLocation = {
   slug: string;
   name: string;
   shortName: string;
+  organizationId?: string;
   address: string;
   city: string;
   state: string;
@@ -151,6 +193,7 @@ export type StoreLocation = {
   phone: string;
   email: string;
   hours: { day: string; open: string; close: string }[];
+  holidayHours?: { date: string; open: string; close: string; closed?: boolean }[];
   lat: number;
   lng: number;
   heroImage: string;
@@ -163,7 +206,9 @@ export type StoreLocation = {
   deliveryRadiusKm: number;
   deliveryFee: number;
   deliveryFreeMinimum: number;
+  minimumOrderAmount?: number;
   taxRate: number;
+  paymentSettings?: Record<string, unknown>;
   inventory: InventoryItem[];
   featuredOffers: string[];
   description: string;
@@ -201,6 +246,75 @@ export type Review = {
   helpful: number;
 };
 
+export type ReviewTargetType = "product" | "store" | "delivery";
+export type ReviewStatus = "published" | "hidden" | "flagged";
+
+/** Unified product / store / delivery review (platform review management). */
+export type PlatformReview = {
+  id: string;
+  targetType: ReviewTargetType;
+  productId?: string;
+  locationId?: string;
+  orderId?: string;
+  userId?: string;
+  userName: string;
+  rating: number;
+  title: string;
+  body: string;
+  date: string;
+  verified: boolean;
+  status: ReviewStatus;
+  ownerReply?: string;
+  ownerRepliedAt?: string;
+  ownerRepliedBy?: string;
+  reportCount?: number;
+  images?: string[];
+  helpful: number;
+};
+
+export type SupportCategory =
+  | "order_issue"
+  | "missing_item"
+  | "damaged_product"
+  | "delivery_issue"
+  | "refund"
+  | "payment"
+  | "account"
+  | "product_question";
+
+export type SupportTicketStatus = "open" | "pending" | "resolved" | "closed";
+export type SupportRouteScope = "store" | "owner" | "platform";
+
+export type SupportMessage = {
+  id: string;
+  ticketId: string;
+  authorUserId?: string;
+  authorName: string;
+  authorRole: "customer" | "staff" | "system";
+  body: string;
+  createdAt: string;
+};
+
+export type SupportTicket = {
+  id: string;
+  organizationId: string;
+  locationId?: string;
+  orderId?: string;
+  userId: string;
+  customerName?: string;
+  customerEmail?: string;
+  category: SupportCategory;
+  subject: string;
+  status: SupportTicketStatus;
+  priority: "low" | "normal" | "high";
+  routeScope: SupportRouteScope;
+  routeReason?: string;
+  assigneeUserId?: string;
+  createdAt: string;
+  updatedAt: string;
+  messages?: SupportMessage[];
+};
+
 export type CartItem = {
   productId: string;
   quantity: number;
@@ -212,6 +326,7 @@ export type SavedItem = {
   savedAt: string;
 };
 
+/** Legacy delivery sub-status (kept for UI until fully folded into Order.status). */
 export type DeliveryStatus =
   | "unassigned"
   | "assigned"
@@ -242,23 +357,52 @@ export type Driver = {
   status: DriverStatus;
   active: boolean;
   photoUrl?: string;
+  /** Linked staff user for assigned-only delivery access. */
+  userId?: string;
 };
 
 export type OrderFulfillment = "delivery" | "pickup" | "pos";
 
+export type OrderStatus =
+  | "new"
+  | "accepted"
+  | "preparing"
+  | "ready"
+  | "assigned"
+  | "out_for_delivery"
+  | "delivered"
+  | "ready_for_pickup"
+  | "picked_up"
+  | "completed"
+  | "cancelled"
+  /** @deprecated legacy — migrated on read/write */
+  | "processing"
+  | "shipped";
+
 export type Order = {
   id: string;
   date: string;
-  status: "processing" | "shipped" | "ready" | "delivered" | "cancelled";
+  status: OrderStatus;
   items: { productId: string; quantity: number; price: number }[];
   total: number;
+  subtotal?: number;
+  taxAmount?: number;
+  discountAmount?: number;
+  deliveryFee?: number;
+  paymentStatus?: string;
   fulfillment: OrderFulfillment;
   locationId: string;
+  organizationId?: string;
   tracking?: string;
+  /** Snapshot ETA minutes at place-order (delivery only). */
+  etaMinutes?: number | null;
   delivery?: DeliveryAddress;
   deliveryStatus?: DeliveryStatus;
   driverId?: string;
   driver?: Driver;
+  assignedStaffId?: string;
+  couponCode?: string;
+  promotionId?: string;
 };
 
 export type UserRole = "customer" | "staff" | "admin" | "owner";
@@ -274,11 +418,14 @@ export type ManagedUser = {
   loyaltyPoints: number;
   loyaltyTier: LoyaltyTier;
   preferredBranchId: string;
+  organizationId?: string | null;
   orderCount: number;
   createdAt: string;
   avatarUrl?: string;
   permissionGrants?: string[];
   permissionRevokes?: string[];
+  /** Server-computed RBAC snapshot for client gates. */
+  effectivePermissions?: string[];
   allowedLocationIds?: string[] | null;
 };
 
@@ -288,6 +435,11 @@ export type NewBottleInput = {
   category: CategorySlug;
   price: number;
   compareAtPrice?: number | null;
+  costPrice?: number | null;
+  sku?: string;
+  upc?: string;
+  minQty?: number;
+  maxQty?: number | null;
   abv: number;
   volumeMl: number;
   origin: string;
@@ -306,6 +458,19 @@ export type NewBottleInput = {
 
 export type BottlePatch = Partial<Omit<NewBottleInput, "initialStock" | "stockLocationIds">>;
 
+export type UserPreferences = {
+  defaultFulfillment?: "delivery" | "pickup";
+  marketingEmails?: boolean;
+  smsUpdates?: boolean;
+  pushUpdates?: boolean;
+  orderEmailUpdates?: boolean;
+  loyaltyAlerts?: boolean;
+  backInStockAlerts?: boolean;
+  priceAlerts?: boolean;
+  abandonedCartReminders?: boolean;
+  favoriteCategory?: string | null;
+};
+
 export type UserProfile = {
   id: string;
   name: string;
@@ -313,8 +478,13 @@ export type UserProfile = {
   role: string;
   active: boolean;
   preferredBranchId: string;
+  organizationId?: string | null;
   loyaltyPoints: number;
   loyaltyTier: LoyaltyTier;
+  birthday?: string | null;
+  referralCode?: string | null;
+  canClaimBirthday?: boolean;
+  preferences?: UserPreferences;
   addresses: {
     id: string;
     label: string;
@@ -330,5 +500,7 @@ export type UserProfile = {
   avatarUrl?: string;
   permissionGrants?: string[];
   permissionRevokes?: string[];
+  /** Server-computed RBAC snapshot for client gates. */
+  effectivePermissions?: string[];
   allowedLocationIds?: string[] | null;
 };

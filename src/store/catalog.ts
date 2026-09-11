@@ -138,7 +138,12 @@ export const useCatalogStore = create<CatalogState>()(
             set({ custom: next, revision: get().revision + 1 });
             upsertRuntimeProduct(saved);
             if (inventory) {
-              useInventoryStore.getState().syncFromServer(inventory.stocks, inventory.seats, inventory.hidden);
+              useInventoryStore.getState().syncFromServer(
+                inventory.stocks,
+                inventory.seats,
+                inventory.hidden,
+                inventory.reserved,
+              );
             }
             return saved;
           } catch (error) {
@@ -244,7 +249,12 @@ export const useCatalogStore = create<CatalogState>()(
             syncRegistry(next);
             set({ custom: next, revision: get().revision + 1 });
             if (result.inventory) {
-              useInventoryStore.getState().syncFromServer(result.inventory.stocks, result.inventory.seats, result.inventory.hidden);
+              useInventoryStore.getState().syncFromServer(
+                result.inventory.stocks,
+                result.inventory.seats,
+                result.inventory.hidden,
+                result.inventory.reserved,
+              );
             }
             return true;
           } catch (error) {

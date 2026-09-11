@@ -7,6 +7,7 @@ import { getCatalogStock } from "@/lib/inventory";
 import { getAllLocations } from "@/data/locations";
 import { stockByLocation } from "@/lib/cart-availability";
 import { useClientMounted } from "@/hooks/useHydratedInventory";
+import { switchShoppingStore } from "@/lib/switch-store";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -26,7 +27,6 @@ export function LocationStockStrip({
   const branchId = useBranchStore((s) => s.branchId);
   const mounted = useClientMounted();
   const revision = useInventoryStore((s) => s.revision);
-  const setBranch = useBranchStore((s) => s.setBranch);
   void revision;
 
   const rows = useMemo(() => {
@@ -49,7 +49,7 @@ export function LocationStockStrip({
           <button
             key={location.id}
             type="button"
-            onClick={() => setBranch(location.id)}
+            onClick={() => switchShoppingStore(location.id)}
             className={cn(
               "inline-flex min-h-9 shrink-0 items-center gap-1.5 whitespace-nowrap border transition touch-manipulation",
               compact

@@ -8,6 +8,7 @@ type InventorySnapshot = {
   stocks: Record<string, number>;
   seats: Record<string, number>;
   hidden?: Record<string, boolean>;
+  reserved?: Record<string, number>;
 };
 
 export async function apiSetInventory(
@@ -25,6 +26,29 @@ export async function apiSetInventory(
         productId,
         quantity,
         reason,
+      }),
+    ),
+  });
+}
+
+export async function apiSetLocationPricing(
+  locationId: string,
+  productId: string,
+  prices: {
+    basePrice?: number | null;
+    salePrice?: number | null;
+    costPrice?: number | null;
+    promoPrice?: number | null;
+  },
+) {
+  await apiFetch("/api/inventory", {
+    method: "PATCH",
+    body: JSON.stringify(
+      withActor({
+        action: "pricing",
+        locationId,
+        productId,
+        ...prices,
       }),
     ),
   });
@@ -146,6 +170,7 @@ export async function apiPlaceOrder(input: {
   fulfillment: Order["fulfillment"];
   items: { productId: string; quantity: number }[];
   coupon?: string | null;
+  loyaltyPointsRedeem?: number;
   ageConfirmed?: true;
   delivery?: import("@/types").DeliveryAddress;
 }) {
@@ -158,6 +183,66 @@ export async function apiPlaceOrder(input: {
     method: "POST",
     body: JSON.stringify(input),
   });
+}
+
+export async function apiValidateCoupon(input: {
+  code?: string | null;
+  locationId?: string;
+  subtotal: number;
+  auto?: boolean;
+  items?: { productId: string; quantity: number; price: number; category?: string; brand?: string }[];
+}) {
+  const params = new URLSearchParams({
+    subtotal: String(input.subtotal),
+  });
+  if (input.code?.trim()) params.set("code", input.code.trim());
+  if (input.auto || !input.code?.trim()) params.set("auto", "1");
+  if (input.locationId) params.set("locationId", input.locationId);
+  if (input.items?.length) params.set("items", JSON.stringify(input.items));
+  return apiFetch<{
+    ok: true;
+    code: string | null;
+    name: string | null;
+    discount: number;
+    freeDelivery: boolean;
+    promotionId: string | null;
+    autoApplied?: boolean;
+    type?: string;
+  }>(`/api/promotions/validate?${params.toString()}`);
+}
+
+export async function apiLoyaltyMember(opts?: { locationId?: string; history?: boolean }) {
+  const params = new URLSearchParams();
+  if (opts?.locationId) params.set("locationId", opts.locationId);
+  if (opts?.history) params.set("history", "1");
+  const qs = params.toString();
+  return apiFetch<{
+    ok: true;
+    organizationId?: string;
+    program: {
+      name: string;
+      pointsPerDollar: number;
+      redeemRate: number;
+      birthdayPoints: number;
+      referralPoints: number;
+      referralSignupPoints: number;
+      rewards: unknown;
+      tiers: unknown;
+      active: boolean;
+    } | null;
+    balance: number;
+    tier: string;
+    entries?: {
+      id: string;
+      delta: number;
+      balanceAfter: number;
+      reason: string;
+      reasonLabel?: string;
+      orderId: string | null;
+      createdAt: string;
+    }[];
+    total?: number;
+  }>(`/api/loyalty/member${qs ? `?${qs}` : ""}`);
 }
 
 export async function apiPlacePosOrder(input: {
@@ -194,17 +279,30 @@ export async function apiFetchOrders(opts?: {
   status?: string;
   fulfillment?: string;
   q?: string;
+  fromDate?: string;
+  toDate?: string;
+  unreadOnly?: boolean;
 }) {
   const params = new URLSearchParams();
   if (opts?.locationId) params.set("locationId", opts.locationId);
   if (opts?.status && opts.status !== "all") params.set("status", opts.status);
   if (opts?.fulfillment && opts.fulfillment !== "all") params.set("fulfillment", opts.fulfillment);
   if (opts?.q?.trim()) params.set("q", opts.q.trim());
+  if (opts?.fromDate) params.set("fromDate", opts.fromDate);
+  if (opts?.toDate) params.set("toDate", opts.toDate);
+  if (opts?.unreadOnly) params.set("unread", "1");
   const qs = params.toString();
   return apiFetch<{
     orders: Array<
-      Order & { customerId: string; customerName: string; customerEmail: string }
+      Order & {
+        customerId: string;
+        customerName: string;
+        customerEmail: string;
+        unreadForMe?: boolean;
+        notificationId?: string | null;
+      }
     >;
+    unreadOrderCount?: number;
   }>(`/api/orders${qs ? `?${qs}` : ""}`);
 }
 
@@ -227,7 +325,12 @@ export async function apiLogin(email: string, password: string) {
   });
 }
 
-export async function apiSignup(name: string, email: string, password: string) {
+export async function apiSignup(
+  name: string,
+  email: string,
+  password: string,
+  referralCode?: string,
+) {
   return apiFetch<{
     user: UserProfile;
     accessToken: string;
@@ -235,7 +338,12 @@ export async function apiSignup(name: string, email: string, password: string) {
     expiresIn: number;
   }>("/api/auth/signup", {
     method: "POST",
-    body: JSON.stringify({ name, email, password }),
+    body: JSON.stringify({
+      name,
+      email,
+      password,
+      ...(referralCode?.trim() ? { referralCode: referralCode.trim() } : {}),
+    }),
   });
 }
 
@@ -247,14 +355,28 @@ export async function apiLogout() {
   }
 }
 
-export async function apiMe() {
-  return apiFetch<{ user: UserProfile }>("/api/auth/me");
+export async function apiMe(options?: { includeOrders?: boolean }) {
+  const q = options?.includeOrders ? "?orders=1" : "";
+  return apiFetch<{ user: UserProfile }>(`/api/auth/me${q}`);
 }
 
 export async function apiUpdateMe(
   patch: Partial<
-    Pick<UserProfile, "name" | "email" | "avatarUrl" | "preferredBranchId" | "recentlyViewed" | "addresses">
-  > & { password?: string; currentPassword?: string },
+    Pick<
+      UserProfile,
+      | "name"
+      | "email"
+      | "preferredBranchId"
+      | "recentlyViewed"
+      | "addresses"
+      | "birthday"
+      | "preferences"
+    >
+  > & {
+    avatarUrl?: string | null;
+    password?: string;
+    currentPassword?: string;
+  },
 ) {
   return apiFetch<{ user: UserProfile }>("/api/auth/me", {
     method: "PATCH",
@@ -266,6 +388,13 @@ export async function apiRedeemPoints(redeemPoints: number) {
   return apiFetch<{ user: UserProfile }>("/api/auth/me", {
     method: "PATCH",
     body: JSON.stringify({ redeemPoints }),
+  });
+}
+
+export async function apiClaimBirthdayReward() {
+  return apiFetch<{ ok: true; points: number; balance: number }>("/api/loyalty", {
+    method: "POST",
+    body: JSON.stringify({ action: "claim-birthday" }),
   });
 }
 
@@ -501,7 +630,12 @@ export async function apiDeleteEvent(eventId: string) {
 }
 
 export async function apiFetchDeliveries() {
-  return apiFetch<{ drivers: import("@/types").Driver[]; orders: Order[] }>("/api/deliveries");
+  return apiFetch<{
+    drivers: import("@/types").Driver[];
+    orders: Order[];
+    linkedDriverId?: string | null;
+    canDispatch?: boolean;
+  }>("/api/deliveries");
 }
 
 export async function apiAssignDelivery(orderId: string, driverId: string) {

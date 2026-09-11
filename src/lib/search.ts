@@ -11,13 +11,25 @@ const fuseKeys = [
   { name: "origin", weight: 0.05 },
 ];
 
+let cachedFuse: Fuse<Product> | null = null;
+let cachedCount = -1;
+
+function productFuse() {
+  const products = getAllProducts();
+  if (!cachedFuse || cachedCount !== products.length) {
+    cachedFuse = new Fuse(products, {
+      keys: fuseKeys,
+      threshold: 0.35,
+      includeScore: true,
+    });
+    cachedCount = products.length;
+  }
+  return cachedFuse;
+}
+
 export function searchProducts(query: string, limit = 12): Product[] {
   if (!query.trim()) return [];
-  const fuse = new Fuse(getAllProducts(), {
-    keys: fuseKeys,
-    threshold: 0.35,
-    includeScore: true,
-  });
+  const fuse = productFuse();
   const opts = limit > 0 ? { limit } : undefined;
   return fuse.search(query, opts).map((r) => r.item);
 }

@@ -5,7 +5,8 @@ import Link from "next/link";
 import Image from "next/image";
 import { useRouter } from "next/navigation";
 import { z } from "zod";
-import { useCartStore, getCouponDiscount } from "@/store/cart";
+import { useCartStore } from "@/store/cart";
+import { useShallow } from "zustand/react/shallow";
 import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { getPriceForLocation, getAllLocations } from "@/data/locations";
@@ -17,9 +18,18 @@ import type { DeliveryAddress, Order } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { BranchAvailabilityPanel } from "@/components/cart/BranchAvailabilityPanel";
+import { OrderSummaryCard } from "@/components/cart/OrderSummaryCard";
 import { isDbConnected } from "@/lib/runtime-data";
-import { apiPlaceOrder } from "@/lib/api-mutations";
+import { useQuery } from "@tanstack/react-query";
+import { apiLoyaltyMember, apiPlaceOrder, apiValidateCoupon } from "@/lib/api-mutations";
+import {
+  loyaltyDiscountFromPoints,
+  maxRedeemablePoints,
+} from "@/lib/commerce/cart-pricing";
+import { getCouponDiscount } from "@/lib/commerce";
 import { useDeliveryStore } from "@/store/delivery";
+import { deliveryEtaForStore, pickupEtaForStore } from "@/lib/order-eta";
+import { switchShoppingStore } from "@/lib/switch-store";
 
 const usPhone = z
   .string()
@@ -91,7 +101,7 @@ const pickupSchema = z.object({
 });
 
 const fieldClass =
-  "!min-h-10 h-10 py-2 px-3 text-sm placeholder:not-italic placeholder:text-white/25";
+  "!min-h-11 h-11 py-2.5 px-3 text-sm placeholder:not-italic placeholder:text-white/25";
 const fieldErrorClass = "border-red-400/50";
 
 type CheckoutField =
@@ -165,14 +175,41 @@ function Section({
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const { items, coupon, fulfillment, clear, setFulfillment, removeItem } =
-    useCartStore();
+  const {
+    items,
+    coupon,
+    loyaltyPointsRedeem,
+    fulfillment,
+    clear,
+    setFulfillment,
+    removeItem,
+    applyCoupon,
+    setLoyaltyPointsRedeem,
+  } = useCartStore(
+    useShallow((s) => ({
+      items: s.items,
+      coupon: s.coupon,
+      loyaltyPointsRedeem: s.loyaltyPointsRedeem,
+      fulfillment: s.fulfillment,
+      clear: s.clear,
+      setFulfillment: s.setFulfillment,
+      removeItem: s.removeItem,
+      applyCoupon: s.applyCoupon,
+      setLoyaltyPointsRedeem: s.setLoyaltyPointsRedeem,
+    })),
+  );
   const branchId = useBranchStore((s) => s.branchId);
-  const setBranch = useBranchStore((s) => s.setBranch);
+  const customerZip = useBranchStore((s) => s.customerZip);
+  const customerLat = useBranchStore((s) => s.customerLat);
+  const customerLng = useBranchStore((s) => s.customerLng);
   const branch = getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
-  const { isLoggedIn, profile, addOrder, authReady } = useUserStore();
+  const isLoggedIn = useUserStore((s) => s.isLoggedIn);
+  const profile = useUserStore((s) => s.profile);
+  const addOrder = useUserStore((s) => s.addOrder);
+  const updateProfile = useUserStore((s) => s.updateProfile);
+  const authReady = useUserStore((s) => s.authReady);
   const inventoryRevision = useInventoryStore((s) => s.revision);
-  const getOnHand = useInventoryStore((s) => s.getOnHand);
+  const getAvailable = useInventoryStore((s) => s.getAvailable);
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -186,6 +223,7 @@ export default function CheckoutPage() {
   const [expiry, setExpiry] = useState("12/28");
   const [cvc, setCvc] = useState("123");
   const [ageConfirmed, setAgeConfirmed] = useState(false);
+  const [saveAddress, setSaveAddress] = useState(false);
   const [error, setError] = useState("");
   const [fieldErrors, setFieldErrors] = useState<Partial<Record<CheckoutField, string>>>({});
   const [confirmed, setConfirmed] = useState<Order | null>(null);
@@ -239,7 +277,7 @@ export default function CheckoutPage() {
   void inventoryRevision;
 
   const billableItems = items.filter((i) => {
-    const stock = getOnHand(branchId, i.productId);
+    const stock = getAvailable(branchId, i.productId);
     return stock >= i.quantity;
   });
 
@@ -248,11 +286,136 @@ export default function CheckoutPage() {
     if (!p) return n;
     return n + getPriceForLocation(branchId, p.id) * i.quantity;
   }, 0);
-  const discount = getCouponDiscount(coupon, subtotal);
-  const shipping = calculateShipping(subtotal - discount, fulfillment, branch);
+
+  const promoItems = useMemo(
+    () =>
+      items
+        .filter((i) => getAvailable(branchId, i.productId) >= i.quantity)
+        .map((i) => {
+          const p = getProductById(i.productId);
+          if (!p) return null;
+          return {
+            productId: p.id,
+            quantity: i.quantity,
+            price: getPriceForLocation(branchId, p.id),
+            category: p.category,
+            brand: p.brand,
+          };
+        })
+        .filter(Boolean) as {
+        productId: string;
+        quantity: number;
+        price: number;
+        category: string;
+        brand: string;
+      }[],
+    [items, branchId, inventoryRevision, getAvailable],
+  );
+
+  const couponQuery = useQuery({
+    queryKey: [
+      "checkout-coupon",
+      coupon,
+      branchId,
+      Math.round(subtotal * 100),
+      promoItems.map((i) => `${i.productId}:${i.quantity}`).join("|"),
+    ],
+    enabled: subtotal > 0,
+    staleTime: 30_000,
+    retry: false,
+    queryFn: async () => {
+      if (!isDbConnected()) {
+        if (!coupon) {
+          return {
+            ok: true as const,
+            code: null,
+            name: null,
+            discount: 0,
+            freeDelivery: false,
+            promotionId: null,
+            autoApplied: true,
+          };
+        }
+        const amount = getCouponDiscount(coupon, subtotal);
+        if (!amount) throw new Error("Invalid coupon");
+        return {
+          ok: true as const,
+          code: coupon,
+          name: coupon,
+          discount: amount,
+          freeDelivery: false,
+          promotionId: null,
+          autoApplied: false,
+        };
+      }
+      return apiValidateCoupon({
+        code: coupon,
+        auto: !coupon,
+        locationId: branchId,
+        subtotal,
+        items: promoItems,
+      });
+    },
+  });
+
+  useEffect(() => {
+    if (couponQuery.isError && coupon) {
+      applyCoupon(null);
+    }
+  }, [couponQuery.isError, coupon, applyCoupon]);
+
+  const loyaltyQuery = useQuery({
+    queryKey: ["loyalty-member-checkout", branchId],
+    enabled: isLoggedIn && isDbConnected(),
+    staleTime: 60_000,
+    queryFn: () => apiLoyaltyMember({ locationId: branchId }),
+  });
+
+  const redeemRate = loyaltyQuery.data?.program?.redeemRate ?? 0.02;
+  const loyaltyRewards = useMemo(() => {
+    const raw = loyaltyQuery.data?.program?.rewards;
+    if (!Array.isArray(raw)) return [];
+    return raw
+      .map((r) => {
+        if (!r || typeof r !== "object") return null;
+        const row = r as { points?: number; value?: number; label?: string };
+        if (!row.points || !row.value) return null;
+        return { points: Number(row.points), value: Number(row.value), label: row.label };
+      })
+      .filter(Boolean) as { points: number; value: number; label?: string }[];
+  }, [loyaltyQuery.data?.program?.rewards]);
+  const balance = isLoggedIn
+    ? (loyaltyQuery.data?.balance ?? profile.loyaltyPoints)
+    : 0;
+  const couponDiscount = couponQuery.isError
+    ? 0
+    : (couponQuery.data?.discount ??
+      (!isDbConnected() && coupon ? getCouponDiscount(coupon, subtotal) : 0));
+  const maxLoyalty = Math.max(0, subtotal - couponDiscount);
+  const maxPoints = maxRedeemablePoints({
+    balance,
+    redeemRate,
+    maxDiscount: maxLoyalty,
+    rewards: loyaltyRewards,
+  });
+  const loyalty = loyaltyDiscountFromPoints({
+    points: Math.min(loyaltyPointsRedeem, maxPoints),
+    redeemRate,
+    maxDiscount: maxLoyalty,
+    rewards: loyaltyRewards,
+  });
+  const discount = couponDiscount + loyalty.discount;
+  const shippingBase = calculateShipping(subtotal - discount, fulfillment, branch);
+  const shipping = couponQuery.data?.freeDelivery ? 0 : shippingBase;
   const tax = calculateTax(subtotal - discount, branch);
   const freeDeliveryGap = amountUntilFreeDelivery(subtotal - discount, branch);
-  const total = subtotal - discount + shipping + tax;
+  const total = Math.max(0, subtotal - discount + shipping + tax);
+
+  useEffect(() => {
+    if (loyaltyPointsRedeem > maxPoints) {
+      setLoyaltyPointsRedeem(maxPoints);
+    }
+  }, [loyaltyPointsRedeem, maxPoints, setLoyaltyPointsRedeem]);
 
   const delivery: DeliveryAddress = useMemo(
     () => ({
@@ -347,14 +510,39 @@ export default function CheckoutPage() {
           locationId: branchId,
           fulfillment,
           coupon,
+          loyaltyPointsRedeem: isLoggedIn ? loyalty.points : 0,
           ageConfirmed: true,
           delivery: fulfillment === "delivery" ? delivery : undefined,
           items: items.map((i) => ({ productId: i.productId, quantity: i.quantity })),
         });
         useInventoryStore
           .getState()
-          .syncFromServer(result.inventory.stocks, result.inventory.seats, result.inventory.hidden);
+          .syncFromServer(result.inventory.stocks, result.inventory.seats, result.inventory.hidden, result.inventory.reserved);
         addOrder(result.order, { loyaltyPoints: result.loyaltyPoints });
+        if (
+          isLoggedIn &&
+          saveAddress &&
+          fulfillment === "delivery" &&
+          delivery
+        ) {
+          const nextAddresses = [
+            ...profile.addresses.filter(
+              (a) =>
+                a.line1.toLowerCase() !== delivery.line1.toLowerCase() ||
+                a.zip !== delivery.zip,
+            ),
+            {
+              id: `addr-${crypto.randomUUID()}`,
+              label: "Delivery",
+              line1: delivery.line1,
+              city: delivery.city,
+              state: delivery.state,
+              zip: delivery.zip,
+              isDefault: profile.addresses.length === 0,
+            },
+          ].slice(0, 12);
+          void updateProfile({ addresses: nextAddresses }).catch(console.error);
+        }
         if (result.order.fulfillment === "delivery") {
           useDeliveryStore.getState().attach(result.order.id, delivery);
         }
@@ -443,13 +631,21 @@ export default function CheckoutPage() {
               {confirmed.delivery.city}, {confirmed.delivery.state} {confirmed.delivery.zip}
             </p>
             <p className="mt-3 text-xs text-muted">
-              A Sam&apos;s driver from {branch.shortName} will be assigned next. Track the run on
-              your account page after dispatch.
+              A Sam&apos;s driver from {branch.shortName} will be assigned next. Track progress on
+              your account or with your tracking code.
             </p>
             {confirmed.tracking ? (
               <p className="mt-2 text-xs uppercase tracking-wider text-gold">
                 Tracking {confirmed.tracking}
               </p>
+            ) : null}
+            {confirmed.tracking ? (
+              <Link
+                href={`/track?code=${encodeURIComponent(confirmed.tracking)}`}
+                className="mt-3 inline-block text-xs text-gold hover:underline"
+              >
+                Open live tracking
+              </Link>
             ) : null}
           </div>
         ) : null}
@@ -580,7 +776,7 @@ export default function CheckoutPage() {
                     type="button"
                     disabled={disabled}
                     onClick={() => setFulfillment(mode)}
-                    className={`flex-1 rounded-sm px-4 py-1.5 text-sm capitalize sm:flex-none disabled:cursor-not-allowed disabled:opacity-40 ${
+                    className={`flex-1 min-h-11 rounded-sm px-4 py-2 text-sm capitalize touch-manipulation sm:flex-none disabled:cursor-not-allowed disabled:opacity-40 ${
                       fulfillment === mode
                         ? "bg-[var(--gold)]/20 text-cream"
                         : "text-muted hover:text-cream"
@@ -607,8 +803,8 @@ export default function CheckoutPage() {
                   <button
                     key={loc.id}
                     type="button"
-                    onClick={() => setBranch(loc.id)}
-                    className={`rounded-sm border px-3 py-1.5 text-left text-sm transition ${
+                    onClick={() => switchShoppingStore(loc.id)}
+                    className={`min-h-11 rounded-sm border px-3 py-2 text-left text-sm transition touch-manipulation ${
                       selected
                         ? "border-(--gold)/50 bg-(--gold)/10 text-cream"
                         : "border-white/10 text-muted hover:border-white/25 hover:text-cream"
@@ -749,6 +945,16 @@ export default function CheckoutPage() {
                   />
                 </Field>
               </div>
+              {isLoggedIn ? (
+                <label className="mt-3 flex items-center gap-2 text-sm text-cream">
+                  <input
+                    type="checkbox"
+                    checked={saveAddress}
+                    onChange={(e) => setSaveAddress(e.target.checked)}
+                  />
+                  Save this address to my account
+                </label>
+              ) : null}
             </Section>
           ) : null}
 
@@ -808,7 +1014,7 @@ export default function CheckoutPage() {
           </Section>
 
           <label
-            className={`flex items-start gap-3 rounded-sm border px-3 py-3 text-sm ${
+            className={`flex min-h-11 items-start gap-3 rounded-sm border px-3 py-3 text-sm touch-manipulation ${
               fieldErrors.ageConfirmed
                 ? "border-red-400/50 bg-red-400/5 text-red-200"
                 : "border-white/10 bg-white/[0.02] text-muted"
@@ -831,7 +1037,8 @@ export default function CheckoutPage() {
           {error ? <p className="text-sm text-red-300">{error}</p> : null}
 
           <Button
-            className="w-full lg:hidden"
+            className="w-full min-h-12 lg:hidden"
+            size="lg"
             onClick={() => void placeOrder()}
             disabled={!canPlace}
           >
@@ -848,7 +1055,7 @@ export default function CheckoutPage() {
               const p = getProductById(i.productId);
               if (!p) return null;
               const price = getPriceForLocation(branchId, p.id);
-              const stock = getOnHand(branchId, p.id);
+              const stock = getAvailable(branchId, p.id);
               const ok = stock >= i.quantity;
               return (
                 <li
@@ -893,37 +1100,73 @@ export default function CheckoutPage() {
             })}
           </ul>
           <div className="mt-3 space-y-1.5 border-t border-white/10 pt-3 text-sm">
-            <div className="flex justify-between">
-              <span className="text-muted">Subtotal</span>
-              <span>{formatPrice(subtotal)}</span>
-            </div>
-            {discount > 0 ? (
-              <div className="flex justify-between">
-                <span className="text-muted">Discount</span>
-                <span>−{formatPrice(discount)}</span>
-              </div>
+            <OrderSummaryCard
+              store={branch}
+              fulfillment={fulfillment}
+              etaLabel={
+                fulfillment === "delivery"
+                  ? deliveryEtaForStore(branch, {
+                      lat: customerLat,
+                      lng: customerLng,
+                      zip: customerZip || zip,
+                    })
+                  : pickupEtaForStore(branch)
+              }
+              addressSummary={
+                fulfillment === "delivery"
+                  ? line1
+                    ? `${line1}${city ? `, ${city}` : ""}${zip ? ` ${zip}` : ""}`
+                    : "Enter delivery address below"
+                  : `Pickup at ${branch.address}, ${branch.city}`
+              }
+              paymentSummary={
+                card.replace(/\s/g, "").length >= 4
+                  ? `Card ···· ${card.replace(/\s/g, "").slice(-4)}`
+                  : "Card at payment step"
+              }
+              lines={[
+                { label: "Subtotal", value: formatPrice(subtotal) },
+                ...(couponDiscount > 0
+                  ? [
+                      {
+                        label: couponQuery.data?.autoApplied
+                          ? couponQuery.data.name
+                            ? `Offer · ${couponQuery.data.name}`
+                            : "Offer"
+                          : "Coupon",
+                        value: `−${formatPrice(couponDiscount)}`,
+                      },
+                    ]
+                  : []),
+                ...(loyalty.discount > 0
+                  ? [
+                      {
+                        label: `Loyalty (${loyalty.points} pts)`,
+                        value: `−${formatPrice(loyalty.discount)}`,
+                      },
+                    ]
+                  : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
+                {
+                  label: fulfillment === "delivery" ? "Delivery fee" : "Pickup fee",
+                  value: shipping === 0 ? "Free" : formatPrice(shipping),
+                },
+                { label: "Tax", value: formatPrice(tax) },
+                { label: "Total", value: formatPrice(total), emphasis: true },
+              ]}
+            />
+            {coupon && couponQuery.isFetching ? (
+              <p className="text-[10px] text-muted">Checking coupon…</p>
             ) : null}
-            <div className="flex justify-between">
-              <span className="text-muted">Shipping</span>
-              <span>{shipping === 0 ? "Free" : formatPrice(shipping)}</span>
-            </div>
             {fulfillment === "delivery" && freeDeliveryGap != null ? (
               <p className="text-[10px] leading-relaxed text-muted">
                 Add {formatPrice(freeDeliveryGap)} more for free delivery from {branch.shortName}.
               </p>
             ) : null}
-            <div className="flex justify-between">
-              <span className="text-muted">Tax</span>
-              <span>{formatPrice(tax)}</span>
-            </div>
-            <div className="flex justify-between pt-1 text-base">
-              <span>Total</span>
-              <span className="text-gold">{formatPrice(total)}</span>
-            </div>
           </div>
           {error ? <p className="mt-3 hidden text-sm text-red-300 lg:block">{error}</p> : null}
           <Button
-            className="mt-4 hidden w-full lg:inline-flex"
+            className="mt-4 hidden w-full min-h-12 lg:inline-flex"
+            size="lg"
             onClick={() => void placeOrder()}
             disabled={!canPlace}
           >

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchUserById } from "@/lib/db/queries";
+import { fetchSessionUser } from "@/lib/db/queries";
 import { isStaffRole } from "@/lib/auth/roles";
 import { PERMISSION_META, hasAnyPermission, hasPermission, type Permission } from "@/lib/auth/permissions";
 import { getAuthClaims } from "@/lib/auth/session";
@@ -13,7 +13,7 @@ export async function getRequestUser(): Promise<UserProfile | null> {
   const claims = await getAuthClaims();
   if (!claims) return null;
   await warmRoleCatalog();
-  const user = await fetchUserById(claims.sub);
+  const user = await fetchSessionUser(claims.sub);
   if (!user || user.active === false) return null;
   return user;
 }

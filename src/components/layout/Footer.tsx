@@ -6,7 +6,9 @@ import { useUserStore } from "@/store/user";
 import { isStaffRole } from "@/lib/auth/roles";
 
 export function Footer() {
-  const showDashboard = useUserStore((s) => s.isLoggedIn && isStaffRole(s.profile));
+  const showDashboard = useUserStore(
+    (s) => s.authReady && s.isLoggedIn && isStaffRole(s.profile),
+  );
 
   return (
     <footer className="border-t border-white/5 bg-[#050505] px-0 pt-12 pb-[max(2rem,env(safe-area-inset-bottom))] sm:pt-16">
@@ -67,6 +69,16 @@ export function Footer() {
             <li>
               <Link href="/wishlist" className="hover:text-[var(--cream)]">
                 Wishlist
+              </Link>
+            </li>
+            <li>
+              <Link href="/track" className="hover:text-[var(--cream)]">
+                Track order
+              </Link>
+            </li>
+            <li>
+              <Link href="/support" className="hover:text-[var(--cream)]">
+                Support
               </Link>
             </li>
           </ul>

@@ -2,38 +2,63 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { notFound, useParams } from "next/navigation";
+import { MapPin } from "lucide-react";
 import { getCategories } from "@/data/categories";
 import { getAllProducts } from "@/data/products";
 import { ProductCard } from "@/components/product/ProductCard";
-import { Input } from "@/components/ui/Input";
+import { SearchInput } from "@/components/ui/SearchInput";
 import { Pagination } from "@/components/ui/Pagination";
 import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
+import { ShopFiltersPanel } from "@/components/shop/ShopFiltersPanel";
+import { StoreFinder } from "@/components/store/StoreFinder";
+import { Button } from "@/components/ui/Button";
 import type { CategorySlug } from "@/types";
 import { useBranchStore } from "@/store/branch";
+import { switchShoppingStore } from "@/lib/switch-store";
 import { useInventoryStore } from "@/store/inventory";
 import { useCatalogStore } from "@/store/catalog";
+import {
+  filterAndSortProducts,
+  uniqueBrands,
+  uniqueTypes,
+  type ShopFilters,
+} from "@/lib/shop-catalog";
+import { getAllLocations } from "@/data/locations";
 
 export function CategoryPage() {
   const params = useParams<{ category: string }>();
   const category = params.category as CategorySlug;
   const meta = getCategories().find((c) => c.slug === category);
 
-  const [search, setSearch] = useState("");
-  const [brand, setBrand] = useState("all");
-  const [country, setCountry] = useState("all");
-  const [sort, setSort] = useState("featured");
-  const [maxPrice, setMaxPrice] = useState(5000);
-  const [minRating, setMinRating] = useState(0);
-  const [minAbv, setMinAbv] = useState(0);
-  const [inStockOnly, setInStockOnly] = useState(false);
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const [finderOpen, setFinderOpen] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(9);
+  const [filters, setFilters] = useState<ShopFilters>({
+    q: "",
+    category,
+    brand: "all",
+    type: "all",
+    size: "all",
+    maxPrice: 5000,
+    minRating: 0,
+    inStockOnly: false,
+    maxDeliveryMinutes: 0,
+    sort: "popular",
+  });
+
   const branchId = useBranchStore((s) => s.branchId);
-  const getOnHand = useInventoryStore((s) => s.getOnHand);
+  const customerZip = useBranchStore((s) => s.customerZip);
+  const customerLat = useBranchStore((s) => s.customerLat);
+  const customerLng = useBranchStore((s) => s.customerLng);
+  const getAvailable = useInventoryStore((s) => s.getAvailable);
   const isHidden = useInventoryStore((s) => s.isHidden);
   const inventoryRevision = useInventoryStore((s) => s.revision);
   const catalogRevision = useCatalogStore((s) => s.revision);
+
+  useEffect(() => {
+    setFilters((f) => ({ ...f, category }));
+  }, [category]);
 
   const base = useMemo(
     () =>
@@ -46,63 +71,49 @@ export function CategoryPage() {
     [category, catalogRevision, branchId, isHidden, inventoryRevision],
   );
 
-  const brands = [...new Set(base.map((p) => p.brand))];
-  const countries = [...new Set(base.map((p) => p.country))];
+  const brands = useMemo(() => uniqueBrands(base), [base]);
+  const types = useMemo(() => uniqueTypes(base), [base]);
 
-  const filtered = useMemo(() => {
-    let list = base.filter((p) => {
-      if (search && !`${p.name} ${p.brand}`.toLowerCase().includes(search.toLowerCase()))
-        return false;
-      if (brand !== "all" && p.brand !== brand) return false;
-      if (country !== "all" && p.country !== country) return false;
-      if (p.price > maxPrice) return false;
-      if (p.rating < minRating) return false;
-      if (p.abv < minAbv) return false;
-      if (inStockOnly && getOnHand(branchId, p.id) <= 0) return false;
-      return true;
-    });
+  const effectiveStoreId =
+    filters.storeId && filters.storeId !== "current" ? filters.storeId : branchId;
 
-    if (sort === "price-asc") list = [...list].sort((a, b) => a.price - b.price);
-    if (sort === "price-desc") list = [...list].sort((a, b) => b.price - a.price);
-    if (sort === "rating") list = [...list].sort((a, b) => b.rating - a.rating);
-    if (sort === "abv") list = [...list].sort((a, b) => b.abv - a.abv);
-    return list;
-  }, [
-    base,
-    search,
-    brand,
-    country,
-    maxPrice,
-    minRating,
-    minAbv,
-    sort,
-    inStockOnly,
-    branchId,
-    getOnHand,
-    inventoryRevision,
-  ]);
+  const filtered = useMemo(
+    () =>
+      filterAndSortProducts(getAllProducts(), { ...filters, category }, {
+        branchId: effectiveStoreId,
+        getOnHand: getAvailable,
+        isHidden,
+        customerLat,
+        customerLng,
+      }),
+    [
+      filters,
+      category,
+      effectiveStoreId,
+      getAvailable,
+      isHidden,
+      customerLat,
+      customerLng,
+      catalogRevision,
+      inventoryRevision,
+    ],
+  );
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
 
   useEffect(() => {
     setPage(1);
-  }, [
-    category,
-    search,
-    brand,
-    country,
-    maxPrice,
-    minRating,
-    minAbv,
-    sort,
-    inStockOnly,
-    branchId,
-    pageSize,
-  ]);
+  }, [category, filters, branchId, pageSize]);
 
   useEffect(() => {
     if (page > totalPages) setPage(totalPages);
   }, [page, totalPages]);
+
+  useEffect(() => {
+    if (filters.storeId && filters.storeId !== "current" && filters.storeId !== branchId) {
+      switchShoppingStore(filters.storeId);
+    }
+  }, [filters.storeId, branchId]);
 
   const pageItems = useMemo(() => {
     const start = (page - 1) * pageSize;
@@ -111,6 +122,8 @@ export function CategoryPage() {
 
   const from = filtered.length ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, filtered.length);
+  const currentStore =
+    getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
 
   if (!meta) {
     notFound();
@@ -118,16 +131,34 @@ export function CategoryPage() {
 
   return (
     <div className="mx-auto max-w-7xl px-3 py-10 sm:px-4 sm:py-14 md:px-8 md:py-16">
-      <p className="text-[10px] uppercase tracking-[0.28em] text-gold">
-        {meta.tagline}
-      </p>
-      <h1 className="mt-2 font-display text-3xl text-cream sm:text-4xl md:text-6xl">
-        {meta.name}
-      </h1>
-      <p className="mt-3 max-w-xl text-sm text-muted sm:text-base">{meta.description}</p>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[0.28em] text-gold">{meta.tagline}</p>
+          <h1 className="mt-2 font-display text-3xl text-cream sm:text-4xl md:text-6xl">
+            {meta.name}
+          </h1>
+          <p className="mt-3 max-w-xl text-sm text-muted sm:text-base">{meta.description}</p>
+          <p className="mt-2 text-xs text-muted">
+            At <span className="text-cream">{currentStore?.shortName}</span>
+            {customerZip ? <> · ZIP {customerZip}</> : null}
+          </p>
+        </div>
+        <Button type="button" size="sm" variant="secondary" onClick={() => setFinderOpen(true)}>
+          <MapPin size={14} aria-hidden />
+          {customerZip ? `Near ${customerZip}` : "Find store by ZIP"}
+        </Button>
+      </div>
 
       <div className="mt-10 grid gap-8 lg:grid-cols-[240px_1fr]">
         <div>
+          <div className="mb-3 lg:hidden">
+            <SearchInput
+              placeholder="Search…"
+              value={filters.q ?? ""}
+              onChange={(q) => setFilters((f) => ({ ...f, q }))}
+              aria-label="Filter by name"
+            />
+          </div>
           <button
             type="button"
             className="mb-3 flex w-full items-center justify-between rounded-sm border border-white/10 px-4 py-3 text-left text-sm text-cream lg:hidden"
@@ -138,104 +169,26 @@ export function CategoryPage() {
             <span className="text-gold">{filtersOpen ? "Hide" : "Show"}</span>
           </button>
           <aside
-            className={`glass h-fit p-4 ${filtersOpen ? "block" : "hidden"} lg:block`}
+            className={`h-fit border border-white/10 bg-black/20 p-4 ${
+              filtersOpen ? "block" : "hidden"
+            } lg:block`}
           >
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-1">
-          <Input
-            className="sm:col-span-2 lg:col-span-1"
-            placeholder="Search…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            aria-label="Filter by name"
-          />
-          <label className="block text-xs text-muted">
-            Brand
-            <select
-              className="mt-1 w-full rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2 text-sm text-cream scheme-dark [&_option]:bg-(--bg-elevated) [&_option]:text-cream"
-              value={brand}
-              onChange={(e) => setBrand(e.target.value)}
-            >
-              <option value="all">All</option>
-              {brands.map((b) => (
-                <option key={b} value={b}>
-                  {b}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-xs text-muted">
-            Country
-            <select
-              className="mt-1 w-full rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2 text-sm text-cream scheme-dark [&_option]:bg-(--bg-elevated) [&_option]:text-cream"
-              value={country}
-              onChange={(e) => setCountry(e.target.value)}
-            >
-              <option value="all">All</option>
-              {countries.map((c) => (
-                <option key={c} value={c}>
-                  {c}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="block text-xs text-muted">
-            Max price ${maxPrice}
-            <input
-              type="range"
-              min={10}
-              max={5000}
-              value={maxPrice}
-              onChange={(e) => setMaxPrice(Number(e.target.value))}
-              className="mt-2 w-full accent-gold"
+            <div className="mb-4 hidden lg:block">
+              <SearchInput
+                placeholder="Search…"
+                value={filters.q ?? ""}
+                onChange={(q) => setFilters((f) => ({ ...f, q }))}
+                aria-label="Filter by name"
+              />
+            </div>
+            <ShopFiltersPanel
+              value={filters}
+              onChange={setFilters}
+              brands={brands}
+              types={types}
+              showCategory={false}
             />
-          </label>
-          <label className="block text-xs text-muted">
-            Min rating {minRating}+
-            <input
-              type="range"
-              min={0}
-              max={5}
-              step={0.5}
-              value={minRating}
-              onChange={(e) => setMinRating(Number(e.target.value))}
-              className="mt-2 w-full accent-gold"
-            />
-          </label>
-          <label className="block text-xs text-muted">
-            Min ABV {minAbv}%
-            <input
-              type="range"
-              min={0}
-              max={50}
-              value={minAbv}
-              onChange={(e) => setMinAbv(Number(e.target.value))}
-              className="mt-2 w-full accent-gold"
-            />
-          </label>
-          <label className="flex items-center gap-2 text-xs text-muted">
-            <input
-              type="checkbox"
-              checked={inStockOnly}
-              onChange={(e) => setInStockOnly(e.target.checked)}
-            />
-            In stock at this branch
-          </label>
-          <label className="block text-xs text-muted">
-            Sort
-            <select
-              className="mt-1 w-full rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2 text-sm text-cream scheme-dark [&_option]:bg-(--bg-elevated) [&_option]:text-cream"
-              value={sort}
-              onChange={(e) => setSort(e.target.value)}
-            >
-              <option value="featured">Featured</option>
-              <option value="price-asc">Price ↑</option>
-              <option value="price-desc">Price ↓</option>
-              <option value="rating">Rating</option>
-              <option value="abv">ABV</option>
-            </select>
-          </label>
-          </div>
-        </aside>
+          </aside>
         </div>
 
         <div>
@@ -255,11 +208,11 @@ export function CategoryPage() {
           </div>
           <div className="grid grid-cols-2 gap-2.5 sm:gap-4 md:grid-cols-3 md:gap-6">
             {pageItems.map((p, i) => (
-              <ProductCard key={p.id} product={p} index={i} />
+              <ProductCard key={p.id} product={p} index={i} locationId={effectiveStoreId} />
             ))}
           </div>
           {!filtered.length && (
-            <p className="text-muted">No bottles match these filters.</p>
+            <p className="mt-4 text-muted">No bottles match these filters.</p>
           )}
           <Pagination
             page={page}
@@ -271,6 +224,8 @@ export function CategoryPage() {
           />
         </div>
       </div>
+
+      <StoreFinder open={finderOpen} onClose={() => setFinderOpen(false)} />
     </div>
   );
 }

@@ -7,6 +7,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Shared dark native <select> styles — prefer NativeSelect so the chevron arrow is shown. */
+export const nativeSelectClass =
+  "appearance-none rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2.5 text-sm text-cream outline-none transition scheme-dark hover:border-white/20 focus:border-(--gold)/45 [&_option]:bg-(--bg-elevated) [&_option]:text-cream";
+
+/** Absolute chevron for custom-wrapped native selects (when NativeSelect isn't used). */
+export const nativeSelectChevronClass =
+  "pointer-events-none absolute right-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted";
+
 export function formatPrice(amount: number, currency = "USD") {
   return new Intl.NumberFormat("en-US", {
     style: "currency",

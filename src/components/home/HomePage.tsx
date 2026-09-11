@@ -1,15 +1,29 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { products } from "@/data/products";
 import { ProductCard } from "@/components/product/ProductCard";
 import { SectionHeading } from "@/components/ui/SectionHeading";
 import { Button } from "@/components/ui/Button";
 import { LandingHero } from "./LandingHero";
-import { BottleCarousel } from "./BottleCarousel";
-import { ExperienceCollections } from "./ExperienceCollections";
-import { HomeLocations } from "./HomeLocations";
-import { HomeEvents } from "./HomeEvents";
+
+const BottleCarousel = dynamic(
+  () => import("./BottleCarousel").then((m) => m.BottleCarousel),
+  { ssr: false, loading: () => <div className="h-64" aria-hidden /> },
+);
+const ExperienceCollections = dynamic(
+  () => import("./ExperienceCollections").then((m) => m.ExperienceCollections),
+  { ssr: false },
+);
+const HomeLocations = dynamic(
+  () => import("./HomeLocations").then((m) => m.HomeLocations),
+  { ssr: false },
+);
+const HomeEvents = dynamic(
+  () => import("./HomeEvents").then((m) => m.HomeEvents),
+  { ssr: false },
+);
 
 export function HomePage() {
   const featured = products.filter((p) => p.isPremium).slice(0, 4);

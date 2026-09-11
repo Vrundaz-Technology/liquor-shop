@@ -2,6 +2,7 @@ import type { Driver, DriverStatus, UserProfile } from "@/types";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { ensureDeliverySchema } from "@/lib/db/delivery";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { hasPermission } from "@/lib/auth/permissions";
 import { canAccessLocation, hasAllLocationAccess } from "@/lib/auth/location-access";
 
@@ -15,6 +16,7 @@ type DriverRow = {
   status: string;
   active: boolean;
   photo_url: string | null;
+  user_id?: string | null;
 };
 
 function asDriver(row: DriverRow): Driver {
@@ -28,6 +30,7 @@ function asDriver(row: DriverRow): Driver {
     status: row.status as DriverStatus,
     active: row.active,
     photoUrl: row.photo_url ?? undefined,
+    userId: row.user_id ?? undefined,
   };
 }
 
@@ -136,6 +139,14 @@ export async function createDriver(actor: UserProfile, input: DriverInput) {
     entityId: driver.id,
     locationId: driver.locationId,
     summary: `${actor.name} added driver ${driver.name}`,
+    metadata: activityChanges([
+      { field: "created", to: driver.name },
+      { field: "phone", to: driver.phone },
+      { field: "email", to: driver.email ?? "(none)" },
+      { field: "vehicle", to: driver.vehicle },
+      { field: "location", to: driver.locationId },
+      { field: "status", to: driver.status },
+    ]),
   });
   return { driver };
 }
@@ -212,17 +223,39 @@ export async function updateDriver(
   const row = await getDriverRow(driverId);
   if (!row) return { error: "Driver not found.", status: 404 as const };
   const driver = asDriver(row);
-  await recordActivity({
-    actorUserId: actor.id,
-    action: input.active === false ? "driver.deactivated" : "driver.updated",
-    entityType: "driver",
-    entityId: driver.id,
-    locationId: driver.locationId,
-    summary:
-      input.active === false
-        ? `${actor.name} deactivated driver ${driver.name}`
-        : `${actor.name} updated driver ${driver.name}`,
-  });
+  const yesNo = (v: boolean) => (v ? "Yes" : "No");
+  const changes = onlyChanged([
+    { field: "name", from: existing.name, to: driver.name },
+    { field: "phone", from: existing.phone, to: driver.phone },
+    { field: "email", from: existing.email ?? "(none)", to: driver.email ?? "(none)" },
+    { field: "vehicle", from: existing.vehicle, to: driver.vehicle },
+    { field: "location", from: existing.location_id, to: driver.locationId },
+    { field: "status", from: existing.status, to: driver.status },
+    {
+      field: "active",
+      from: yesNo(Boolean(existing.active)),
+      to: yesNo(driver.active),
+    },
+    {
+      field: "photoUrl",
+      from: existing.photo_url ?? "(none)",
+      to: driver.photoUrl ?? "(none)",
+    },
+  ]);
+  if (changes.length) {
+    await recordActivity({
+      actorUserId: actor.id,
+      action: input.active === false ? "driver.deactivated" : "driver.updated",
+      entityType: "driver",
+      entityId: driver.id,
+      locationId: driver.locationId,
+      summary:
+        input.active === false
+          ? `${actor.name} deactivated driver ${driver.name}`
+          : `${actor.name} updated driver ${driver.name}`,
+      metadata: activityChanges(changes),
+    });
+  }
   return { driver };
 }
 

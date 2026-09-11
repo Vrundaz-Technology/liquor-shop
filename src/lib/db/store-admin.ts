@@ -4,9 +4,12 @@ import { DEFAULT_FULFILLMENT_PRICING } from "@/lib/fulfillment-pricing";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import { mapEvent, mapLocation } from "@/lib/db/mappers";
+import { moneyNumber } from "@/lib/db/money";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { hasPermission } from "@/lib/auth/permissions";
 import { canAccessLocation, hasAllLocationAccess } from "@/lib/auth/location-access";
+import { actorOrganizationId, ensureOrganizationSchema, SAMS_ORG_ID } from "@/lib/db/organization";
 import type { EventItem, StoreLocation, UserProfile } from "@/types";
 
 const DEFAULT_HOURS = [
@@ -79,7 +82,10 @@ export type LocationInput = {
   deliveryRadiusKm?: number;
   deliveryFee?: number;
   deliveryFreeMinimum?: number;
+  minimumOrderAmount?: number;
   taxRate?: number;
+  hours?: { day: string; open: string; close: string }[];
+  holidayHours?: { date: string; open: string; close: string; closed?: boolean }[];
   parking?: string;
   heroImage?: string;
   gallery?: string[];
@@ -108,6 +114,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
   if (!isDbConfigured()) return { error: "Database is not configured.", status: 503 as const };
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
+  await ensureOrganizationSchema();
 
   const shortName = input.shortName.trim();
   const name = input.name.trim() || `Sam's Discount Liquor — ${shortName}`;
@@ -115,6 +122,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
   const slug = await uniqueLocationSlug(shortName || name);
   const heroImage = input.heroImage?.trim() || DEFAULT_HERO;
   const gallery = composeGallery(heroImage, input.gallery);
+  const organizationId = actorOrganizationId(actor) ?? SAMS_ORG_ID;
 
   await prisma.$transaction(async (tx) => {
     await tx.location.create({
@@ -123,13 +131,15 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
         slug,
         name,
         shortName,
+        organizationId,
         address: input.address.trim(),
         city: input.city.trim(),
         state: input.state.trim(),
         zip: input.zip.trim(),
         phone: input.phone.trim(),
         email: input.email.trim().toLowerCase(),
-        hours: DEFAULT_HOURS,
+        hours: input.hours?.length ? input.hours : DEFAULT_HOURS,
+        holidayHours: input.holidayHours ?? [],
         lat: input.lat ?? 40.7209,
         lng: input.lng ?? -74.0007,
         heroImage,
@@ -143,6 +153,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
         deliveryFee: input.deliveryFee ?? DEFAULT_FULFILLMENT_PRICING.deliveryFee,
         deliveryFreeMinimum:
           input.deliveryFreeMinimum ?? DEFAULT_FULFILLMENT_PRICING.deliveryFreeMinimum,
+        minimumOrderAmount: input.minimumOrderAmount ?? 0,
         taxRate: input.taxRate ?? DEFAULT_FULFILLMENT_PRICING.taxRate,
         featuredOffers: [],
         description: input.description?.trim() || `${name} is now part of the Sam's Discount Liquor network.`,
@@ -183,6 +194,13 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
     entityId: location.id,
     locationId: location.id,
     summary: `${actor.name} added store ${location.shortName}`,
+    metadata: activityChanges([
+      { field: "created", to: location.shortName },
+      { field: "name", to: location.name },
+      { field: "city", to: `${location.city}, ${location.state}` },
+      { field: "phone", to: location.phone },
+      { field: "email", to: location.email },
+    ]),
   });
   return { location };
 }
@@ -240,7 +258,12 @@ export async function updateStoreLocation(
       deliveryRadiusKm: input.deliveryRadiusKm ?? existing.deliveryRadiusKm,
       deliveryFee: input.deliveryFee ?? existingPricing.deliveryFee,
       deliveryFreeMinimum: input.deliveryFreeMinimum ?? existingPricing.deliveryFreeMinimum,
+      minimumOrderAmount:
+        input.minimumOrderAmount ??
+        moneyNumber((existing as { minimumOrderAmount?: unknown }).minimumOrderAmount),
       taxRate: input.taxRate ?? existingPricing.taxRate,
+      ...(input.hours !== undefined ? { hours: input.hours } : {}),
+      ...(input.holidayHours !== undefined ? { holidayHours: input.holidayHours } : {}),
       parking: input.parking?.trim() ?? existing.parking,
       heroImage,
       gallery,
@@ -255,14 +278,81 @@ export async function updateStoreLocation(
   });
   if (!row) return { error: "Location not found.", status: 404 as const };
   const location = mapLocation(row);
-  await recordActivity({
-    actorUserId: actor.id,
-    action: "location.updated",
-    entityType: "location",
-    entityId: location.id,
-    locationId: location.id,
-    summary: `${actor.name} updated store ${location.shortName}`,
-  });
+  const yesNo = (v: boolean) => (v ? "Yes" : "No");
+  const money = (n: number | null | undefined) =>
+    n == null ? "(none)" : `$${Number(n).toFixed(2)}`;
+  const changes = onlyChanged([
+    { field: "name", from: existing.name, to: location.name },
+    { field: "shortName", from: existing.shortName, to: location.shortName },
+    { field: "address", from: existing.address, to: location.address },
+    { field: "city", from: existing.city, to: location.city },
+    { field: "state", from: existing.state, to: location.state },
+    { field: "zip", from: existing.zip, to: location.zip },
+    { field: "phone", from: existing.phone, to: location.phone },
+    { field: "email", from: existing.email, to: location.email },
+    { field: "description", from: existing.description, to: location.description },
+    {
+      field: "pickupAvailable",
+      from: yesNo(existing.pickupAvailable),
+      to: yesNo(location.pickupAvailable),
+    },
+    {
+      field: "deliveryAvailable",
+      from: yesNo(existingPricing.deliveryAvailable),
+      to: yesNo(location.deliveryAvailable),
+    },
+    {
+      field: "deliveryRadiusKm",
+      from: existing.deliveryRadiusKm,
+      to: location.deliveryRadiusKm,
+    },
+    {
+      field: "deliveryFee",
+      from: money(existingPricing.deliveryFee),
+      to: money(location.deliveryFee),
+    },
+    {
+      field: "deliveryFreeMinimum",
+      from: money(existingPricing.deliveryFreeMinimum),
+      to: money(location.deliveryFreeMinimum),
+    },
+    {
+      field: "minimumOrderAmount",
+      from: money(moneyNumber((existing as { minimumOrderAmount?: unknown }).minimumOrderAmount)),
+      to: money(location.minimumOrderAmount),
+    },
+    { field: "taxRate", from: existingPricing.taxRate, to: location.taxRate },
+    { field: "parking", from: existing.parking, to: location.parking },
+    { field: "heroImage", from: existing.heroImage, to: location.heroImage },
+    {
+      field: "gallery",
+      from: `${galleryUrls(existing.gallery).length} image(s)`,
+      to: `${location.gallery?.length ?? 0} image(s)`,
+    },
+    { field: "lat", from: existing.lat, to: location.lat },
+    { field: "lng", from: existing.lng, to: location.lng },
+    {
+      field: "hours",
+      from: JSON.stringify(existing.hours ?? []),
+      to: JSON.stringify(row.hours ?? []),
+    },
+    {
+      field: "holidayHours",
+      from: JSON.stringify(existing.holidayHours ?? []),
+      to: JSON.stringify(row.holidayHours ?? []),
+    },
+  ]);
+  if (changes.length) {
+    await recordActivity({
+      actorUserId: actor.id,
+      action: "location.updated",
+      entityType: "location",
+      entityId: location.id,
+      locationId: location.id,
+      summary: `${actor.name} updated store ${location.shortName}`,
+      metadata: activityChanges(changes),
+    });
+  }
   return { location };
 }
 
@@ -305,6 +395,9 @@ export async function deleteStoreLocation(actor: UserProfile, locationId: string
     entityType: "location",
     entityId: locationId,
     summary: `${actor.name} removed store ${existing.shortName}`,
+    metadata: activityChanges([
+      { field: "deleted", from: existing.shortName, to: "(deleted)" },
+    ]),
   });
   return { ok: true as const, id: locationId };
 }
@@ -370,6 +463,15 @@ export async function createStoreEvent(actor: UserProfile, input: EventInput) {
     entityId: event.id,
     locationId: event.locationId,
     summary: `${actor.name} added event “${event.title}”`,
+    metadata: activityChanges([
+      { field: "created", to: event.title },
+      { field: "type", to: event.type },
+      { field: "date", to: event.date },
+      { field: "location", to: event.locationId },
+      { field: "price", to: `$${Number(event.price).toFixed(2)}` },
+      { field: "seatsTotal", to: event.seatsTotal },
+      { field: "active", to: active ? "Yes" : "No" },
+    ]),
   });
   return { event };
 }
@@ -444,17 +546,43 @@ export async function updateStoreEvent(
   });
   await prisma.$executeRaw`UPDATE events SET active = ${nextActive} WHERE id = ${eventId}`;
   const event = mapEvent({ ...row, active: nextActive });
-  await recordActivity({
-    actorUserId: actor.id,
-    action: "event.updated",
-    entityType: "event",
-    entityId: event.id,
-    locationId: event.locationId,
-    summary:
-      input.active !== undefined && input.active !== existingActive
-        ? `${actor.name} ${event.active ? "activated" : "deactivated"} event “${event.title}”`
-        : `${actor.name} updated event “${event.title}”`,
-  });
+  const money = (n: unknown) => `$${moneyNumber(n).toFixed(2)}`;
+  const list = (hosts: unknown) => {
+    const arr = Array.isArray(hosts) ? hosts.filter((h): h is string => typeof h === "string") : [];
+    return arr.length ? arr.join(", ") : "(none)";
+  };
+  const changes = onlyChanged([
+    { field: "title", from: existing.title, to: event.title },
+    { field: "type", from: existing.type, to: event.type },
+    { field: "description", from: existing.description, to: event.description },
+    { field: "location", from: existing.locationId, to: event.locationId },
+    { field: "date", from: existing.date, to: event.date },
+    { field: "startTime", from: existing.startTime, to: event.startTime },
+    { field: "endTime", from: existing.endTime, to: event.endTime },
+    { field: "price", from: money(existing.price), to: money(event.price) },
+    { field: "seatsTotal", from: existing.seatsTotal, to: event.seatsTotal },
+    { field: "image", from: existing.image, to: event.image },
+    { field: "hosts", from: list(existing.hosts), to: list(event.hosts) },
+    {
+      field: "active",
+      from: existingActive ? "Yes" : "No",
+      to: nextActive ? "Yes" : "No",
+    },
+  ]);
+  if (changes.length) {
+    await recordActivity({
+      actorUserId: actor.id,
+      action: "event.updated",
+      entityType: "event",
+      entityId: event.id,
+      locationId: event.locationId,
+      summary:
+        input.active !== undefined && input.active !== existingActive
+          ? `${actor.name} ${event.active ? "activated" : "deactivated"} event “${event.title}”`
+          : `${actor.name} updated event “${event.title}”`,
+      metadata: activityChanges(changes),
+    });
+  }
   return { event };
 }
 
@@ -476,6 +604,9 @@ export async function deleteStoreEvent(actor: UserProfile, eventId: string) {
     entityId: eventId,
     locationId: existing.locationId,
     summary: `${actor.name} removed event “${existing.title}”`,
+    metadata: activityChanges([
+      { field: "deleted", from: existing.title, to: "(deleted)" },
+    ]),
   });
   return { ok: true as const, id: eventId };
 }

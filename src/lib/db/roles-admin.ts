@@ -7,6 +7,7 @@ import {
 } from "@/lib/auth/role-catalog";
 import { hasPermission, parsePermissions, PERMISSIONS, effectivePermissions, type Permission } from "@/lib/auth/permissions";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { createIndexIfMissing } from "@/lib/db/schema-guard";
 import type { UserProfile } from "@/types";
@@ -59,7 +60,7 @@ async function refreshCatalog() {
 
 export async function listRoleDefinitions(): Promise<CustomRoleDefinition[]> {
   if (!isDbConfigured()) return [];
-  await refreshCatalog();
+  await ensureRolePresets();
   const rows = await prisma.$queryRawUnsafe<RoleRow[]>(
     `SELECT * FROM role_definitions ORDER BY label ASC`,
   );
@@ -136,8 +137,8 @@ export async function createRoleDefinition(
   const description = (input.description ?? "").trim();
 
   await prisma.$executeRaw`
-    INSERT INTO role_definitions (id, slug, label, description, permissions, \`rank\`)
-    VALUES (${id}, ${slug}, ${label}, ${description}, ${permissionsJson}, ${rank})
+    INSERT INTO role_definitions (id, slug, label, description, permissions, \`rank\`, created_at, updated_at)
+    VALUES (${id}, ${slug}, ${label}, ${description}, ${permissionsJson}, ${rank}, CURRENT_TIMESTAMP(3), CURRENT_TIMESTAMP(3))
   `;
 
   await refreshCatalog();
@@ -150,10 +151,57 @@ export async function createRoleDefinition(
     entityType: "role",
     entityId: role.id,
     summary: `${actor.name} created the ${role.label} role`,
-    metadata: { slug: role.slug, permissions: role.permissions, rank: role.rank },
+    metadata: activityChanges([
+      { field: "created", to: role.label },
+      { field: "slug", to: role.slug },
+      { field: "rank", to: role.rank },
+      { field: "permissions", to: role.permissions },
+      ...(role.description ? [{ field: "description", to: role.description }] : []),
+    ]),
   });
 
   return { role };
+}
+
+/** Idempotently create industry role presets if missing (by slug). */
+export async function ensureRolePresets() {
+  if (!isDbConfigured()) return;
+  await ensureRoleDefinitionsSchema();
+  const { ROLE_PRESETS } = await import("@/lib/auth/role-presets");
+  for (const preset of ROLE_PRESETS) {
+    const existing = await prisma.$queryRawUnsafe<{ id: string }[]>(
+      `SELECT id FROM role_definitions WHERE slug = ? LIMIT 1`,
+      preset.slug,
+    );
+    const systemId = `role-${preset.slug}`;
+    if (existing[0]) {
+      // Keep built-in presets aligned with code (custom roles use other ids).
+      if (existing[0].id === systemId) {
+        await prisma.$executeRawUnsafe(
+          `UPDATE role_definitions
+           SET label = ?, description = ?, permissions = ?, \`rank\` = ?
+           WHERE id = ?`,
+          preset.label,
+          preset.description,
+          JSON.stringify(preset.permissions),
+          preset.rank,
+          systemId,
+        );
+      }
+      continue;
+    }
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO role_definitions (id, slug, label, description, permissions, \`rank\`, created_at, updated_at)
+       VALUES (?,?,?,?,?,?,CURRENT_TIMESTAMP(3),CURRENT_TIMESTAMP(3))`,
+      systemId,
+      preset.slug,
+      preset.label,
+      preset.description,
+      JSON.stringify(preset.permissions),
+      preset.rank,
+    );
+  }
+  await refreshCatalog();
 }
 
 export async function updateRoleDefinition(
@@ -228,14 +276,24 @@ export async function updateRoleDefinition(
   const role = (await listRoleDefinitions()).find((item) => item.id === roleId);
   if (!role) return { error: "Role was updated but could not be loaded.", status: 500 };
 
-  await recordActivity({
-    actorUserId: actor.id,
-    action: "role.updated",
-    entityType: "role",
-    entityId: role.id,
-    summary: `${actor.name} updated the ${role.label} role`,
-    metadata: { slug: role.slug, permissions: role.permissions, rank: role.rank },
-  });
+  const previousPermissions = parsePermissions(existing.permissions);
+  const changes = onlyChanged([
+    { field: "label", from: existing.label, to: role.label },
+    { field: "slug", from: existing.slug, to: role.slug },
+    { field: "description", from: existing.description ?? "", to: role.description ?? "" },
+    { field: "rank", from: existing.rank, to: role.rank },
+    { field: "permissions", from: previousPermissions, to: role.permissions },
+  ]);
+  if (changes.length) {
+    await recordActivity({
+      actorUserId: actor.id,
+      action: "role.updated",
+      entityType: "role",
+      entityId: role.id,
+      summary: `${actor.name} updated the ${role.label} role`,
+      metadata: activityChanges(changes),
+    });
+  }
 
   return { role };
 }
@@ -273,14 +331,26 @@ export async function deleteRoleDefinition(
     entityType: "role",
     entityId: existing.id,
     summary: `${actor.name} deleted the ${existing.label} role`,
-    metadata: { slug: existing.slug },
+    metadata: activityChanges([
+      { field: "deleted", from: existing.label, to: "(deleted)" },
+      { field: "slug", from: existing.slug, to: "(deleted)" },
+      { field: "permissions", from: parsePermissions(existing.permissions), to: "(deleted)" },
+    ]),
   });
 
   return { ok: true };
 }
 
+let catalogWarmed = false;
+
 export async function warmRoleCatalog() {
-  await refreshCatalog();
+  if (catalogWarmed) return;
+  if (isDbConfigured()) {
+    await ensureRolePresets();
+  } else {
+    await refreshCatalog();
+  }
+  catalogWarmed = true;
 }
 
 export function permissionsActorCanGrant(actor: UserProfile): Permission[] {

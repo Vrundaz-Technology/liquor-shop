@@ -3,13 +3,16 @@ import { Prisma } from "@prisma/client";
 import { mapUser } from "@/lib/db/mappers";
 import { mapOrder } from "@/lib/db/mappers";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { hashPassword, validatePassword, verifyPassword } from "@/lib/auth/password";
 import { canAssignRole, canDeactivateUser, canEditUser, canResetPassword, DEMO_PASSWORD, isDemoAccountEmail } from "@/lib/auth/roles";
 import { isKnownRole } from "@/lib/auth/role-catalog";
 import { warmRoleCatalog } from "@/lib/db/roles-admin";
 import {
+  effectivePermissions,
   hasPermission,
   normalizeOverrides,
+  overridesFromEnabled,
   parsePermissions,
   PERMISSIONS,
   type Permission,
@@ -20,7 +23,37 @@ import {
 } from "@/lib/auth/location-access";
 import { listLocationIds } from "@/lib/db/store-admin";
 import { addColumnIfMissing } from "@/lib/db/schema-guard";
-import type { ManagedUser, UserProfile } from "@/types";
+import {
+  applyReferralOnSignup,
+  ensureUserReferralCode,
+  loadLoyaltyProfileFields,
+  setUserBirthday,
+} from "@/lib/db/loyalty";
+import type { ManagedUser, UserPreferences, UserProfile } from "@/types";
+
+function parsePreferences(raw: unknown): UserPreferences | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  const next: UserPreferences = {};
+  if (row.defaultFulfillment === "delivery" || row.defaultFulfillment === "pickup") {
+    next.defaultFulfillment = row.defaultFulfillment;
+  }
+  if (typeof row.marketingEmails === "boolean") next.marketingEmails = row.marketingEmails;
+  if (typeof row.smsUpdates === "boolean") next.smsUpdates = row.smsUpdates;
+  if (typeof row.pushUpdates === "boolean") next.pushUpdates = row.pushUpdates;
+  if (typeof row.orderEmailUpdates === "boolean") next.orderEmailUpdates = row.orderEmailUpdates;
+  if (typeof row.loyaltyAlerts === "boolean") next.loyaltyAlerts = row.loyaltyAlerts;
+  if (typeof row.backInStockAlerts === "boolean") next.backInStockAlerts = row.backInStockAlerts;
+  if (typeof row.priceAlerts === "boolean") next.priceAlerts = row.priceAlerts;
+  if (typeof row.abandonedCartReminders === "boolean") {
+    next.abandonedCartReminders = row.abandonedCartReminders;
+  }
+  if (row.favoriteCategory === null) next.favoriteCategory = null;
+  else if (typeof row.favoriteCategory === "string") {
+    next.favoriteCategory = row.favoriteCategory.trim().slice(0, 40) || null;
+  }
+  return Object.keys(next).length ? next : undefined;
+}
 
 function userInclude() {
   return {
@@ -39,10 +72,17 @@ async function ensureUserColumns() {
   // JSON column on a populated table would fail. These are added NULL instead;
   // parsePermissions()/parseLocationIds() already map NULL to an empty list, so
   // the effective default is unchanged.
-  await addColumnIfMissing("users", "avatar_url", "TEXT NULL");
+  await addColumnIfMissing("users", "avatar_url", "MEDIUMTEXT NULL");
+  // Older installs used TEXT (~65KB), which truncates data-URL avatars.
+  try {
+    await prisma.$executeRawUnsafe(`ALTER TABLE users MODIFY COLUMN avatar_url MEDIUMTEXT NULL`);
+  } catch {
+    // Ignore if already MEDIUMTEXT or table missing during early boot.
+  }
   await addColumnIfMissing("users", "permission_grants", "JSON NULL");
   await addColumnIfMissing("users", "permission_revokes", "JSON NULL");
   await addColumnIfMissing("users", "allowed_location_ids", "JSON NULL");
+  await addColumnIfMissing("users", "preferences", "JSON NULL");
   extraColumnsReady = true;
 }
 
@@ -54,25 +94,31 @@ function asAvatarUrl(value: string | null | undefined) {
 export async function attachProfileExtras(user: UserProfile): Promise<UserProfile> {
   if (!isDbConfigured()) return user;
   await ensureUserColumns();
-  const rows = await prisma.$queryRaw<
+  await warmRoleCatalog();
+  const rows = await prisma.$queryRawUnsafe<
     Array<{
       avatar_url: string | null;
       active: boolean | null;
       permission_grants: unknown;
       permission_revokes: unknown;
       allowed_location_ids: unknown;
+      organization_id: string | null;
+      preferences: unknown;
     }>
-  >`
-    SELECT
+  >(
+    `SELECT
       avatar_url,
       COALESCE(active, true) AS active,
       permission_grants,
       permission_revokes,
-      allowed_location_ids
+      allowed_location_ids,
+      organization_id,
+      preferences
     FROM users
-    WHERE id = ${user.id}
-    LIMIT 1
-  `;
+    WHERE id = ?
+    LIMIT 1`,
+    user.id,
+  );
   const extras = rows[0];
   if (!extras) return user;
   const overrides = normalizeOverrides(
@@ -80,13 +126,25 @@ export async function attachProfileExtras(user: UserProfile): Promise<UserProfil
     parsePermissions(extras.permission_grants),
     parsePermissions(extras.permission_revokes),
   );
+  const loyaltyFields = await loadLoyaltyProfileFields(user.id);
+  const access = {
+    role: user.role,
+    permissionGrants: overrides.permissionGrants,
+    permissionRevokes: overrides.permissionRevokes,
+  };
   return {
     ...user,
     active: extras.active !== false,
     avatarUrl: asAvatarUrl(extras.avatar_url),
+    organizationId: extras.organization_id ?? user.organizationId,
     permissionGrants: overrides.permissionGrants,
     permissionRevokes: overrides.permissionRevokes,
+    effectivePermissions: effectivePermissions(access),
     allowedLocationIds: parseLocationIds(extras.allowed_location_ids),
+    preferences: parsePreferences(extras.preferences) ?? user.preferences,
+    birthday: loyaltyFields.birthday ?? user.birthday ?? null,
+    referralCode: loyaltyFields.referralCode ?? user.referralCode ?? null,
+    canClaimBirthday: loyaltyFields.canClaimBirthday,
   };
 }
 
@@ -150,6 +208,7 @@ export async function signupCustomer(input: {
   email: string;
   password: string;
   preferredBranchId?: string;
+  referralCode?: string;
 }): Promise<{ user: UserProfile; error?: undefined } | { user?: undefined; error: string; status: number }> {
   const passwordError = validatePassword(input.password);
   if (passwordError) return { error: passwordError, status: 400 };
@@ -191,13 +250,32 @@ export async function signupCustomer(input: {
     UPDATE users SET password_hash = ${passwordHash}, active = true WHERE id = ${row.id}
   `;
 
-  const user = await attachProfileExtras(mapUser(row, row.orders.map(mapOrder)));
+  await ensureUserReferralCode(row.id);
+  if (input.referralCode?.trim()) {
+    await applyReferralOnSignup({
+      newUserId: row.id,
+      referralCode: input.referralCode,
+    });
+  }
+
+  const refreshed = await prisma.user.findUnique({
+    where: { id: row.id },
+    include: userInclude(),
+  });
+  const user = await attachProfileExtras(
+    mapUser(refreshed ?? row, (refreshed ?? row).orders.map(mapOrder)),
+  );
   await recordActivity({
     actorUserId: user.id,
     action: "auth.signup",
     entityType: "user",
     entityId: user.id,
     summary: `${user.name} created a customer account`,
+    metadata: activityChanges([
+      { field: "created", to: user.name },
+      { field: "email", to: user.email },
+      { field: "role", to: "customer" },
+    ]),
   });
   return { user };
 }
@@ -256,18 +334,19 @@ function sanitizeOverrides(
 ) {
   const next = normalizeOverrides(role, grants, revokes);
   const prev = normalizeOverrides(role, previous?.permissionGrants, previous?.permissionRevokes);
-  return {
-    permissionGrants: PERMISSIONS.filter((permission) => {
-      const want = next.permissionGrants.includes(permission);
-      const was = prev.permissionGrants.includes(permission);
-      return hasPermission(actor, permission) ? want : was;
-    }),
-    permissionRevokes: PERMISSIONS.filter((permission) => {
-      const want = next.permissionRevokes.includes(permission);
-      const was = prev.permissionRevokes.includes(permission);
-      return hasPermission(actor, permission) ? want : was;
-    }),
-  };
+  const permissionGrants = PERMISSIONS.filter((permission) => {
+    const want = next.permissionGrants.includes(permission);
+    const was = prev.permissionGrants.includes(permission);
+    return hasPermission(actor, permission) ? want : was;
+  });
+  const permissionRevokes = PERMISSIONS.filter((permission) => {
+    const want = next.permissionRevokes.includes(permission);
+    const was = prev.permissionRevokes.includes(permission);
+    return hasPermission(actor, permission) ? want : was;
+  });
+  // Persist read⇒action implications so API and UI stay aligned.
+  const enabled = effectivePermissions({ role, permissionGrants, permissionRevokes });
+  return overridesFromEnabled(role, enabled);
 }
 
 function samePermissionList(a: readonly Permission[], b: readonly Permission[]) {
@@ -476,12 +555,20 @@ export async function createManagedUser(
     entityType: "user",
     entityId: user.id,
     summary: `${actor.name} created ${input.role} account for ${user.name}`,
-    metadata: {
-      role: input.role,
-      email: user.email,
-      grants: user.permissionGrants ?? [],
-      revokes: user.permissionRevokes ?? [],
-    },
+    metadata: activityChanges([
+      { field: "created", to: user.name },
+      { field: "email", to: user.email },
+      { field: "role", to: input.role },
+      ...(user.permissionGrants?.length
+        ? [{ field: "grants", to: user.permissionGrants }]
+        : []),
+      ...(user.permissionRevokes?.length
+        ? [{ field: "revokes", to: user.permissionRevokes }]
+        : []),
+      ...(user.allowedLocationIds?.length
+        ? [{ field: "allowedLocations", to: user.allowedLocationIds }]
+        : []),
+    ]),
   });
 
   return { user };
@@ -513,12 +600,14 @@ export async function patchManagedUser(
       email: string;
       role: string;
       active: boolean | null;
+      avatar_url: string | null;
       permission_grants: unknown;
       permission_revokes: unknown;
     }>
   >`
     SELECT
       id, name, email, role, COALESCE(active, true) AS active,
+      avatar_url,
       permission_grants,
       permission_revokes AS permission_revokes
     FROM users
@@ -709,7 +798,9 @@ export async function patchManagedUser(
       entityType: "user",
       entityId: user.id,
       summary: `${actor.name} changed ${user.name}'s role from ${target.role} to ${input.role}`,
-      metadata: { from: target.role, to: input.role },
+      metadata: activityChanges([
+        { field: "role", from: target.role, to: input.role },
+      ]),
     });
   }
   if (typeof input.active === "boolean" && input.active !== (target.active !== false)) {
@@ -719,6 +810,13 @@ export async function patchManagedUser(
       entityType: "user",
       entityId: user.id,
       summary: `${actor.name} ${input.active ? "activated" : "deactivated"} ${user.name}`,
+      metadata: activityChanges([
+        {
+          field: "active",
+          from: target.active !== false ? "Yes" : "No",
+          to: input.active ? "Yes" : "No",
+        },
+      ]),
     });
   }
   if (input.password) {
@@ -728,16 +826,31 @@ export async function patchManagedUser(
       entityType: "user",
       entityId: user.id,
       summary: `${actor.name} reset the password for ${user.name}`,
+      metadata: activityChanges([
+        { field: "password", from: "(set)", to: "(reset)" },
+      ]),
     });
   }
   if (input.name || nextEmail || input.avatarUrl !== undefined) {
-    await recordActivity({
-      actorUserId: actor.id,
-      action: "user.profile_updated",
-      entityType: "user",
-      entityId: user.id,
-      summary: `${actor.name} updated profile for ${user.name}`,
-    });
+    const profileChanges = onlyChanged([
+      { field: "name", from: target.name, to: user.name },
+      { field: "email", from: target.email, to: user.email },
+      {
+        field: "avatar",
+        from: asAvatarUrl(target.avatar_url) ?? "(none)",
+        to: user.avatarUrl ?? "(none)",
+      },
+    ]);
+    if (profileChanges.length) {
+      await recordActivity({
+        actorUserId: actor.id,
+        action: "user.profile_updated",
+        entityType: "user",
+        entityId: user.id,
+        summary: `${actor.name} updated profile for ${user.name}`,
+        metadata: activityChanges(profileChanges),
+      });
+    }
   }
   if (permissionsChanged) {
     await recordActivity({
@@ -746,10 +859,20 @@ export async function patchManagedUser(
       entityType: "user",
       entityId: user.id,
       summary: `${actor.name} updated permissions for ${user.name}`,
-      metadata: {
-        grants: user.permissionGrants ?? [],
-        revokes: user.permissionRevokes ?? [],
-      },
+      metadata: activityChanges(
+        onlyChanged([
+          {
+            field: "grants",
+            from: previousOverrides.permissionGrants,
+            to: user.permissionGrants ?? [],
+          },
+          {
+            field: "revokes",
+            from: previousOverrides.permissionRevokes,
+            to: user.permissionRevokes ?? [],
+          },
+        ]),
+      ),
     });
   }
 
@@ -778,16 +901,36 @@ export async function updateOwnPassword(
 
 export async function updateOwnProfileFields(
   userId: string,
-  patch: { name?: string; email?: string; avatarUrl?: string | null },
+  patch: {
+    name?: string;
+    email?: string;
+    avatarUrl?: string | null;
+    birthday?: string | null;
+    preferences?: UserPreferences;
+  },
 ): Promise<{ error?: string; status?: number }> {
   if (!isDbConfigured()) return { error: "Database is not configured.", status: 503 };
   await ensureUserColumns();
 
-  const existing = await prisma.$queryRaw<Array<{ id: string; email: string }>>`
-    SELECT id, email FROM users WHERE id = ${userId} LIMIT 1
-  `;
+  const existing = await prisma.$queryRawUnsafe<
+    Array<{
+      id: string;
+      name: string;
+      email: string;
+      avatar_url: string | null;
+      preferences: unknown;
+    }>
+  >(
+    `SELECT id, name, email, avatar_url, preferences FROM users WHERE id = ? LIMIT 1`,
+    userId,
+  );
   const row = existing[0];
   if (!row) return { error: "User not found.", status: 404 };
+
+  const loyaltyFields = await loadLoyaltyProfileFields(userId);
+  const previousBirthday = loyaltyFields.birthday;
+  const previousPrefs = parsePreferences(row.preferences);
+  const previousAvatar = asAvatarUrl(row.avatar_url) ?? "(none)";
 
   const nextEmail = patch.email?.trim().toLowerCase();
   if (nextEmail && nextEmail !== row.email) {
@@ -815,16 +958,66 @@ export async function updateOwnProfileFields(
     `;
   }
 
-  await recordActivity({
-    actorUserId: userId,
-    action: "user.profile_updated",
-    entityType: "profile",
-    entityId: userId,
-    summary: "Updated profile details",
-    metadata: {
-      fields: Object.keys(patch).filter((key) => patch[key as keyof typeof patch] !== undefined),
+  if (patch.birthday !== undefined) {
+    try {
+      await setUserBirthday(userId, patch.birthday);
+    } catch (err) {
+      return {
+        error: err instanceof Error ? err.message : "Could not update birthday.",
+        status: 400,
+      };
+    }
+  }
+
+  let nextPrefs = previousPrefs;
+  if (patch.preferences !== undefined) {
+    await ensureUserColumns();
+    nextPrefs = {
+      ...(previousPrefs ?? {}),
+      ...patch.preferences,
+    };
+    await prisma.$executeRawUnsafe(
+      `UPDATE users SET preferences = CAST(? AS JSON) WHERE id = ?`,
+      JSON.stringify(nextPrefs),
+      userId,
+    );
+  }
+
+  const nextName = patch.name?.trim() || row.name;
+  const nextEmailValue = nextEmail && nextEmail !== row.email ? nextEmail : row.email;
+  const nextAvatar =
+    patch.avatarUrl !== undefined
+      ? asAvatarUrl(patch.avatarUrl ?? "") ?? "(none)"
+      : previousAvatar;
+  const nextBirthday =
+    patch.birthday !== undefined ? patch.birthday || null : previousBirthday;
+
+  const changes = onlyChanged([
+    { field: "name", from: row.name, to: nextName },
+    { field: "email", from: row.email, to: nextEmailValue },
+    { field: "avatar", from: previousAvatar, to: nextAvatar },
+    {
+      field: "birthday",
+      from: previousBirthday ?? "(none)",
+      to: nextBirthday ?? "(none)",
     },
-  });
+    {
+      field: "preferences",
+      from: previousPrefs ?? {},
+      to: nextPrefs ?? {},
+    },
+  ]);
+
+  if (changes.length) {
+    await recordActivity({
+      actorUserId: userId,
+      action: "user.profile_updated",
+      entityType: "profile",
+      entityId: userId,
+      summary: "Updated profile details",
+      metadata: activityChanges(changes),
+    });
+  }
 
   return {};
 }

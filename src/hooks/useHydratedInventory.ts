@@ -11,10 +11,10 @@ export function useClientMounted() {
   return mounted;
 }
 
-/** Live on-hand count; uses catalog seed until mounted so SSR matches hydration. */
+/** Sellable count (on-hand − reserved); catalog seed until mounted for SSR. */
 export function useLiveOnHand(locationId: string, productId: string) {
   const mounted = useClientMounted();
-  const live = useInventoryStore((s) => s.getOnHand(locationId, productId));
+  const live = useInventoryStore((s) => s.getAvailable(locationId, productId));
   if (!mounted) return getCatalogStock(locationId, productId);
   return live;
 }

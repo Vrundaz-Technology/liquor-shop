@@ -31,8 +31,21 @@ export const PERMISSIONS = [
   "events.create",
   "events.edit",
   "events.delete",
+  "reviews.view",
+  "reviews.moderate",
+  "reviews.respond",
+  "support.view",
+  "support.manage",
   "deliveries.view",
   "deliveries.manage",
+  "customers.view",
+  "customers.edit",
+  "promotions.view",
+  "promotions.manage",
+  "loyalty.view",
+  "loyalty.manage",
+  "analytics.view",
+  "inventory.transfer",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -42,6 +55,8 @@ export type AccessSubject = {
   role: string;
   permissionGrants?: readonly string[];
   permissionRevokes?: readonly string[];
+  /** Server-computed snapshot so the client does not need the role catalog. */
+  effectivePermissions?: readonly string[];
 };
 
 export type AccessInput = string | AccessSubject;
@@ -218,6 +233,36 @@ export const PERMISSION_META: Record<
     label: "Remove events",
     description: "Cancel and delete an event listing",
   },
+  "reviews.view": {
+    group: "Reviews",
+    kind: "read",
+    label: "View reviews",
+    description: "See product, store, and delivery reviews in one place",
+  },
+  "reviews.moderate": {
+    group: "Reviews",
+    kind: "action",
+    label: "Moderate reviews",
+    description: "Hide, publish, or act on flagged / reported reviews",
+  },
+  "reviews.respond": {
+    group: "Reviews",
+    kind: "action",
+    label: "Respond to reviews",
+    description: "Post owner replies on customer reviews",
+  },
+  "support.view": {
+    group: "Support",
+    kind: "read",
+    label: "View support tickets",
+    description: "See customer support tickets routed to your stores or org",
+  },
+  "support.manage": {
+    group: "Support",
+    kind: "action",
+    label: "Manage support tickets",
+    description: "Reply, assign, resolve, and close support tickets",
+  },
   "deliveries.view": {
     group: "Deliveries",
     kind: "read",
@@ -229,6 +274,54 @@ export const PERMISSION_META: Record<
     kind: "action",
     label: "Manage deliveries",
     description: "Assign drivers, update delivery status, and manage the driver roster",
+  },
+  "customers.view": {
+    group: "CRM",
+    kind: "read",
+    label: "View customers",
+    description: "See organization customer directory and segments",
+  },
+  "customers.edit": {
+    group: "CRM",
+    kind: "action",
+    label: "Edit customers",
+    description: "Update customer notes and marketing consent",
+  },
+  "promotions.view": {
+    group: "Promotions",
+    kind: "read",
+    label: "View promotions",
+    description: "See coupons and promotional offers",
+  },
+  "promotions.manage": {
+    group: "Promotions",
+    kind: "action",
+    label: "Manage promotions",
+    description: "Create and edit organization and location promotions",
+  },
+  "loyalty.view": {
+    group: "Loyalty",
+    kind: "read",
+    label: "View loyalty",
+    description: "See loyalty program settings and tiers",
+  },
+  "loyalty.manage": {
+    group: "Loyalty",
+    kind: "action",
+    label: "Manage loyalty",
+    description: "Update earn rates, rewards, and tiers",
+  },
+  "analytics.view": {
+    group: "Analytics",
+    kind: "read",
+    label: "View analytics",
+    description: "See store-wide sales and financial analytics",
+  },
+  "inventory.transfer": {
+    group: "Inventory",
+    kind: "action",
+    label: "Transfer stock",
+    description: "Move inventory between locations",
   },
 };
 
@@ -244,11 +337,19 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "inventory.view",
     "inventory.adjust",
     "inventory.restock",
+    "inventory.transfer",
     "activity.view",
     "locations.view",
     "events.view",
+    "reviews.view",
+    "support.view",
+    "support.manage",
     "deliveries.view",
     "deliveries.manage",
+    "customers.view",
+    "promotions.view",
+    "loyalty.view",
+    "analytics.view",
   ],
   admin: [
     "dashboard.access",
@@ -261,6 +362,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "inventory.adjust",
     "inventory.restock",
     "inventory.reset",
+    "inventory.transfer",
     "catalog.create",
     "catalog.edit",
     "catalog.delete",
@@ -279,8 +381,20 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "events.create",
     "events.edit",
     "events.delete",
+    "reviews.view",
+    "reviews.moderate",
+    "reviews.respond",
+    "support.view",
+    "support.manage",
     "deliveries.view",
     "deliveries.manage",
+    "customers.view",
+    "customers.edit",
+    "promotions.view",
+    "promotions.manage",
+    "loyalty.view",
+    "loyalty.manage",
+    "analytics.view",
   ],
   owner: PERMISSIONS,
 };
@@ -293,7 +407,13 @@ export const PERMISSION_GROUPS = [
   "Catalog",
   "Locations",
   "Events",
+  "Reviews",
+  "Support",
   "Deliveries",
+  "CRM",
+  "Promotions",
+  "Loyalty",
+  "Analytics",
   "Activity",
   "Users",
 ] as const;
@@ -363,14 +483,22 @@ export function effectivePermissions(subject: AccessInput): Permission[] {
   for (const permission of parsePermissions(access.permissionGrants)) {
     enabled.add(permission);
   }
-  return PERMISSIONS.filter((permission) => enabled.has(permission));
+  return withPermissionImplications(PERMISSIONS.filter((permission) => enabled.has(permission)));
 }
 
 export function hasPermission(subject: AccessInput, permission: Permission) {
+  if (typeof subject !== "string" && subject.effectivePermissions !== undefined) {
+    return subject.effectivePermissions.includes(permission);
+  }
   return effectivePermissions(subject).includes(permission);
 }
 
 export function hasAnyPermission(subject: AccessInput, permissions: Permission[]) {
+  if (typeof subject !== "string" && subject.effectivePermissions !== undefined) {
+    return permissions.some((permission) =>
+      subject.effectivePermissions!.includes(permission),
+    );
+  }
   return permissions.some((permission) => hasPermission(subject, permission));
 }
 
@@ -392,12 +520,23 @@ export function overridesFromEnabled(role: string, enabled: readonly Permission[
   if (role === "owner") {
     return { permissionGrants: [] as Permission[], permissionRevokes: [] as Permission[] };
   }
+  const on = new Set(withPermissionImplications(enabled));
   const base = new Set(rolePermissions(role));
-  const on = new Set(enabled);
   return {
     permissionGrants: PERMISSIONS.filter((permission) => on.has(permission) && !base.has(permission)),
     permissionRevokes: PERMISSIONS.filter((permission) => base.has(permission) && !on.has(permission)),
   };
+}
+
+/** If any action in a group is on, ensure the group's read permission is on. */
+export function withPermissionImplications(enabled: readonly Permission[]): Permission[] {
+  const next = new Set(enabled);
+  for (const group of PERMISSION_GROUPS) {
+    const { read, actions } = permissionGroupTree(group);
+    if (!read) continue;
+    if (actions.some((action) => next.has(action))) next.add(read);
+  }
+  return PERMISSIONS.filter((permission) => next.has(permission));
 }
 
 export function permissionSource(

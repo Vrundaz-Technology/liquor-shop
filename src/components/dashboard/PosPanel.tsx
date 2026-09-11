@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Check,
@@ -8,7 +9,6 @@ import {
   MapPin,
   Minus,
   Plus,
-  Search,
   ShoppingCart,
   Store,
   Trash2,
@@ -18,6 +18,8 @@ import { getCategories } from "@/data/categories";
 import { getAllProducts, getProductById } from "@/data/products";
 import { getLocationById, getPriceForLocation } from "@/data/locations";
 import { useInventoryStore } from "@/store/inventory";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { useUserStore } from "@/store/user";
 import { useBranchStore } from "@/store/branch";
 import {
@@ -27,14 +29,16 @@ import {
 import { calculateShipping, calculateTax } from "@/lib/fulfillment-pricing";
 import { getCouponDiscount } from "@/lib/commerce";
 import { isDbConnected } from "@/lib/runtime-data";
-import { apiPlacePosOrder } from "@/lib/api-mutations";
+import { apiPlacePosOrder, apiValidateCoupon } from "@/lib/api-mutations";
 import { hasPermission } from "@/lib/auth/permissions";
 import { accessibleLocations, canAccessLocation } from "@/lib/auth/location-access";
 import { formatPrice, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { NativeSelect } from "@/components/ui/NativeSelect";
 import { SmartImage } from "@/components/ui/SmartImage";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import type { CategorySlug, Order, OrderFulfillment, Product } from "@/types";
 
@@ -222,6 +226,15 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
     return list;
   }, [category, locationId, products, query, sortMode, stockFilter]);
 
+  const filtersActive =
+    Boolean(query.trim()) || category !== "all" || stockFilter !== "all";
+
+  const clearFilters = () => {
+    setQuery("");
+    setCategory("all");
+    setStockFilter("all");
+  };
+
   const grouped = useMemo(() => {
     if (category !== "all") {
       const cat = categories.find((c) => c.slug === category);
@@ -263,10 +276,50 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
   }, [locationId, ticket]);
 
   const subtotal = ticketLines.reduce((sum, line) => sum + line.lineTotal, 0);
-  const discount = getCouponDiscount(coupon || null, subtotal);
-  const shipping = location
+  const promoItems = useMemo(
+    () =>
+      ticketLines.map((line) => ({
+        productId: line.productId,
+        quantity: line.quantity,
+        price: line.unitPrice,
+        category: line.product.category,
+        brand: line.product.brand,
+      })),
+    [ticketLines],
+  );
+  const couponQuery = useQuery({
+    queryKey: [
+      "pos-coupon",
+      coupon,
+      locationId,
+      Math.round(subtotal * 100),
+      promoItems.map((i) => `${i.productId}:${i.quantity}`).join("|"),
+    ],
+    enabled: Boolean(coupon.trim()) && subtotal > 0,
+    staleTime: 15_000,
+    retry: false,
+    queryFn: async () => {
+      if (!isDbConnected()) {
+        const amount = getCouponDiscount(coupon, subtotal);
+        if (!amount) throw new Error("Invalid coupon");
+        return { discount: amount, freeDelivery: false, name: coupon };
+      }
+      return apiValidateCoupon({
+        code: coupon,
+        locationId,
+        subtotal,
+        items: promoItems,
+      });
+    },
+  });
+  const discount = couponQuery.isError
+    ? 0
+    : (couponQuery.data?.discount ??
+      (!isDbConnected() ? getCouponDiscount(coupon || null, subtotal) : 0));
+  const shippingBase = location
     ? calculateShipping(subtotal - discount, fulfillment, location)
     : 0;
+  const shipping = couponQuery.data?.freeDelivery ? 0 : shippingBase;
   const tax = location ? calculateTax(subtotal - discount, location) : 0;
   const total = subtotal - discount + shipping + tax;
   const hasConflicts = ticketLines.some((line) => !line.available);
@@ -399,6 +452,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
             result.inventory.stocks,
             result.inventory.seats,
             result.inventory.hidden,
+            result.inventory.reserved,
           );
         addOrder(result.order, { loyaltyPoints: result.loyaltyPoints });
         setSuccess(result.order);
@@ -430,8 +484,8 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
           fulfillment === "pos"
             ? "delivered"
             : fulfillment === "pickup"
-              ? "ready"
-              : "processing",
+              ? "ready_for_pickup"
+              : "new",
         items: ticketLines.map((l) => ({
           productId: l.productId,
           quantity: l.quantity,
@@ -462,7 +516,8 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
     return (
       <div className="mt-4 rounded-sm border border-white/10 bg-white/[0.02] p-5 sm:p-6">
         <p className="text-sm text-muted">
-          Point of sale is not enabled for this account. Ask an owner to grant POS access.
+          Point of sale is not enabled for this account. Ask an owner to grant{" "}
+          <AbbrTooltip term="POS" /> access.
         </p>
       </div>
     );
@@ -514,21 +569,14 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
 
   const catalogToolbar = (
     <div className="space-y-3">
-      <div className="relative">
-        <Search
-          size={16}
-          className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-        />
-        <input
-          type="search"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Search by name or brand…"
-          aria-label="Search bottles"
-          className="w-full min-h-11 rounded-sm border border-white/10 bg-white/[0.03] py-2.5 pl-10 pr-3 text-base text-cream outline-none placeholder:text-muted focus:border-(--gold)/40 sm:min-h-10 sm:text-sm"
-          enterKeyHint="search"
-        />
-      </div>
+      <SearchInput
+        bare
+        value={query}
+        onChange={setQuery}
+        placeholder="Search by name or brand…"
+        aria-label="Search bottles"
+        inputClassName="bg-white/[0.03]"
+      />
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
         <div className="flex flex-wrap gap-1.5">
           {STOCK_FILTERS.map((opt) => (
@@ -556,6 +604,43 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
           />
         </div>
       </div>
+      {filtersActive ? (
+        <ActiveFiltersBar
+          className="mt-1"
+          resultCount={catalog.length}
+          chips={[
+            ...(query.trim()
+              ? [
+                  {
+                    id: "q",
+                    label: `“${query.trim()}”`,
+                    onRemove: () => setQuery(""),
+                  },
+                ]
+              : []),
+            ...(category !== "all"
+              ? [
+                  {
+                    id: "category",
+                    label: categories.find((c) => c.slug === category)?.name ?? category,
+                    onRemove: () => setCategory("all"),
+                  },
+                ]
+              : []),
+            ...(stockFilter !== "all"
+              ? [
+                  {
+                    id: "stock",
+                    label:
+                      STOCK_FILTERS.find((o) => o.id === stockFilter)?.label ?? stockFilter,
+                    onRemove: () => setStockFilter("all"),
+                  },
+                ]
+              : []),
+          ]}
+          onClearAll={clearFilters}
+        />
+      ) : null}
     </div>
   );
 
@@ -574,11 +659,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
         <p className="mt-3 text-sm text-muted">No bottles match these filters.</p>
         <button
           type="button"
-          onClick={() => {
-            setQuery("");
-            setStockFilter("all");
-            setCategory("all");
-          }}
+          onClick={clearFilters}
           className="mt-3 text-xs uppercase tracking-wider text-gold hover:underline"
         >
           Clear filters
@@ -696,7 +777,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       </AnimatePresence>
 
       {!isDbConnected() ? (
-        <ConnectionNotice feature="save POS sales to the server" preview />
+        <ConnectionNotice feature="save point-of-sale sales to the server" preview />
       ) : null}
 
       {success ? (
@@ -747,20 +828,19 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
             <span className="text-muted"> · {location.city}</span>
           </p>
         </div>
-        <label className="relative w-[9.5rem] shrink-0 sm:w-[11rem]">
+        <label className="w-[9.5rem] shrink-0 sm:w-[11rem]">
           <span className="sr-only">Change store</span>
-          <select
+          <NativeSelect
             value={location.id}
             onChange={(e) => setRegisterLocation(e.target.value)}
-            className="w-full appearance-none rounded-sm border border-white/15 bg-(--bg-elevated) py-2 pl-2.5 pr-8 text-xs text-cream scheme-dark outline-none focus:border-(--gold)/45 [&_option]:bg-(--bg-elevated)"
+            className="border-white/15 py-2 pl-2.5 text-xs hover:border-white/15 focus:border-(--gold)/45"
           >
             {stores.map((s) => (
               <option key={s.id} value={s.id}>
                 {s.shortName}
               </option>
             ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted" />
+          </NativeSelect>
         </label>
       </div>
 
@@ -770,7 +850,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
           <div className="shrink-0 border-b border-white/10 px-4 py-3.5">
             <p className="flex items-center gap-2 font-display text-lg text-cream">
               <Store size={17} className="text-gold" />
-              POS
+              <AbbrTooltip term="POS" />
             </p>
           </div>
           <nav className="min-h-0 flex-1 overflow-y-auto overscroll-contain p-2" aria-label="POS categories">
@@ -967,7 +1047,6 @@ function TicketPanel({
   return (
     <div className="flex h-full min-h-0 flex-col">
       <div className="shrink-0 space-y-2.5 border-b border-white/10 p-3 sm:p-4">
-        <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Order setup</p>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
           <Select
             label="Order type"
@@ -1272,17 +1351,19 @@ function TicketPanel({
 
         {!canSell ? (
           <p className="rounded-sm border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-muted">
-            Browse-only POS. Ask an owner to grant Complete sales to ring up orders.
+            Browse-only <AbbrTooltip term="POS" />. Ask an owner to
+            grant Complete sales to ring up orders.
           </p>
         ) : null}
 
         <Button
           size="lg"
           className="w-full"
-          disabled={!canSell || !ticketLines.length || hasConflicts || submitting}
+          loading={submitting}
+          disabled={!canSell || !ticketLines.length || hasConflicts}
           onClick={onComplete}
         >
-          <Check size={16} />
+          {!submitting ? <Check size={16} aria-hidden /> : null}
           {!canSell
             ? "Sales not permitted"
             : submitting
@@ -1411,8 +1492,8 @@ function PosProductCard({
             className={cn(
               "flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-full touch-manipulation transition sm:h-9 sm:min-h-9 sm:w-9 sm:min-w-9",
               out
-                ? "cursor-not-allowed bg-white/5 text-muted"
-                : "bg-(--gold) text-[#0a0a0a] hover:brightness-110 active:scale-95",
+                ? "cursor-not-allowed border border-white/10 bg-white/[0.04] text-white/30 shadow-none"
+                : "border border-transparent bg-gradient-to-br from-[#9a8048] via-[#d4b56e] to-[#f0d48a] text-[#0a0a0a] shadow-[0_0_16px_rgba(201,169,98,0.35)] ring-1 ring-[#f0d48a]/30 hover:brightness-110 active:scale-95",
             )}
           >
             <Plus size={16} strokeWidth={2.5} />

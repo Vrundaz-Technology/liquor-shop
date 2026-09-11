@@ -65,6 +65,11 @@ export async function PATCH(request: Request) {
         undefined,
         actorUserId,
       );
+      if (needsRestock && onHand > 0) {
+        void import("@/lib/notifications/stock-alerts").then(({ notifyWatchersBackInStock }) =>
+          notifyWatchersBackInStock(body.productId, body.locationId).catch(console.error),
+        );
+      }
       return NextResponse.json({ ok: true, onHand });
     }
 
@@ -79,6 +84,11 @@ export async function PATCH(request: Request) {
       );
       if (!ok) {
         return NextResponse.json({ error: "Insufficient stock." }, { status: 409 });
+      }
+      if (needsRestock && body.delta > 0) {
+        void import("@/lib/notifications/stock-alerts").then(({ notifyWatchersBackInStock }) =>
+          notifyWatchersBackInStock(body.productId, body.locationId).catch(console.error),
+        );
       }
       return NextResponse.json({ ok: true });
     }
@@ -99,6 +109,68 @@ export async function PATCH(request: Request) {
         actorUserId,
       );
       return NextResponse.json({ ok: true, ...result });
+    }
+
+    if (body.action === "pricing") {
+      const { prisma } = await import("@/lib/db/prisma");
+      const { recordActivity } = await import("@/lib/db/activity");
+      const { activityChanges, onlyChanged } = await import("@/lib/activity/changes");
+      const { moneyNumber } = await import("@/lib/db/money");
+      const previous = await prisma.locationInventory.findUnique({
+        where: {
+          locationId_productId: {
+            locationId: body.locationId,
+            productId: body.productId,
+          },
+        },
+        select: {
+          basePrice: true,
+          salePrice: true,
+          costPrice: true,
+          promoPrice: true,
+        },
+      });
+      const money = (n: unknown) => {
+        if (n == null) return "(none)";
+        const value = moneyNumber(n);
+        return value <= 0 ? "(none)" : `$${value.toFixed(2)}`;
+      };
+      const nextBase = body.basePrice !== undefined ? body.basePrice : previous?.basePrice;
+      const nextSale = body.salePrice !== undefined ? body.salePrice : previous?.salePrice;
+      const nextCost = body.costPrice !== undefined ? body.costPrice : previous?.costPrice;
+      const nextPromo = body.promoPrice !== undefined ? body.promoPrice : previous?.promoPrice;
+      const changes = onlyChanged([
+        { field: "basePrice", from: money(previous?.basePrice), to: money(nextBase) },
+        { field: "salePrice", from: money(previous?.salePrice), to: money(nextSale) },
+        { field: "costPrice", from: money(previous?.costPrice), to: money(nextCost) },
+        { field: "promoPrice", from: money(previous?.promoPrice), to: money(nextPromo) },
+      ]);
+      await prisma.locationInventory.update({
+        where: {
+          locationId_productId: {
+            locationId: body.locationId,
+            productId: body.productId,
+          },
+        },
+        data: {
+          ...(body.basePrice !== undefined ? { basePrice: body.basePrice } : {}),
+          ...(body.salePrice !== undefined ? { salePrice: body.salePrice } : {}),
+          ...(body.costPrice !== undefined ? { costPrice: body.costPrice } : {}),
+          ...(body.promoPrice !== undefined ? { promoPrice: body.promoPrice } : {}),
+        },
+      });
+      if (changes.length) {
+        await recordActivity({
+          actorUserId,
+          action: "inventory.pricing",
+          entityType: "inventory",
+          entityId: body.productId,
+          locationId: body.locationId,
+          summary: `${allowed.user.name} updated location pricing for product ${body.productId}`,
+          metadata: activityChanges(changes),
+        });
+      }
+      return NextResponse.json({ ok: true });
     }
 
     await resetInventory(body.locationId, actorUserId);

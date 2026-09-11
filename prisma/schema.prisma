@@ -7,6 +7,30 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Organization {
+  id          String   @id
+  name        String
+  slug        String   @unique
+  ownerUserId String?  @map("owner_user_id")
+  settings    Json     @default("{}")
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @default(now()) @updatedAt @map("updated_at")
+
+  owner              User?                  @relation("OrganizationOwner", fields: [ownerUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  locations          Location[]
+  products           Product[]
+  users              User[]                 @relation("OrganizationMembers")
+  orders             Order[]
+  customers          OrganizationCustomer[]
+  promotions         Promotion[]
+  loyaltyProgram     LoyaltyProgram?
+  inventoryTransfers InventoryTransfer[]
+
+  @@index([ownerUserId])
+  @@map("organizations")
+}
+
 model Category {
   slug        String    @id
   name        String
@@ -31,8 +55,14 @@ model Product {
   country        String
   abv            Float
   volumeMl       Int      @map("volume_ml")
-  price          Float
-  compareAtPrice Float?   @map("compare_at_price")
+  price          Decimal  @db.Decimal(12, 2)
+  compareAtPrice Decimal? @map("compare_at_price") @db.Decimal(12, 2)
+  costPrice      Decimal? @map("cost_price") @db.Decimal(12, 2)
+  sku            String?
+  upc            String?
+  minQty         Int      @default(1) @map("min_qty")
+  maxQty         Int?     @map("max_qty")
+  organizationId String?  @map("organization_id")
   rating         Float
   reviewCount    Int      @map("review_count")
   tastingNotes   Json     @map("tasting_notes")
@@ -47,55 +77,73 @@ model Product {
   isImported     Boolean  @map("is_imported")
   tags           Json
   nutrition      Json?
-  glbUrl         String?  @map("glb_url") @db.VarChar(512)
-  usdzUrl        String?  @map("usdz_url") @db.VarChar(512)
+  glbUrl         String?  @map("glb_url")
+  usdzUrl        String?  @map("usdz_url")
   isCustom       Boolean  @default(false) @map("is_custom")
   createdAt      DateTime @default(now()) @map("created_at")
   updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
 
-  category   Category            @relation(fields: [categorySlug], references: [slug])
-  inventory  LocationInventory[]
-  reviews    Review[]
-  orderItems OrderItem[]
+  category      Category                @relation(fields: [categorySlug], references: [slug], onDelete: Restrict, onUpdate: Cascade)
+  organization  Organization?           @relation(fields: [organizationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  inventory     LocationInventory[]
+  reviews       Review[]
+  orderItems    OrderItem[]
+  transferLines InventoryTransferLine[]
+  ledger        InventoryLedger[]
 
   @@index([categorySlug])
   @@index([brand])
+  @@index([organizationId])
+  @@index([sku])
+  @@index([upc])
   @@map("products")
 }
 
 model Location {
-  id               String   @id
-  slug             String   @unique
-  name             String
-  shortName        String   @map("short_name")
-  address          String
-  city             String
-  state            String
-  zip              String
-  phone            String
-  email            String
-  hours            Json
-  lat              Float
-  lng              Float
-  heroImage        String   @map("hero_image") @db.VarChar(512)
-  gallery          Json
-  staff            Json
-  services         Json
-  parking          String
-  pickupAvailable  Boolean  @map("pickup_available")
-  deliveryAvailable Boolean @default(true) @map("delivery_available")
-  deliveryRadiusKm Float    @map("delivery_radius_km")
-  deliveryFee      Float    @default(12.5) @map("delivery_fee")
-  deliveryFreeMinimum Float @default(150) @map("delivery_free_minimum")
-  taxRate          Float    @default(0.08875) @map("tax_rate")
-  featuredOffers   Json     @map("featured_offers")
-  description      String   @db.Text
+  id                  String   @id
+  slug                String   @unique
+  name                String
+  shortName           String   @map("short_name")
+  organizationId      String   @map("organization_id")
+  address             String
+  city                String
+  state               String
+  zip                 String
+  phone               String
+  email               String
+  hours               Json
+  holidayHours        Json?    @map("holiday_hours")
+  lat                 Float
+  lng                 Float
+  heroImage           String   @map("hero_image")
+  gallery             Json
+  staff               Json
+  services            Json
+  parking             String
+  pickupAvailable     Boolean  @map("pickup_available")
+  deliveryAvailable   Boolean  @default(true) @map("delivery_available")
+  deliveryRadiusKm    Float    @map("delivery_radius_km")
+  deliveryFee         Decimal  @default(12.50) @map("delivery_fee") @db.Decimal(12, 2)
+  deliveryFreeMinimum Decimal  @default(150.00) @map("delivery_free_minimum") @db.Decimal(12, 2)
+  minimumOrderAmount  Decimal  @default(0.00) @map("minimum_order_amount") @db.Decimal(12, 2)
+  taxRate             Decimal  @default(0.08875) @map("tax_rate") @db.Decimal(8, 6)
+  paymentSettings     Json?    @map("payment_settings")
+  featuredOffers      Json     @map("featured_offers")
+  description         String   @db.Text
 
-  inventory LocationInventory[]
-  events    Event[]
-  orders    Order[]
-  drivers   Driver[]
+  organization      Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  inventory         LocationInventory[]
+  events            Event[]
+  orders            Order[]
+  drivers           Driver[]
+  promotions        Promotion[]
+  transfersFrom     InventoryTransfer[]  @relation("TransferFrom")
+  transfersTo       InventoryTransfer[]  @relation("TransferTo")
+  ledger            InventoryLedger[]
+  preferredByUsers  User[]               @relation("UserPreferredBranch")
+  activityLogs      ActivityLog[]
 
+  @@index([organizationId])
   @@map("locations")
 }
 
@@ -108,32 +156,80 @@ model Driver {
   locationId String  @map("location_id")
   status     String  @default("available")
   active     Boolean @default(true)
-  photoUrl   String? @map("photo_url") @db.VarChar(512)
+  photoUrl   String? @map("photo_url")
+  userId     String? @map("user_id")
 
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
   orders   Order[]
 
   @@index([locationId])
   @@index([status])
+  @@index([userId])
   @@map("drivers")
 }
 
 model LocationInventory {
-  locationId String  @map("location_id")
-  productId  String  @map("product_id")
-  seedStock  Int     @map("seed_stock")
-  onHand     Int     @map("on_hand")
-  promoPrice Float?  @map("promo_price")
-  featured   Boolean @default(false)
+  locationId        String  @map("location_id")
+  productId         String  @map("product_id")
+  seedStock         Int     @map("seed_stock")
+  onHand            Int     @map("on_hand")
+  reserved          Int     @default(0)
+  basePrice         Decimal? @map("base_price") @db.Decimal(12, 2)
+  salePrice         Decimal? @map("sale_price") @db.Decimal(12, 2)
+  costPrice         Decimal? @map("cost_price") @db.Decimal(12, 2)
+  promoPrice        Decimal? @map("promo_price") @db.Decimal(12, 2)
+  featured          Boolean @default(false)
   /** When true, bottle is hidden from the public shop for this branch only. */
-  hidden     Boolean @default(false)
+  hidden            Boolean @default(false)
+  lowStockThreshold Int     @default(5) @map("low_stock_threshold")
 
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
-  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product  Product  @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@id([locationId, productId])
   @@index([productId])
   @@map("location_inventory")
+}
+
+model InventoryTransfer {
+  id              String    @id @default(cuid())
+  organizationId  String    @map("organization_id")
+  fromLocationId  String    @map("from_location_id")
+  toLocationId    String    @map("to_location_id")
+  status          String    @default("pending")
+  notes           String?   @db.Text
+  createdByUserId String?   @map("created_by_user_id")
+  completedAt     DateTime? @map("completed_at")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  organization Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  fromLocation Location                @relation("TransferFrom", fields: [fromLocationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  toLocation   Location                @relation("TransferTo", fields: [toLocationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  createdBy    User?                   @relation("TransferCreatedBy", fields: [createdByUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  lines        InventoryTransferLine[]
+  ledger       InventoryLedger[]
+
+  @@index([organizationId])
+  @@index([fromLocationId])
+  @@index([toLocationId])
+  @@index([createdByUserId])
+  @@index([status])
+  @@map("inventory_transfers")
+}
+
+model InventoryTransferLine {
+  id         String @id @default(cuid())
+  transferId String @map("transfer_id")
+  productId  String @map("product_id")
+  quantity   Int
+
+  transfer InventoryTransfer @relation(fields: [transferId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product  Product           @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+
+  @@unique([transferId, productId])
+  @@index([transferId])
+  @@index([productId])
+  @@map("inventory_transfer_lines")
 }
 
 model Event {
@@ -146,14 +242,14 @@ model Event {
   date           String
   startTime      String  @map("start_time")
   endTime        String  @map("end_time")
-  price          Float
+  price          Decimal @db.Decimal(12, 2)
   seatsTotal     Int     @map("seats_total")
   seatsAvailable Int     @map("seats_available")
-  image          String  @db.VarChar(512)
+  image          String
   hosts          Json
   active         Boolean @default(true)
 
-  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade)
+  location Location @relation(fields: [locationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([locationId])
   @@index([active])
@@ -172,63 +268,207 @@ model Review {
   images    Json?
   helpful   Int
 
-  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade, onUpdate: Cascade)
 
   @@index([productId])
   @@map("reviews")
 }
 
-model User {
-  id                String   @id
-  email             String   @unique
-  name              String
-  role              String
-  passwordHash      String?  @map("password_hash")
-  active            Boolean  @default(true)
-  preferredBranchId String   @map("preferred_branch_id")
-  loyaltyPoints     Int      @map("loyalty_points")
-  loyaltyTier       String   @map("loyalty_tier")
-  addresses         Json
-  recentlyViewed    Json     @map("recently_viewed")
-  avatarUrl         String?  @map("avatar_url") @db.Text
-  permissionGrants  Json     @default("[]") @map("permission_grants")
-  permissionRevokes Json     @default("[]") @map("permission_revokes")
-  allowedLocationIds Json?    @map("allowed_location_ids")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @default(now()) @updatedAt @map("updated_at")
+/// Runtime-managed unified reviews (product / store / delivery).
+/// Created via ensureReviewsSchema(); kept in Prisma for documentation.
+model PlatformReview {
+  id             String    @id
+  targetType     String    @map("target_type")
+  productId      String?   @map("product_id")
+  locationId     String?   @map("location_id")
+  orderId        String?   @map("order_id")
+  userId         String?   @map("user_id")
+  userName       String    @map("user_name")
+  rating         Int
+  title          String
+  body           String    @db.Text
+  date           String
+  verified       Boolean   @default(false)
+  status         String    @default("published")
+  ownerReply     String?   @map("owner_reply") @db.Text
+  ownerRepliedAt DateTime? @map("owner_replied_at")
+  ownerRepliedBy String?   @map("owner_replied_by")
+  reportCount    Int       @default(0) @map("report_count")
+  helpful        Int       @default(0)
+  images         Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
 
-  orders     Order[]
-  activities ActivityLog[]
+  @@index([targetType])
+  @@index([productId])
+  @@index([locationId])
+  @@index([orderId])
+  @@index([status])
+  @@index([userId])
+  @@map("platform_reviews")
+}
+
+model ReviewReport {
+  id             String   @id
+  reviewId       String   @map("review_id")
+  reporterUserId String?  @map("reporter_user_id")
+  reason         String
+  notes          String?  @db.Text
+  resolved       Boolean  @default(false)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  @@index([reviewId])
+  @@index([resolved])
+  @@map("review_reports")
+}
+
+/// Runtime support tickets (ensureSupportSchema).
+model SupportTicket {
+  id             String   @id
+  organizationId String   @map("organization_id")
+  locationId     String?  @map("location_id")
+  orderId        String?  @map("order_id")
+  userId         String   @map("user_id")
+  category       String
+  subject        String
+  status         String   @default("open")
+  priority       String   @default("normal")
+  routeScope     String   @map("route_scope")
+  routeReason    String?  @map("route_reason")
+  assigneeUserId String?  @map("assignee_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@index([organizationId])
+  @@index([locationId])
+  @@index([userId])
+  @@index([status])
+  @@index([category])
+  @@index([orderId])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id           String   @id
+  ticketId     String   @map("ticket_id")
+  authorUserId String?  @map("author_user_id")
+  authorName   String   @map("author_name")
+  authorRole   String   @map("author_role")
+  body         String   @db.Text
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([ticketId])
+  @@map("support_messages")
+}
+
+model User {
+  id                 String   @id
+  email              String   @unique
+  name               String
+  role               String
+  passwordHash       String?  @map("password_hash")
+  active             Boolean  @default(true)
+  organizationId     String?  @map("organization_id")
+  preferredBranchId  String   @map("preferred_branch_id")
+  loyaltyPoints      Int      @map("loyalty_points")
+  loyaltyTier        String   @map("loyalty_tier")
+  birthday           DateTime? @db.Date
+  referralCode       String?  @unique @map("referral_code")
+  referredByUserId   String?  @map("referred_by_user_id")
+  birthdayRewardYear Int?     @map("birthday_reward_year")
+  addresses          Json
+  recentlyViewed     Json     @map("recently_viewed")
+  avatarUrl          String?  @map("avatar_url") @db.MediumText
+  permissionGrants   Json     @map("permission_grants")
+  permissionRevokes  Json     @map("permission_revokes")
+  allowedLocationIds Json?    @map("allowed_location_ids")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @default(now()) @updatedAt @map("updated_at")
+
+  organization       Organization?          @relation("OrganizationMembers", fields: [organizationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  preferredBranch    Location               @relation("UserPreferredBranch", fields: [preferredBranchId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  ownedOrganizations Organization[]         @relation("OrganizationOwner")
+  orders             Order[]                @relation("OrderCustomer")
+  assignedOrders     Order[]                @relation("OrderAssignee")
+  activities         ActivityLog[]
+  orgCustomers       OrganizationCustomer[]
+  loyaltyLedger      LoyaltyLedger[]
+  createdTransfers   InventoryTransfer[]    @relation("TransferCreatedBy")
 
   @@index([role])
   @@index([active])
+  @@index([organizationId])
+  @@index([preferredBranchId])
   @@map("users")
 }
 
-model Order {
-  id          String  @id
-  userId      String  @map("user_id")
-  date        String
-  status      String
-  total       Float
-  fulfillment String
-  locationId  String  @map("location_id")
-  tracking    String?
-  driverId    String? @map("driver_id")
-  deliveryStatus String? @map("delivery_status")
-  deliveryPhone  String? @map("delivery_phone")
-  deliveryAddress Json?  @map("delivery_address")
-  createdAt   DateTime @default(now()) @map("created_at")
+model OrganizationCustomer {
+  id               String    @id @default(cuid())
+  organizationId   String    @map("organization_id")
+  userId           String    @map("user_id")
+  notes            String?   @db.Text
+  marketingConsent Boolean   @default(false) @map("marketing_consent")
+  segmentCache     String?   @map("segment_cache")
+  totalSpent       Decimal   @default(0.00) @map("total_spent") @db.Decimal(12, 2)
+  orderCount       Int       @default(0) @map("order_count")
+  lastOrderAt      DateTime? @map("last_order_at")
+  loyaltyPoints    Int       @default(0) @map("loyalty_points")
+  loyaltyTier      String    @default("Member") @map("loyalty_tier")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @default(now()) @updatedAt @map("updated_at")
 
-  user     User              @relation(fields: [userId], references: [id])
-  location Location          @relation(fields: [locationId], references: [id])
-  driver   Driver?           @relation(fields: [driverId], references: [id])
-  items    OrderItem[]
-  ledger   InventoryLedger[]
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([organizationId])
+  @@index([userId])
+  @@index([segmentCache])
+  @@map("organization_customers")
+}
+
+model Order {
+  id              String   @id
+  userId          String   @map("user_id")
+  organizationId  String?  @map("organization_id")
+  date            String
+  status          String
+  paymentStatus   String   @default("paid") @map("payment_status")
+  total           Decimal  @db.Decimal(12, 2)
+  subtotal        Decimal  @default(0.00) @db.Decimal(12, 2)
+  taxAmount       Decimal  @default(0.00) @map("tax_amount") @db.Decimal(12, 2)
+  discountAmount  Decimal  @default(0.00) @map("discount_amount") @db.Decimal(12, 2)
+  deliveryFee     Decimal  @default(0.00) @map("delivery_fee") @db.Decimal(12, 2)
+  fulfillment     String
+  locationId      String   @map("location_id")
+  tracking        String?
+  driverId        String?  @map("driver_id")
+  assignedStaffId String?  @map("assigned_staff_id")
+  deliveryStatus  String?  @map("delivery_status")
+  deliveryPhone   String?  @map("delivery_phone")
+  deliveryAddress Json?    @map("delivery_address")
+  couponCode      String?  @map("coupon_code")
+  promotionId     String?  @map("promotion_id")
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  user           User               @relation("OrderCustomer", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  assignedStaff  User?              @relation("OrderAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  organization   Organization?      @relation(fields: [organizationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  location       Location           @relation(fields: [locationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  driver         Driver?            @relation(fields: [driverId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  promotion      Promotion?         @relation(fields: [promotionId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  items          OrderItem[]
+  ledger         InventoryLedger[]
+  loyaltyEntries LoyaltyLedger[]
 
   @@index([userId])
   @@index([locationId])
+  @@index([organizationId])
   @@index([date])
+  @@index([status])
+  @@index([fulfillment])
+  @@index([driverId])
+  @@index([assignedStaffId])
+  @@index([promotionId])
   @@map("orders")
 }
 
@@ -237,10 +477,10 @@ model OrderItem {
   orderId   String @map("order_id")
   productId String @map("product_id")
   quantity  Int
-  price     Float
+  price     Decimal @db.Decimal(12, 2)
 
-  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade)
-  product Product @relation(fields: [productId], references: [id])
+  order   Order   @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
 
   @@index([orderId])
   @@index([productId])
@@ -255,14 +495,92 @@ model InventoryLedger {
   onHandAfter Int      @map("on_hand_after")
   reason      String
   orderId     String?  @map("order_id")
+  transferId  String?  @map("transfer_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  order Order? @relation(fields: [orderId], references: [id])
+  location Location           @relation(fields: [locationId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  product  Product            @relation(fields: [productId], references: [id], onDelete: Restrict, onUpdate: Cascade)
+  order    Order?             @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  transfer InventoryTransfer? @relation(fields: [transferId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([locationId, productId])
   @@index([orderId])
+  @@index([transferId])
   @@index([createdAt])
   @@map("inventory_ledger")
+}
+
+model Promotion {
+  id             String    @id @default(cuid())
+  organizationId String?   @map("organization_id")
+  locationId     String?   @map("location_id")
+  scope          String
+  name           String
+  code           String?
+  type           String
+  value          Decimal   @db.Decimal(12, 4)
+  minSubtotal    Decimal?  @map("min_subtotal") @db.Decimal(12, 2)
+  priority       Int       @default(100)
+  stackable      Boolean   @default(false)
+  active         Boolean   @default(true)
+  startsAt       DateTime? @map("starts_at")
+  endsAt         DateTime? @map("ends_at")
+  rules          Json?
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization? @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  location     Location?     @relation(fields: [locationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  orders       Order[]
+
+  @@unique([organizationId, code])
+  @@index([organizationId])
+  @@index([locationId])
+  @@index([code])
+  @@index([scope, active])
+  @@map("promotions")
+}
+
+model LoyaltyProgram {
+  id                   String   @id @default(cuid())
+  organizationId       String   @unique @map("organization_id")
+  name                 String
+  pointsPerDollar      Decimal  @default(1.0000) @map("points_per_dollar") @db.Decimal(8, 4)
+  redeemRate           Decimal  @default(0.0200) @map("redeem_rate") @db.Decimal(8, 4)
+  birthdayPoints       Int      @default(100) @map("birthday_points")
+  referralPoints       Int      @default(100) @map("referral_points")
+  referralSignupPoints Int      @default(50) @map("referral_signup_points")
+  tiers                Json
+  rewards              Json?
+  active               Boolean  @default(true)
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @default(now()) @updatedAt @map("updated_at")
+
+  organization Organization    @relation(fields: [organizationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  ledger       LoyaltyLedger[]
+
+  @@map("loyalty_programs")
+}
+
+model LoyaltyLedger {
+  id           String   @id @default(cuid())
+  programId    String   @map("program_id")
+  userId       String   @map("user_id")
+  delta        Int
+  balanceAfter Int      @map("balance_after")
+  reason       String
+  orderId      String?  @map("order_id")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  program LoyaltyProgram @relation(fields: [programId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  user    User           @relation(fields: [userId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  order   Order?         @relation(fields: [orderId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([programId, userId])
+  @@index([userId])
+  @@index([orderId])
+  @@index([createdAt])
+  @@map("loyalty_ledger")
 }
 
 model ActivityLog {
@@ -279,22 +597,63 @@ model ActivityLog {
   locationId  String?  @map("location_id")
   createdAt   DateTime @default(now()) @map("created_at")
 
-  actor User? @relation(fields: [actorUserId], references: [id], onDelete: SetNull)
+  actor    User?     @relation(fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  location Location? @relation(fields: [locationId], references: [id], onDelete: SetNull, onUpdate: Cascade)
 
   @@index([createdAt])
   @@index([actorUserId])
+  @@index([locationId])
   @@index([action])
   @@index([entityType, entityId])
   @@map("activity_logs")
+}
+
+/** In-app staff/owner inbox (separate from customer outbound alerts). */
+model StaffNotification {
+  id             String   @id @default(cuid())
+  organizationId String   @map("organization_id")
+  type           String
+  title          String
+  body           String   @db.Text
+  entityType     String?  @map("entity_type")
+  entityId       String?  @map("entity_id")
+  locationId     String?  @map("location_id")
+  actorUserId    String?  @map("actor_user_id")
+  severity       String   @default("info")
+  dedupeKey      String?  @map("dedupe_key")
+  href           String?
+  metadata       Json?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  recipients StaffNotificationRecipient[]
+
+  @@unique([organizationId, dedupeKey])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, type])
+  @@index([locationId])
+  @@map("staff_notifications")
+}
+
+model StaffNotificationRecipient {
+  id             String    @id @default(cuid())
+  notificationId String    @map("notification_id")
+  userId         String    @map("user_id")
+  readAt         DateTime? @map("read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  notification StaffNotification @relation(fields: [notificationId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@unique([notificationId, userId])
+  @@index([userId, readAt, createdAt])
+  @@map("staff_notification_recipients")
 }
 
 model RoleDefinition {
   id          String   @id
   slug        String   @unique
   label       String
-  // VARCHAR, not TEXT: MySQL rejects a DEFAULT on TEXT/BLOB/JSON columns.
-  description String   @default("") @db.VarChar(1000)
-  permissions Json     @default("[]")
+  description String   @default("")
+  permissions Json
   rank        Int      @default(1)
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")

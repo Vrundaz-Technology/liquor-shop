@@ -10,6 +10,7 @@ import {
   seedEventSeats,
   stockKey,
 } from "@/lib/inventory";
+import { availableStock } from "@/lib/commerce/order-status";
 import { getCustomProducts } from "@/data/custom-products";
 import { getAllLocations } from "@/data/locations";
 import { isDbConnected } from "@/lib/runtime-data";
@@ -30,6 +31,8 @@ type DeductResult =
 
 type InventoryState = {
   stocks: Record<string, number>;
+  /** Online order holds — sellable qty is onHand − reserved. */
+  reserved: Record<string, number>;
   seats: Record<string, number>;
   /** Keys are locationId:productId — true means hidden on that store's website. */
   hidden: Record<string, boolean>;
@@ -38,6 +41,9 @@ type InventoryState = {
   hydrated: boolean;
   setHydrated: (value: boolean) => void;
   getOnHand: (locationId: string, productId: string) => number;
+  getReserved: (locationId: string, productId: string) => number;
+  /** Sellable bottles (on-hand minus online holds). */
+  getAvailable: (locationId: string, productId: string) => number;
   getSeats: (eventId: string) => number;
   isHidden: (locationId: string, productId: string) => boolean;
   setHidden: (locationId: string, productId: string, hidden: boolean) => void;
@@ -70,6 +76,7 @@ type InventoryState = {
     stocks: Record<string, number>,
     seats: Record<string, number>,
     hidden?: Record<string, boolean>,
+    reserved?: Record<string, number>,
   ) => void;
 };
 
@@ -93,6 +100,7 @@ export const useInventoryStore = create<InventoryState>()(
   persist(
     (set, get) => ({
       stocks: seedBottleStocks(),
+      reserved: {},
       seats: seedEventSeats(),
       hidden: {},
       ledger: [],
@@ -104,6 +112,17 @@ export const useInventoryStore = create<InventoryState>()(
         const live = get().stocks[key];
         if (typeof live === "number") return Math.max(0, live);
         return getCatalogStock(locationId, productId);
+      },
+      getReserved: (locationId, productId) => {
+        const live = get().reserved[stockKey(locationId, productId)];
+        return typeof live === "number" ? Math.max(0, live) : 0;
+      },
+      getAvailable: (locationId, productId) => {
+        if (get().isHidden(locationId, productId)) return 0;
+        return availableStock(
+          get().getOnHand(locationId, productId),
+          get().getReserved(locationId, productId),
+        );
       },
       getSeats: (eventId) => {
         const live = get().seats[eventId];
@@ -127,6 +146,7 @@ export const useInventoryStore = create<InventoryState>()(
                   res.inventory.stocks,
                   res.inventory.seats,
                   res.inventory.hidden,
+                  res.inventory.reserved,
                 );
               }
             })
@@ -183,12 +203,12 @@ export const useInventoryStore = create<InventoryState>()(
         const shortfalls: { productId: string; requested: number; onHand: number }[] =
           [];
         for (const item of items) {
-          const onHand = get().getOnHand(locationId, item.productId);
-          if (onHand < item.quantity) {
+          const avail = get().getAvailable(locationId, item.productId);
+          if (avail < item.quantity) {
             shortfalls.push({
               productId: item.productId,
               requested: item.quantity,
-              onHand,
+              onHand: avail,
             });
           }
         }
@@ -264,7 +284,12 @@ export const useInventoryStore = create<InventoryState>()(
         try {
           const res = await apiBookSeats(eventId, qty);
           if (res.inventory) {
-            get().syncFromServer(res.inventory.stocks, res.inventory.seats, res.inventory.hidden);
+            get().syncFromServer(
+              res.inventory.stocks,
+              res.inventory.seats,
+              res.inventory.hidden,
+              res.inventory.reserved,
+            );
           }
           return true;
         } catch (error) {
@@ -325,25 +350,32 @@ export const useInventoryStore = create<InventoryState>()(
         if (isDbConnected()) {
           void apiResetInventory(locationId)
             .then((res) => {
-              get().syncFromServer(res.inventory.stocks, res.inventory.seats, res.inventory.hidden);
+              get().syncFromServer(
+                res.inventory.stocks,
+                res.inventory.seats,
+                res.inventory.hidden,
+                res.inventory.reserved,
+              );
             })
             .catch(console.error);
         }
       },
-      syncFromServer: (stocks, seats, hidden) => {
+      syncFromServer: (stocks, seats, hidden, reserved) => {
         set({
           stocks: { ...seedBottleStocks(), ...stocks },
           seats: { ...seedEventSeats(), ...seats },
           hidden: hidden !== undefined ? hidden : get().hidden,
+          reserved: reserved !== undefined ? reserved : get().reserved,
           revision: get().revision + 1,
           hydrated: true,
         });
       },
     }),
     {
-      name: "sams-inventory-v3",
+      name: "sams-inventory-v4",
       partialize: (s) => ({
         stocks: s.stocks,
+        reserved: s.reserved,
         seats: s.seats,
         hidden: s.hidden,
         ledger: s.ledger,
@@ -354,6 +386,7 @@ export const useInventoryStore = create<InventoryState>()(
           ...current,
           ...saved,
           stocks: mergeSeedStocks(saved?.stocks, seedBottleStocks()),
+          reserved: saved?.reserved ?? current.reserved,
           seats: mergeSeedStocks(saved?.seats, seedEventSeats()),
           hidden: saved?.hidden ?? current.hidden,
           ledger: saved?.ledger ?? current.ledger,
@@ -366,7 +399,7 @@ export const useInventoryStore = create<InventoryState>()(
   ),
 );
 
-/** Live on-hand bottles at a branch. Falls back to catalog seed before hydrate. */
+/** Sellable bottles at a branch (on-hand minus online holds). */
 export function getLiveStock(locationId: string, productId: string) {
-  return useInventoryStore.getState().getOnHand(locationId, productId);
+  return useInventoryStore.getState().getAvailable(locationId, productId);
 }

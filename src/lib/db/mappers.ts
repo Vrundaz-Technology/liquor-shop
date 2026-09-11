@@ -9,6 +9,7 @@ import type {
   UserProfile,
 } from "@/types";
 import { mapLocationPricing } from "@/lib/db/location-pricing";
+import { moneyNumber, moneyOptional } from "@/lib/db/money";
 import type {
   Category as DbCategory,
   Event as DbEvent,
@@ -41,6 +42,14 @@ function asNutrition(value: unknown): Product["nutrition"] {
 }
 
 export function mapProduct(row: DbProductRow): Product {
+  const ext = row as DbProductRow & {
+    costPrice?: number | null;
+    sku?: string | null;
+    upc?: string | null;
+    minQty?: number | null;
+    maxQty?: number | null;
+    organizationId?: string | null;
+  };
   return {
     id: row.id,
     slug: row.slug,
@@ -54,8 +63,14 @@ export function mapProduct(row: DbProductRow): Product {
     country: row.country,
     abv: row.abv,
     volumeMl: row.volumeMl,
-    price: row.price,
-    compareAtPrice: row.compareAtPrice ?? undefined,
+    price: moneyNumber(row.price),
+    compareAtPrice: moneyOptional(row.compareAtPrice),
+    costPrice: moneyOptional(ext.costPrice),
+    sku: ext.sku ?? undefined,
+    upc: ext.upc ?? undefined,
+    minQty: ext.minQty ?? 1,
+    maxQty: ext.maxQty ?? undefined,
+    organizationId: ext.organizationId ?? undefined,
     rating: row.rating,
     reviewCount: row.reviewCount,
     tastingNotes: asStringArray(row.tastingNotes),
@@ -72,25 +87,46 @@ export function mapProduct(row: DbProductRow): Product {
     nutrition: asNutrition(row.nutrition),
     glbUrl: row.glbUrl ?? undefined,
     usdzUrl: row.usdzUrl ?? undefined,
+    createdAt:
+      row.createdAt instanceof Date ? row.createdAt.toISOString() : undefined,
   };
 }
 
 export function mapInventoryItem(row: DbInventory): InventoryItem {
+  const ext = row as DbInventory & {
+    reserved?: number;
+    basePrice?: number | null;
+    salePrice?: number | null;
+    costPrice?: number | null;
+    lowStockThreshold?: number;
+  };
   return {
     productId: row.productId,
     stock: row.seedStock,
-    promoPrice: row.promoPrice ?? undefined,
+    reserved: ext.reserved ?? 0,
+    basePrice: moneyOptional(ext.basePrice),
+    salePrice: moneyOptional(ext.salePrice),
+    costPrice: moneyOptional(ext.costPrice),
+    promoPrice: moneyOptional(row.promoPrice),
     featured: row.featured,
     hidden: Boolean((row as { hidden?: boolean }).hidden),
+    lowStockThreshold: ext.lowStockThreshold ?? 5,
   };
 }
 
 export function mapLocation(row: DbLocationRow): StoreLocation {
+  const ext = row as DbLocationRow & {
+    organizationId?: string;
+    holidayHours?: unknown;
+    minimumOrderAmount?: number;
+    paymentSettings?: unknown;
+  };
   return {
     id: row.id,
     slug: row.slug,
     name: row.name,
     shortName: row.shortName,
+    organizationId: ext.organizationId,
     address: row.address,
     city: row.city,
     state: row.state,
@@ -98,6 +134,9 @@ export function mapLocation(row: DbLocationRow): StoreLocation {
     phone: row.phone,
     email: row.email,
     hours: row.hours as StoreLocation["hours"],
+    holidayHours: Array.isArray(ext.holidayHours)
+      ? (ext.holidayHours as StoreLocation["holidayHours"])
+      : undefined,
     lat: row.lat,
     lng: row.lng,
     heroImage: row.heroImage,
@@ -108,6 +147,11 @@ export function mapLocation(row: DbLocationRow): StoreLocation {
     pickupAvailable: row.pickupAvailable,
     ...mapLocationPricing(row),
     deliveryRadiusKm: row.deliveryRadiusKm,
+    minimumOrderAmount: moneyNumber(ext.minimumOrderAmount),
+    paymentSettings:
+      ext.paymentSettings && typeof ext.paymentSettings === "object"
+        ? (ext.paymentSettings as Record<string, unknown>)
+        : undefined,
     inventory: row.inventory.map(mapInventoryItem),
     featuredOffers: asStringArray(row.featuredOffers),
     description: row.description,
@@ -125,7 +169,7 @@ export function mapEvent(row: DbEvent & { active?: boolean | null }): EventItem 
     date: row.date,
     startTime: row.startTime,
     endTime: row.endTime,
-    price: row.price,
+    price: moneyNumber(row.price),
     seatsTotal: row.seatsTotal,
     seatsAvailable: row.seatsAvailable,
     image: row.image,
@@ -160,6 +204,17 @@ export function mapCategory(row: DbCategory) {
 }
 
 export function mapOrder(row: DbOrderRow): Order {
+  const ext = row as DbOrderRow & {
+    organizationId?: string | null;
+    subtotal?: number;
+    taxAmount?: number;
+    discountAmount?: number;
+    deliveryFee?: number;
+    paymentStatus?: string;
+    assignedStaffId?: string | null;
+    couponCode?: string | null;
+    promotionId?: string | null;
+  };
   return {
     id: row.id,
     date: row.date,
@@ -167,16 +222,26 @@ export function mapOrder(row: DbOrderRow): Order {
     items: row.items.map((i) => ({
       productId: i.productId,
       quantity: i.quantity,
-      price: i.price,
+      price: moneyNumber(i.price),
     })),
-    total: row.total,
+    total: moneyNumber(row.total),
+    subtotal: moneyOptional(ext.subtotal),
+    taxAmount: moneyOptional(ext.taxAmount),
+    discountAmount: moneyOptional(ext.discountAmount),
+    deliveryFee: moneyOptional(ext.deliveryFee),
+    paymentStatus: ext.paymentStatus,
     fulfillment: row.fulfillment as Order["fulfillment"],
     locationId: row.locationId,
+    organizationId: ext.organizationId ?? undefined,
     tracking: row.tracking ?? undefined,
+    assignedStaffId: ext.assignedStaffId ?? undefined,
+    couponCode: ext.couponCode ?? undefined,
+    promotionId: ext.promotionId ?? undefined,
   };
 }
 
 export function mapUser(row: DbUser, orders: Order[]): UserProfile {
+  const ext = row as DbUser & { organizationId?: string | null };
   return {
     id: row.id,
     name: row.name,
@@ -184,6 +249,7 @@ export function mapUser(row: DbUser, orders: Order[]): UserProfile {
     role: row.role as UserProfile["role"],
     active: row.active !== false,
     preferredBranchId: row.preferredBranchId,
+    organizationId: ext.organizationId ?? undefined,
     loyaltyPoints: row.loyaltyPoints,
     loyaltyTier: row.loyaltyTier as UserProfile["loyaltyTier"],
     addresses: row.addresses as UserProfile["addresses"],

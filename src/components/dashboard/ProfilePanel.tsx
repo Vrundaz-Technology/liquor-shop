@@ -10,6 +10,7 @@ import { PasswordInput } from "@/components/ui/PasswordInput";
 import { AvatarUpload } from "@/components/ui/AvatarUpload";
 import { getAllLocations } from "@/data/locations";
 import { accessibleLocations } from "@/lib/auth/location-access";
+import { LoyaltyMemberCard } from "@/components/dashboard/LoyaltyMemberCard";
 import { cn } from "@/lib/utils";
 
 const ROLE_TONE: Record<string, string> = {
@@ -32,6 +33,7 @@ export function ProfilePanel() {
   const { profile, updateProfile, logout } = useUserStore();
   const [name, setName] = useState(profile.name);
   const [email, setEmail] = useState(profile.email);
+  const [birthday, setBirthday] = useState(profile.birthday ?? "");
   const [password, setPassword] = useState("");
   const [currentPassword, setCurrentPassword] = useState("");
   const [avatarUrl, setAvatarUrl] = useState(profile.avatarUrl ?? "");
@@ -49,7 +51,8 @@ export function ProfilePanel() {
     setName(profile.name);
     setEmail(profile.email);
     setAvatarUrl(profile.avatarUrl ?? "");
-  }, [profile.name, profile.email, profile.avatarUrl]);
+    setBirthday(profile.birthday ?? "");
+  }, [profile.name, profile.email, profile.avatarUrl, profile.birthday]);
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -65,6 +68,7 @@ export function ProfilePanel() {
         name,
         email,
         avatarUrl,
+        birthday: birthday || null,
         ...(password ? { password, currentPassword } : {}),
       });
       setPassword("");
@@ -79,40 +83,41 @@ export function ProfilePanel() {
 
   return (
     <section className="mt-0 min-w-0">
-      <div className="flex flex-col gap-3 border-b border-white/10 pb-4 sm:flex-row sm:items-end sm:justify-between sm:gap-4 sm:pb-5">
-        <div className="min-w-0">
-          <p className="hidden text-[10px] uppercase tracking-[0.22em] text-gold lg:flex lg:items-center lg:gap-2">
-            <Shield size={12} className="text-gold" />
-            Profile
-          </p>
-          <h2 className="hidden font-display text-3xl text-cream lg:mt-2 lg:block xl:text-4xl">
-            Profile
-          </h2>
-          <p className="max-w-2xl text-sm text-muted lg:mt-2">
-            Update your photo, name, email, and password.
-          </p>
-        </div>
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-          <Button
-            type="button"
-            size="sm"
-            variant="ghost"
-            className="w-full shrink-0 sm:w-auto"
-            onClick={async () => {
-              await logout();
-              window.location.assign("/login");
-            }}
-          >
-            <LogOut size={14} />
-            Sign out
-          </Button>
-        </div>
+      <div className="mb-4 flex justify-end sm:mb-5">
+        <Button
+          type="button"
+          size="sm"
+          variant="ghost"
+          onClick={async () => {
+            await logout();
+            window.location.assign("/login");
+          }}
+        >
+          <LogOut size={14} />
+          Sign out
+        </Button>
       </div>
 
       <div className="glass mt-4 overflow-hidden border border-white/10 sm:mt-6">
         <div className="grid min-w-0 lg:grid-cols-[minmax(0,17.5rem)_1fr]">
           <aside className="min-w-0 border-b border-white/10 bg-white/[0.02] p-4 sm:p-5 lg:border-b-0 lg:border-r lg:p-6">
-            <AvatarUpload layout="responsive" name={name} value={avatarUrl} onChange={setAvatarUrl} />
+            <AvatarUpload
+              layout="responsive"
+              name={name}
+              value={avatarUrl}
+              onChange={setAvatarUrl}
+              onPersist={async (next) => {
+                try {
+                  await updateProfile({ avatarUrl: next || null });
+                  setAvatarUrl(next);
+                  setMessage(next ? "Profile photo saved." : "Profile photo removed.");
+                  setError("");
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : "Could not save profile photo.");
+                  throw err;
+                }
+              }}
+            />
             <div className="mt-5 space-y-3 border-t border-white/10 pt-5 text-left lg:text-center">
               <p className="truncate font-display text-lg text-cream sm:text-xl">{name || "Your name"}</p>
               <div className="flex flex-wrap items-center gap-2 lg:justify-center">
@@ -159,6 +164,13 @@ export function ProfilePanel() {
             ) : null}
 
             <div className="mt-6 border-t border-white/10 pt-6 sm:mt-8 sm:pt-8">
+              <LoyaltyMemberCard birthdayValue={birthday} onBirthdayChange={setBirthday} />
+              <p className="mt-2 text-[11px] text-white/35">
+                Birthday saves with the profile form below.
+              </p>
+            </div>
+
+            <div className="mt-6 border-t border-white/10 pt-6 sm:mt-8 sm:pt-8">
               <SectionHeading eyebrow="Security" title="Change password" />
               <div className="grid gap-4 md:grid-cols-2">
                 <label className="block min-w-0 text-xs text-muted">
@@ -189,7 +201,7 @@ export function ProfilePanel() {
             {error ? <p className="mt-4 text-sm text-red-300 sm:mt-5">{error}</p> : null}
 
             <div className="mt-5 flex border-t border-white/10 pt-4 sm:mt-6 sm:justify-end sm:pt-5">
-              <Button type="submit" size="sm" className="w-full sm:w-auto" disabled={busy}>
+              <Button type="submit" size="sm" className="w-full sm:w-auto" loading={busy}>
                 {busy ? "Saving…" : "Save profile"}
               </Button>
             </div>

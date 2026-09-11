@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -17,6 +17,7 @@ function destinationForUser(next: string | null, profile: UserProfile) {
 }
 
 function LoginForm() {
+  const router = useRouter();
   const search = useSearchParams();
   const login = useUserStore((s) => s.login);
   const isLoggedIn = useUserStore((s) => s.isLoggedIn);
@@ -29,9 +30,9 @@ function LoginForm() {
 
   useEffect(() => {
     if (authReady && isLoggedIn) {
-      window.location.replace(destinationForUser(search.get("next"), profile));
+      router.replace(destinationForUser(search.get("next"), profile));
     }
-  }, [authReady, isLoggedIn, profile, search]);
+  }, [authReady, isLoggedIn, profile, router, search]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -39,8 +40,8 @@ function LoginForm() {
     setBusy(true);
     try {
       await login(email, password);
-      const profile = useUserStore.getState().profile;
-      window.location.assign(destinationForUser(search.get("next"), profile));
+      const nextProfile = useUserStore.getState().profile;
+      router.replace(destinationForUser(search.get("next"), nextProfile));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign in failed.");
       setBusy(false);
@@ -54,28 +55,38 @@ function LoginForm() {
       subtitle="Use your email and password. Staff, admin, and owner accounts open the dashboard."
     >
       <form className="space-y-4" onSubmit={onSubmit}>
-        <label className="block text-xs text-muted">
+        <label className="block text-xs text-muted" htmlFor="login-email">
           Email
           <Input
+            id="login-email"
             className="mt-1"
             type="email"
             autoComplete="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "login-error" : undefined}
           />
         </label>
-        <label className="block text-xs text-muted">
+        <label className="block text-xs text-muted" htmlFor="login-password">
           Password
           <PasswordInput
+            id="login-password"
             className="mt-1"
             autoComplete="current-password"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
+            aria-invalid={Boolean(error)}
+            aria-describedby={error ? "login-error" : undefined}
           />
         </label>
-        {error && <p className="text-sm text-red-300">{error}</p>}
+        {error && (
+          <p id="login-error" role="alert" className="text-sm text-red-300">
+            {error}
+          </p>
+        )}
         <Button type="submit" className="w-full" disabled={busy}>
           {busy ? "Signing in…" : "Sign in"}
         </Button>

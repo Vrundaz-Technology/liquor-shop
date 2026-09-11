@@ -2,7 +2,7 @@
 
 import { FormEvent, Suspense, useEffect, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { AuthCard } from "@/components/auth/AuthCard";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -12,6 +12,7 @@ import { validatePassword } from "@/lib/auth/password";
 import { safeInternalPath } from "@/lib/utils";
 
 function SignupForm() {
+  const router = useRouter();
   const search = useSearchParams();
   const signup = useUserStore((s) => s.signup);
   const isLoggedIn = useUserStore((s) => s.isLoggedIn);
@@ -19,15 +20,21 @@ function SignupForm() {
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [referralCode, setReferralCode] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const next = safeInternalPath(search.get("next")) || "/account";
 
   useEffect(() => {
+    const ref = search.get("ref");
+    if (ref) setReferralCode(ref.trim().toUpperCase());
+  }, [search]);
+
+  useEffect(() => {
     if (authReady && isLoggedIn) {
-      window.location.replace(next);
+      router.replace(next);
     }
-  }, [authReady, isLoggedIn, next]);
+  }, [authReady, isLoggedIn, next, router]);
 
   const onSubmit = async (event: FormEvent) => {
     event.preventDefault();
@@ -43,8 +50,8 @@ function SignupForm() {
     }
     setBusy(true);
     try {
-      await signup(name, email, password);
-      window.location.assign(next);
+      await signup(name, email, password, referralCode || undefined);
+      router.replace(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Sign up failed.");
       setBusy(false);
@@ -91,6 +98,17 @@ function SignupForm() {
             minLength={8}
           />
           <span className="mt-1 block text-[11px]">At least 8 characters, with a letter and a number.</span>
+        </label>
+        <label className="block text-xs text-muted">
+          Referral code <span className="text-white/35">(optional)</span>
+          <Input
+            className="mt-1 uppercase tracking-wider"
+            autoComplete="off"
+            value={referralCode}
+            onChange={(e) => setReferralCode(e.target.value.toUpperCase())}
+            placeholder="Friend’s code"
+            maxLength={32}
+          />
         </label>
         {error && <p className="text-sm text-red-300">{error}</p>}
         <Button type="submit" className="w-full" disabled={busy}>

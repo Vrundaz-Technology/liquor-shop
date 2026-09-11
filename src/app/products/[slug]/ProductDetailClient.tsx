@@ -5,7 +5,6 @@ import { notFound, useParams } from "next/navigation";
 import { SmartImage } from "@/components/ui/SmartImage";
 import Link from "next/link";
 import { getProductBySlug, getSimilarProducts } from "@/data/products";
-import { getReviewsForProduct } from "@/data/events";
 import { formatPrice } from "@/lib/utils";
 import { useCartStore } from "@/store/cart";
 import { addToCart } from "@/lib/add-to-cart";
@@ -18,10 +17,14 @@ import { getLocationById, getPriceForLocation } from "@/data/locations";
 import { LOW_STOCK_THRESHOLD } from "@/lib/inventory";
 import { maxStockAnywhere } from "@/lib/cart-availability";
 import { Button } from "@/components/ui/Button";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { Badge } from "@/components/ui/Badge";
 import { ProductCard } from "@/components/product/ProductCard";
 import { OtherBranchStock } from "@/components/inventory/OtherBranchStock";
 import { LocationStockStrip } from "@/components/inventory/LocationStockStrip";
+import { ProductAlertButtons } from "@/components/product/ProductAlertButtons";
+import { ReviewForm, ReviewList } from "@/components/reviews/ReviewForm";
+import type { PlatformReview } from "@/types";
 import { useCatalogStore } from "@/store/catalog";
 import { Heart, Star, View } from "lucide-react";
 import dynamic from "next/dynamic";
@@ -52,6 +55,7 @@ export function ProductDetailPage() {
   );
   const [qty, setQty] = useState(1);
   const inventoryRevision = useInventoryStore((s) => s.revision);
+  const [reviews, setReviews] = useState<PlatformReview[]>([]);
 
   useEffect(() => {
     if (product) addViewed(product.id);
@@ -62,6 +66,22 @@ export function ProductDetailPage() {
     const cap = Math.max(1, maxStockAnywhere(product.id));
     setQty((n) => Math.min(Math.max(1, n), cap));
   }, [onHand, cartQty, product, inventoryRevision]);
+
+  useEffect(() => {
+    if (!product) return;
+    let cancelled = false;
+    void fetch(`/api/reviews?productId=${encodeURIComponent(product.id)}`)
+      .then((r) => r.json())
+      .then((data: { reviews?: PlatformReview[] }) => {
+        if (!cancelled) setReviews(data.reviews ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setReviews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [product]);
 
   if (!product) {
     notFound();
@@ -75,7 +95,6 @@ export function ProductDetailPage() {
   const wantsMore = qty > remaining || outOfStock || atCartMax;
   const addQty = Math.min(qty, remaining || qty);
   const branchName = getLocationById(branchId)?.shortName ?? "this store";
-  const reviews = getReviewsForProduct(product.id);
   const similar = getSimilarProducts(product).filter(
     (item) => !useInventoryStore.getState().isHidden(branchId, item.id),
   );
@@ -183,7 +202,7 @@ export function ProductDetailPage() {
           <p className="mt-4 text-[10px] uppercase tracking-[0.24em] text-gold">
             {product.brand}
           </p>
-          <h1 className="mt-2 font-display text-4xl text-cream md:text-5xl">
+          <h1 className="mt-2 font-display text-3xl text-cream wrap-break-word sm:text-4xl md:text-5xl">
             {product.name}
           </h1>
           <div className="mt-3 flex items-center gap-2 text-sm text-muted">
@@ -199,7 +218,9 @@ export function ProductDetailPage() {
             </div>
             <div>
               <dt className="text-muted">Alcohol</dt>
-              <dd className="text-cream">{product.abv}% ABV</dd>
+              <dd className="text-cream">
+                {product.abv}% <AbbrTooltip term="ABV" />
+              </dd>
             </div>
             <div>
               <dt className="text-muted">Volume</dt>
@@ -310,11 +331,18 @@ export function ProductDetailPage() {
               </Button>
             </div>
           </div>
+          <ProductAlertButtons
+            className="mt-4"
+            productId={product.id}
+            productName={product.name}
+            locationId={branchId}
+            price={price}
+          />
         </div>
       </div>
 
         <div className="mt-16">
-        <div className="-mx-3 h-scroll gap-4 border-b border-white/10 px-3 pb-3 sm:mx-0 sm:flex-wrap sm:overflow-visible sm:px-0">
+        <div className="-mx-3 h-scroll gap-4 border-b border-white/10 px-3 pb-3 sm:mx-0 sm:flex sm:flex-wrap sm:overflow-visible sm:px-0">
           {(
             [
               ["story", "Brand Story"],
@@ -346,7 +374,9 @@ export function ProductDetailPage() {
           )}
           {tab === "tech" && (
             <ul className="space-y-2 text-sm">
-              <li>ABV: {product.abv}%</li>
+              <li>
+                <AbbrTooltip term="ABV" />: {product.abv}%
+              </li>
               <li>Volume: {product.volumeMl}ml</li>
               <li>Country: {product.country}</li>
               {product.nutrition && (
@@ -371,25 +401,14 @@ export function ProductDetailPage() {
               <p>Best enjoyed neat or lightly chilled.</p>
             ))}
           {tab === "reviews" && (
-            <div className="space-y-6">
-              {reviews.map((r) => (
-                <article key={r.id} className="border border-white/5 p-4">
-                  <div className="flex items-center gap-2">
-                    <span className="text-cream">{r.userName}</span>
-                    {r.verified && <Badge>Verified purchase</Badge>}
-                  </div>
-                  <p className="mt-1 text-sm text-gold">
-                    {"★".repeat(r.rating)} {r.title}
-                  </p>
-                  <p className="mt-2 text-sm">{r.body}</p>
-                  {r.images?.[0] && (
-                    <div className="relative mt-3 h-24 w-24">
-                      <SmartImage src={r.images[0]} alt="" fill className="object-cover" />
-                    </div>
-                  )}
-                </article>
-              ))}
-              {!reviews.length && <p>No reviews yet.</p>}
+            <div className="space-y-8">
+              <ReviewForm
+                targetType="product"
+                productId={product.id}
+                locationId={branchId}
+                onCreated={(review) => setReviews((prev) => [review, ...prev])}
+              />
+              <ReviewList reviews={reviews} />
             </div>
           )}
         </div>

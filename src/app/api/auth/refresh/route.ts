@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { fetchUserById } from "@/lib/db/queries";
+import { fetchSessionUser } from "@/lib/db/queries";
 import {
   applyAuthCookies,
   authConfigErrorResponse,
@@ -31,7 +31,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const user = await fetchUserById(refresh.sub);
+    const user = await fetchSessionUser(refresh.sub);
     if (!user || user.active === false) {
       return clearAuthCookies(
         NextResponse.json({ error: "Account is not available." }, { status: 401 }),

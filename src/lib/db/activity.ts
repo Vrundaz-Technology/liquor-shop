@@ -151,7 +151,8 @@ export async function fetchActivityLogs(filters: {
     ...(andParts.length ? { AND: andParts } : {}),
   };
 
-  const limit = Math.min(100, Math.max(1, filters.limit ?? 50));
+  const limitCap = (filters.limit ?? 50) > 100 ? 2000 : 100;
+  const limit = Math.min(limitCap, Math.max(1, filters.limit ?? 50));
   const offset = Math.max(0, filters.offset ?? 0);
   const dir = filters.sortDir === "asc" ? "asc" : "desc";
   const orderBy: Prisma.ActivityLogOrderByWithRelationInput =
@@ -161,7 +162,11 @@ export async function fetchActivityLogs(filters: {
         ? { action: dir }
         : filters.sortKey === "entity"
           ? { entityType: dir }
-          : { createdAt: dir }; // when / default
+          : filters.sortKey === "location"
+            ? { locationId: dir }
+            : filters.sortKey === "changes" || filters.sortKey === "summary"
+              ? { summary: dir }
+              : { createdAt: dir }; // when / default
 
   const [rows, total] = await Promise.all([
     prisma.activityLog.findMany({

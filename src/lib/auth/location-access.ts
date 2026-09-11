@@ -55,11 +55,18 @@ export function sanitizeAssignedLocations(
   requested: readonly string[] | null | undefined,
   knownIds: readonly string[],
 ) {
-  const normalized = normalizeAllowedLocationIds(role, requested);
-  if (normalized == null) return null;
   const actorIds = hasAllLocationAccess(actor)
     ? new Set(knownIds)
     : new Set((actor.allowedLocationIds ?? []).filter((id) => knownIds.includes(id)));
+
+  const normalized = normalizeAllowedLocationIds(role, requested);
+  // Limited actors cannot grant org-wide access via null/"all stores".
+  if (normalized == null) {
+    if (hasAllLocationAccess(actor)) return null;
+    const scoped = knownIds.filter((id) => actorIds.has(id));
+    return scoped.length ? scoped : null;
+  }
+
   const next = normalized.filter((id) => actorIds.has(id));
   return next.length ? next : null;
 }

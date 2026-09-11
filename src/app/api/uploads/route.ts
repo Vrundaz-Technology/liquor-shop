@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { mkdir, writeFile } from "fs/promises";
 import path from "path";
-import { requireStaff } from "@/lib/auth/require";
+import { requireUser } from "@/lib/auth/require";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 const MAX_BYTES = 4 * 1024 * 1024;
@@ -31,7 +31,8 @@ function sniffImage(buffer: Buffer): "jpg" | "png" | "webp" | null {
 
 export async function POST(request: Request) {
   try {
-    const { error } = await requireStaff();
+    // Any signed-in user may upload (avatars for customers; catalog images for staff).
+    const { error } = await requireUser();
     if (error) return error;
     const limited = rateLimit(`uploads:${clientIp(request)}`, { limit: 20, windowMs: 60_000 });
     if (!limited.ok) {

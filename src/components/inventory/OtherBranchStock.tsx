@@ -1,8 +1,8 @@
 "use client";
 
 import { MapPin } from "lucide-react";
-import { useBranchStore } from "@/store/branch";
 import { addToCart } from "@/lib/add-to-cart";
+import { switchShoppingStore } from "@/lib/switch-store";
 import { useInventoryStore } from "@/store/inventory";
 import { otherLocationsForDemand } from "@/lib/cart-availability";
 import { cn } from "@/lib/utils";
@@ -31,8 +31,7 @@ export function OtherBranchStock({
 }: Props) {
   const revision = useInventoryStore((s) => s.revision);
   const onHand =
-    localStock ?? useInventoryStore.getState().getOnHand(branchId, productId);
-  const setBranch = useBranchStore((s) => s.setBranch);
+    localStock ?? useInventoryStore.getState().getAvailable(branchId, productId);
   void revision;
 
   const needed = Math.max(1, quantity);
@@ -40,7 +39,7 @@ export function OtherBranchStock({
   if (!alts.length) return null;
 
   const switchTo = (locationId: string) => {
-    setBranch(locationId);
+    switchShoppingStore(locationId);
     if (addOnSwitch && addOnSwitch > 0) addToCart(productId, addOnSwitch);
   };
 

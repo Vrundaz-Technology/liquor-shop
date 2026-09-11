@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { Pencil, Plus, Trash2 } from "lucide-react";
+import { Eye, LayoutGrid, Pencil, Table2, Trash2 } from "lucide-react";
 import {
   apiCreateRole,
   apiDeleteRole,
@@ -10,21 +10,28 @@ import {
 } from "@/lib/api-mutations";
 import type { CustomRoleDefinition } from "@/lib/auth/role-catalog";
 import { setCustomRoleCatalog } from "@/lib/auth/role-catalog";
-import { hasPermission, type Permission } from "@/lib/auth/permissions";
-import { roleLabel, USER_ROLES } from "@/lib/auth/roles";
+import { hasPermission, rolePermissions, type Permission } from "@/lib/auth/permissions";
+import { ROLE_BLURBS, roleLabel } from "@/lib/auth/roles";
 import { isConnectionError } from "@/lib/connection-messages";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
-import {
-  RolePermissionsIntro,
-  RolePermissionsMatrix,
-} from "@/components/dashboard/RolePermissionsMatrix";
 import { UserPermissionEditor } from "@/components/dashboard/UserPermissionEditor";
 import { useUserStore } from "@/store/user";
 import { isDbConnected } from "@/lib/runtime-data";
+import { usePersistedViewMode } from "@/hooks/usePersistedViewMode";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
+import {
+  compareValues,
+  SortableTh,
+  tableCellClass,
+  tableHeadRowClass,
+  tableRowClass,
+  tableWrapClass,
+  useTableSort,
+} from "@/components/ui/SortableTh";
 import { cn } from "@/lib/utils";
+import type { UserRole } from "@/types";
 
 type RoleForm = {
   label: string;
@@ -32,6 +39,20 @@ type RoleForm = {
   description: string;
   permissions: Permission[];
 };
+
+type DirectoryRole = {
+  key: string;
+  label: string;
+  slug: string;
+  description: string;
+  permissionCount: number;
+  kind: "built-in" | "custom";
+  custom?: CustomRoleDefinition;
+};
+
+const ROLES_VIEW_KEY = "sams.dashboard.view.roles";
+
+const BUILTIN_AFTER_CUSTOM: UserRole[] = ["customer", "staff", "admin"];
 
 function emptyForm(): RoleForm {
   return { label: "", slug: "", description: "", permissions: [] };
@@ -46,19 +67,50 @@ function validateForm(form: RoleForm) {
   return null;
 }
 
+function builtInEntry(role: UserRole): DirectoryRole {
+  return {
+    key: role,
+    label: roleLabel(role),
+    slug: role,
+    description: ROLE_BLURBS[role],
+    permissionCount: rolePermissions(role).length,
+    kind: "built-in",
+  };
+}
+
 type Props = {
   highlight?: string;
+  /** When true on mount/update, opens the create-role modal once. */
+  autoOpenCreate?: boolean;
+  onCreateOpened?: () => void;
 };
 
-export function CustomRolesPanel({ highlight }: Props) {
+export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: Props) {
   const actor = useUserStore((s) => s.profile);
   const canManage = hasPermission(actor, "users.assign_roles");
   const [customRoles, setCustomRoles] = useState<CustomRoleDefinition[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState<CustomRoleDefinition | "new" | null>(null);
+  const [viewing, setViewing] = useState<DirectoryRole | null>(null);
   const [form, setForm] = useState<RoleForm>(emptyForm());
   const [busy, setBusy] = useState(false);
+  const [view, setView] = usePersistedViewMode(ROLES_VIEW_KEY, "cards");
+  const { sortKey, sortDir, toggleSort } = useTableSort<
+    "label" | "slug" | "kind" | "permissions" | "description"
+  >("label");
+
+  const openCreate = () => {
+    setForm(emptyForm());
+    setEditing("new");
+    setError("");
+  };
+
+  useEffect(() => {
+    if (!autoOpenCreate || !canManage) return;
+    openCreate();
+    onCreateOpened?.();
+  }, [autoOpenCreate, canManage, onCreateOpened]);
 
   const load = async () => {
     if (!isDbConnected()) {
@@ -85,16 +137,45 @@ export function CustomRolesPanel({ highlight }: Props) {
     void load();
   }, []);
 
-  const matrixRoles = useMemo(
-    () => [...USER_ROLES, ...customRoles.map((role) => role.slug)],
-    [customRoles],
-  );
+  const directory = useMemo((): DirectoryRole[] => {
+    const customs = [...customRoles]
+      .sort((a, b) => a.label.localeCompare(b.label))
+      .map(
+        (role): DirectoryRole => ({
+          key: role.id,
+          label: role.label,
+          slug: role.slug,
+          description: role.description || "Custom role with a tailored permission set.",
+          permissionCount: role.permissions.length,
+          kind: "custom",
+          custom: role,
+        }),
+      );
 
-  const openCreate = () => {
-    setForm(emptyForm());
-    setEditing("new");
-    setError("");
-  };
+    return [
+      builtInEntry("owner"),
+      ...customs,
+      ...BUILTIN_AFTER_CUSTOM.map(builtInEntry),
+    ];
+  }, [customRoles]);
+
+  const sortedDirectory = useMemo(() => {
+    return [...directory].sort((a, b) => {
+      switch (sortKey) {
+        case "slug":
+          return compareValues(a.slug, b.slug, sortDir);
+        case "kind":
+          return compareValues(a.kind, b.kind, sortDir);
+        case "permissions":
+          return compareValues(a.permissionCount, b.permissionCount, sortDir);
+        case "description":
+          return compareValues(a.description, b.description, sortDir);
+        case "label":
+        default:
+          return compareValues(a.label, b.label, sortDir);
+      }
+    });
+  }, [directory, sortDir, sortKey]);
 
   const openEdit = (role: CustomRoleDefinition) => {
     setForm({
@@ -152,78 +233,283 @@ export function CustomRolesPanel({ highlight }: Props) {
     }
   };
 
+  const renderActions = (entry: DirectoryRole, opts?: { hideYou?: boolean }) => {
+    const isYou = highlight === entry.slug;
+    const canEditDelete = entry.kind === "custom" && Boolean(entry.custom) && canManage;
+
+    const youBadge =
+      isYou && !opts?.hideYou ? (
+        <span className="text-[10px] uppercase tracking-[0.14em] text-gold">You</span>
+      ) : null;
+
+    if (canEditDelete) {
+      return (
+        <div className="flex shrink-0 items-center gap-2">
+          {youBadge}
+          <div className="flex gap-1">
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-(--gold)/40 hover:text-cream"
+              aria-label={`Edit ${entry.label}`}
+              onClick={() => openEdit(entry.custom!)}
+            >
+              <Pencil size={14} />
+            </button>
+            <button
+              type="button"
+              className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-red-400/40 hover:text-red-200"
+              aria-label={`Delete ${entry.label}`}
+              onClick={() => void remove(entry.custom!)}
+              disabled={busy}
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex shrink-0 items-center gap-2">
+        {youBadge}
+        <button
+          type="button"
+          className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-(--gold)/40 hover:text-cream"
+          aria-label={`View ${entry.label}`}
+          onClick={() => setViewing(entry)}
+        >
+          <Eye size={14} />
+        </button>
+      </div>
+    );
+  };
+
+  const viewingPermissions = viewing
+    ? viewing.kind === "custom" && viewing.custom
+      ? viewing.custom.permissions
+      : rolePermissions(viewing.slug)
+    : [];
+
   return (
     <div className="mt-5 space-y-4">
-      <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <RolePermissionsIntro />
-        {canManage ? (
-          <Button size="sm" className="shrink-0 self-start" onClick={openCreate}>
-            <Plus size={14} />
-            Add role
-          </Button>
-        ) : null}
-      </div>
-
       {!isDbConnected() ? (
         <ConnectionNotice className="mt-2" feature="save custom roles" preview />
       ) : null}
       {error && !editing ? <p className="text-sm text-red-300">{error}</p> : null}
 
-      {customRoles.length > 0 ? (
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
-          {customRoles.map((role) => (
-            <article
-              key={role.id}
-              className="flex min-h-[120px] flex-col border border-white/10 bg-white/[0.02] px-4 py-3"
+      <section>
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <h4 className="text-[10px] uppercase tracking-[0.16em] text-muted">Role directory</h4>
+          <div
+            className="inline-flex shrink-0 self-start rounded-sm border border-white/10 p-0.5 sm:self-auto"
+            role="group"
+            aria-label="Role directory view"
+          >
+            <button
+              type="button"
+              onClick={() => setView("cards")}
+              className={cn(
+                "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
+                view === "cards" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
+              )}
+              aria-pressed={view === "cards"}
             >
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <p className="truncate text-sm text-cream">{role.label}</p>
-                  <p className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
-                    {role.slug}
-                  </p>
-                </div>
-                {canManage ? (
-                  <div className="flex shrink-0 gap-1">
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-(--gold)/40 hover:text-cream"
-                      aria-label={`Edit ${role.label}`}
-                      onClick={() => openEdit(role)}
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      type="button"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-red-400/40 hover:text-red-200"
-                      aria-label={`Delete ${role.label}`}
-                      onClick={() => void remove(role)}
-                      disabled={busy}
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                  </div>
-                ) : null}
-              </div>
-              <p className="mt-2 flex-1 text-[12px] leading-5 text-muted line-clamp-3">
-                {role.description || "Custom role with a tailored permission set."}
-              </p>
-              <p className="mt-3 text-[10px] uppercase tracking-[0.14em] text-gold">
-                {role.permissions.length} permission{role.permissions.length === 1 ? "" : "s"}
-              </p>
-            </article>
-          ))}
+              <LayoutGrid size={14} aria-hidden />
+              Cards
+            </button>
+            <button
+              type="button"
+              onClick={() => setView("table")}
+              className={cn(
+                "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
+                view === "table" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
+              )}
+              aria-pressed={view === "table"}
+            >
+              <Table2 size={14} aria-hidden />
+              Table
+            </button>
+          </div>
         </div>
-      ) : loading ? (
-        <p className="text-sm text-muted">Loading custom roles…</p>
-      ) : isDbConnected() ? (
-        <p className="rounded-sm border border-dashed border-white/10 px-4 py-5 text-sm text-muted">
-          No custom roles yet. Built-in roles are always available — add one when you need a
-          tailored permission set for your team.
-        </p>
-      ) : null}
 
-      <RolePermissionsMatrix highlight={highlight} roles={matrixRoles} />
+        {loading ? (
+          <p className="mt-3 text-sm text-muted">Loading roles…</p>
+        ) : view === "cards" ? (
+          <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {sortedDirectory.map((entry) => {
+              const active = highlight === entry.slug;
+              return (
+                <article
+                  key={entry.key}
+                  className={cn(
+                    "flex min-h-[120px] flex-col border px-4 py-3 sm:min-h-[132px]",
+                    active
+                      ? "border-(--gold)/45 bg-(--gold)/8"
+                      : "border-white/10 bg-white/[0.02]",
+                  )}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="truncate text-sm text-cream">{entry.label}</p>
+                      <p className="mt-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
+                        {entry.slug}
+                      </p>
+                    </div>
+                    {renderActions(entry)}
+                  </div>
+                  <p className="mt-2 flex-1 text-[12px] leading-5 text-muted line-clamp-3">
+                    {entry.description}
+                  </p>
+                  <div className="mt-3 flex items-center justify-between gap-2">
+                    <p className="text-[10px] uppercase tracking-[0.14em] text-gold">
+                      {entry.permissionCount} permission
+                      {entry.permissionCount === 1 ? "" : "s"}
+                    </p>
+                    <span className="text-[10px] uppercase tracking-[0.12em] text-muted">
+                      {entry.kind === "built-in" ? "Built-in" : "Custom"}
+                    </span>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+        ) : (
+          <div className={`mt-3 ${tableWrapClass}`}>
+            <table className="w-full min-w-[44rem] text-left text-sm">
+              <thead>
+                <tr className={tableHeadRowClass}>
+                  <SortableTh
+                    label="Role"
+                    column="label"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <SortableTh
+                    label="Slug"
+                    column="slug"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <SortableTh
+                    label="Type"
+                    column="kind"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <SortableTh
+                    label="Permissions"
+                    column="permissions"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <SortableTh
+                    label="Description"
+                    column="description"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                  />
+                  <th className="px-4 py-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortedDirectory.map((entry) => {
+                  const active = highlight === entry.slug;
+                  return (
+                    <tr
+                      key={entry.key}
+                      className={cn(tableRowClass, active && "bg-(--gold)/8")}
+                    >
+                      <td className={cn(tableCellClass, "font-medium text-cream")}>
+                        <span className="inline-flex items-center gap-2">
+                          {entry.label}
+                          {active ? (
+                            <span className="text-[10px] uppercase tracking-[0.14em] text-gold">
+                              You
+                            </span>
+                          ) : null}
+                        </span>
+                      </td>
+                      <td className={cn(tableCellClass, "uppercase tracking-wider text-muted")}>
+                        {entry.slug}
+                      </td>
+                      <td className={cn(tableCellClass, "text-muted")}>
+                        {entry.kind === "built-in" ? "Built-in" : "Custom"}
+                      </td>
+                      <td className={cn(tableCellClass, "tabular-nums text-gold")}>
+                        {entry.permissionCount}
+                      </td>
+                      <td className={cn(tableCellClass, "max-w-[18rem] text-muted")}>
+                        <span className="line-clamp-2">{entry.description}</span>
+                      </td>
+                      <td className={cn(tableCellClass, "text-right")}>
+                        <div className="inline-flex justify-end">
+                          {renderActions(entry, { hideYou: true })}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      <Modal
+        open={Boolean(viewing)}
+        title={viewing ? viewing.label : "View role"}
+        subtitle={
+          viewing
+            ? viewing.kind === "built-in"
+              ? "Built-in role — defaults are fixed. Per-user extras still work in Edit profile."
+              : "Read-only preview of this role’s default permissions."
+            : undefined
+        }
+        onClose={() => setViewing(null)}
+        className="sm:max-w-2xl"
+      >
+        {viewing ? (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-sm border border-white/10 bg-white/[0.02] px-3 py-3">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-muted">Slug</p>
+                <p className="mt-1 text-sm uppercase tracking-wider text-cream">{viewing.slug}</p>
+              </div>
+              <div className="rounded-sm border border-white/10 bg-white/[0.02] px-3 py-3">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-muted">Type</p>
+                <p className="mt-1 text-sm text-cream">
+                  {viewing.kind === "built-in" ? "Built-in" : "Custom"}
+                  <span className="ml-2 text-gold">
+                    {viewing.permissionCount} permission
+                    {viewing.permissionCount === 1 ? "" : "s"}
+                  </span>
+                </p>
+              </div>
+            </div>
+            <p className="text-sm leading-6 text-muted">{viewing.description}</p>
+            <div className="rounded-sm border border-white/10 bg-white/[0.02] px-3 py-3">
+              <UserPermissionEditor
+                role={viewing.slug}
+                mode={viewing.kind === "custom" ? "template" : "user"}
+                enabled={viewingPermissions}
+                actor={actor}
+                locked
+                onChange={() => undefined}
+              />
+            </div>
+            <div className="flex justify-end border-t border-white/10 pt-4">
+              <Button type="button" variant="secondary" onClick={() => setViewing(null)}>
+                Close
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </Modal>
 
       <Modal
         open={Boolean(editing)}
@@ -272,6 +558,7 @@ export function CustomRolesPanel({ highlight }: Props) {
             <div className="mt-2 rounded-sm border border-white/10 p-3">
               <UserPermissionEditor
                 role="__custom__"
+                mode="template"
                 enabled={form.permissions}
                 actor={actor}
                 onChange={(permissions) =>
@@ -287,7 +574,7 @@ export function CustomRolesPanel({ highlight }: Props) {
             <Button type="button" variant="secondary" disabled={busy} onClick={() => setEditing(null)}>
               Cancel
             </Button>
-            <Button type="submit" disabled={busy}>
+            <Button type="submit" loading={busy}>
               {busy ? "Saving…" : editing === "new" ? "Create role" : "Save role"}
             </Button>
           </div>

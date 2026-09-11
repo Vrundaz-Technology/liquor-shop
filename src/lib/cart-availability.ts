@@ -1,6 +1,6 @@
 import { getAllLocations, getLocationById } from "@/data/locations";
 import { getProductById, products } from "@/data/products";
-import { getLiveStock, useInventoryStore } from "@/store/inventory";
+import { getLiveStock } from "@/store/inventory";
 import type { CartItem, Product, StoreLocation } from "@/types";
 
 export type CartLineAvailability = {
@@ -33,8 +33,22 @@ export type CartAvailability = {
 };
 
 export function getAvailableStock(locationId: string, productId: string) {
-  if (useInventoryStore.getState().isHidden(locationId, productId)) return 0;
   return getLiveStock(locationId, productId);
+}
+
+export function locationCoversCart(
+  items: Pick<CartItem, "productId" | "quantity">[],
+  locationId: string,
+) {
+  if (!items.length) return true;
+  return items.every((item) => getAvailableStock(locationId, item.productId) >= item.quantity);
+}
+
+export function findLocationsCoveringCart(
+  items: Pick<CartItem, "productId" | "quantity">[],
+) {
+  if (!items.length) return getAllLocations();
+  return getAllLocations().filter((loc) => locationCoversCart(items, loc.id));
 }
 
 export function analyzeCartAvailability(
@@ -63,6 +77,10 @@ export function analyzeCartAvailability(
   const available = lines.filter((l) => l.available);
   const unavailable = lines.filter((l) => !l.available);
 
+  const covering = findLocationsCoveringCart(items);
+  const fullCoverageLocation =
+    covering.find((l) => l.id === branchId) ?? covering[0] ?? null;
+
   const betterLocations: LocationCoverage[] = getAllLocations()
     .map((loc) => {
       let availableCount = 0;
@@ -88,9 +106,6 @@ export function analyzeCartAvailability(
       return a.missingCount - b.missingCount;
     });
 
-  // Prefer other branches that cover the full cart for suggestions
-  const fullOther = betterLocations.find((c) => c.coversAll)?.location ?? null;
-
   return {
     branchId,
     branch,
@@ -99,7 +114,10 @@ export function analyzeCartAvailability(
     unavailable,
     hasConflicts: unavailable.length > 0,
     betterLocations,
-    fullCoverageLocation: fullOther,
+    fullCoverageLocation:
+      fullCoverageLocation && fullCoverageLocation.id !== branchId
+        ? fullCoverageLocation
+        : betterLocations.find((c) => c.coversAll)?.location ?? null,
   };
 }
 

@@ -219,5 +219,8 @@ export function getPriceForLocation(locationId: string, productId: string) {
   const product = productData().getProductById(productId);
   const stock = getStock(locationId, productId);
   if (!product) return 0;
-  return stock?.promoPrice ?? product.price;
+  if (stock?.salePrice != null && stock.salePrice > 0) return stock.salePrice;
+  if (stock?.promoPrice != null && stock.promoPrice > 0) return stock.promoPrice;
+  if (stock?.basePrice != null && stock.basePrice > 0) return stock.basePrice;
+  return product.price;
 }

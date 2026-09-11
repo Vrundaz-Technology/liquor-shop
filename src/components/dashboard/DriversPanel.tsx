@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
+import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { AvatarUpload } from "@/components/ui/AvatarUpload";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import {
@@ -103,7 +104,9 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
   const dbReady = isDbConnected();
   const canManage = hasPermission(actor, "deliveries.manage");
 
-  const { sortKey, sortDir, toggleSort } = useTableSort<"name" | "store" | "status">("name");
+  const { sortKey, sortDir, toggleSort } = useTableSort<"name" | "store" | "vehicle" | "contact" | "status">(
+    "name",
+  );
 
   const load = async () => {
     setLoading(true);
@@ -139,6 +142,14 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
         const storeA = stores.find((store) => store.id === a.locationId)?.shortName ?? a.locationId;
         const storeB = stores.find((store) => store.id === b.locationId)?.shortName ?? b.locationId;
         if (sortKey === "store") return compareValues(storeA, storeB, sortDir);
+        if (sortKey === "vehicle") return compareValues(a.vehicle, b.vehicle, sortDir);
+        if (sortKey === "contact") {
+          return compareValues(
+            `${a.phone} ${a.email ?? ""}`,
+            `${b.phone} ${b.email ?? ""}`,
+            sortDir,
+          );
+        }
         if (sortKey === "status") return compareValues(a.status, b.status, sortDir);
         return compareValues(a.name, b.name, sortDir);
       });
@@ -330,11 +341,43 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
         </label>
       </div>
 
+      <ActiveFiltersBar
+        className="mt-3"
+        resultCount={filteredDrivers.length}
+        resultNoun="driver"
+        chips={[
+          ...(storeFilter !== "all"
+            ? [
+                {
+                  id: "store",
+                  label: stores.find((s) => s.id === storeFilter)?.shortName ?? storeFilter,
+                  onRemove: () => setStoreFilter("all"),
+                },
+              ]
+            : []),
+          ...(!showInactive
+            ? [
+                {
+                  id: "active",
+                  label: "Active only",
+                  onRemove: () => setShowInactive(true),
+                },
+              ]
+            : []),
+        ]}
+        onClearAll={() => {
+          setStoreFilter("all");
+          setShowInactive(true);
+        }}
+      />
+
       <MobileSortBar
         className="mt-5 lg:hidden"
         columns={[
           { key: "name", label: "Driver" },
           { key: "store", label: "Store" },
+          { key: "vehicle", label: "Vehicle" },
+          { key: "contact", label: "Contact" },
           { key: "status", label: "Status" },
         ]}
         sortKey={sortKey}
@@ -411,8 +454,8 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
             <tr className={tableHeadRowClass}>
               <SortableTh label="Driver" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Store" column="store" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th className="px-4 py-3 font-medium">Vehicle</th>
-              <th className="px-4 py-3 font-medium">Contact</th>
+              <SortableTh label="Vehicle" column="vehicle" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Contact" column="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <th className="px-4 py-3 text-right font-medium">Action</th>
             </tr>
@@ -571,7 +614,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
             <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setEditing(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" className="w-full sm:w-auto" disabled={busy}>
+            <Button type="submit" className="w-full sm:w-auto" loading={busy}>
               {busy ? "Saving…" : editing === "new" ? "Add driver" : "Save driver"}
             </Button>
           </div>

@@ -9,12 +9,14 @@ import { formatPrice } from "@/lib/utils";
 import { useWishlistStore } from "@/store/wishlist";
 import { useCartStore } from "@/store/cart";
 import { addToCart } from "@/lib/add-to-cart";
+import { switchShoppingStore } from "@/lib/switch-store";
 import { useBranchStore } from "@/store/branch";
 import { useLiveOnHand } from "@/hooks/useHydratedInventory";
 import { getLocationById, getPriceForLocation } from "@/data/locations";
 import { LOW_STOCK_THRESHOLD } from "@/lib/inventory";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { OtherBranchStock } from "@/components/inventory/OtherBranchStock";
 import { LocationStockStrip } from "@/components/inventory/LocationStockStrip";
 import { cn } from "@/lib/utils";
@@ -122,7 +124,8 @@ export function ProductCard({
             {product.name}
           </h3>
           <p className="mt-1 hidden text-xs text-[var(--muted)] sm:block">
-            {product.origin} · {product.abv}% ABV
+            {product.origin} · {product.abv}%{" "}
+            <AbbrTooltip term="ABV" />
           </p>
           <div className="mt-1.5 flex items-baseline gap-2 sm:mt-2">
             <span className="text-sm text-[var(--gold)] sm:text-base">
@@ -134,6 +137,12 @@ export function ProductCard({
               </span>
             )}
           </div>
+          {product.reviewCount > 0 ? (
+            <p className="mt-1 text-[11px] text-[var(--muted)]">
+              ★ {product.rating.toFixed(1)} · {product.reviewCount} review
+              {product.reviewCount === 1 ? "" : "s"}
+            </p>
+          ) : null}
           <p className="mt-1 text-[11px] text-[var(--muted)]">
             {onHand} at {branchName}
             {cartQty ? ` · ${cartQty} in cart` : ""}
@@ -171,7 +180,7 @@ export function ProductCard({
             className="min-h-10 w-full shrink-0 touch-manipulation sm:min-h-0"
             onClick={() => {
               if (locationId && locationId !== selectedBranch) {
-                useBranchStore.getState().setBranch(locationId);
+                switchShoppingStore(locationId);
               }
               addToCart(product.id);
             }}

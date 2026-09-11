@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 import { Header } from "@/components/layout/Header";
 import { Footer } from "@/components/layout/Footer";
 import { CartAddedToast } from "@/components/cart/CartAddedToast";
+import { CartAbandonedSync } from "@/components/cart/CartAbandonedSync";
 import { WishlistAddedToast } from "@/components/wishlist/WishlistAddedToast";
 import { AgeGate } from "@/components/layout/AgeGate";
 
@@ -12,12 +13,29 @@ export function SiteChrome({ children }: { children: React.ReactNode }) {
   const bare = pathname === "/prototype" || pathname.startsWith("/prototype/");
   const immersive = pathname.startsWith("/virtual-store");
   const isDashboard = pathname.startsWith("/dashboard");
+  const isAccount = pathname.startsWith("/account");
 
   if (bare) {
     return (
       <main id="main" className="min-h-screen">
         {children}
       </main>
+    );
+  }
+
+  if (isDashboard) {
+    return (
+      <>
+        <a
+          href="#main"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-[100] focus:rounded-sm focus:bg-(--bg-elevated) focus:px-3 focus:py-2 focus:text-sm focus:text-cream"
+        >
+          Skip to content
+        </a>
+        <main id="main" className="min-h-[100dvh]">
+          {children}
+        </main>
+      </>
     );
   }
 
@@ -34,9 +52,10 @@ export function SiteChrome({ children }: { children: React.ReactNode }) {
       >
         {children}
       </main>
-      {!immersive && !isDashboard && <Footer />}
+      {!immersive && !isAccount && <Footer />}
       <CartAddedToast />
       <WishlistAddedToast />
+      <CartAbandonedSync />
       <AgeGate />
     </>
   );

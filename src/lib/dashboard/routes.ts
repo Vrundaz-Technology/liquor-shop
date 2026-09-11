@@ -5,10 +5,17 @@ export type DashboardSection =
   | "pos"
   | "orders"
   | "inventory"
+  | "transfers"
   | "locations"
   | "events"
+  | "reviews"
+  | "support"
   | "activity"
+  | "cron"
   | "users"
+  | "customers"
+  | "promotions"
+  | "loyalty"
   | "deliveries"
   | "profile";
 
@@ -17,10 +24,17 @@ export const DASHBOARD_SECTION_PATHS: Record<DashboardSection, string> = {
   pos: "/dashboard/pos",
   orders: "/dashboard/orders",
   inventory: "/dashboard/inventory",
+  transfers: "/dashboard/transfers",
   locations: "/dashboard/locations",
   events: "/dashboard/events",
+  reviews: "/dashboard/reviews",
+  support: "/dashboard/support",
   activity: "/dashboard/activity",
+  cron: "/dashboard/cron",
   users: "/dashboard/users",
+  customers: "/dashboard/customers",
+  promotions: "/dashboard/promotions",
+  loyalty: "/dashboard/loyalty",
   deliveries: "/dashboard/deliveries",
   profile: "/dashboard/profile",
 };
@@ -29,10 +43,17 @@ const SECTION_BY_SEGMENT: Record<string, DashboardSection> = {
   pos: "pos",
   orders: "orders",
   inventory: "inventory",
+  transfers: "transfers",
   locations: "locations",
   events: "events",
+  reviews: "reviews",
+  support: "support",
   activity: "activity",
+  cron: "cron",
   users: "users",
+  customers: "customers",
+  promotions: "promotions",
+  loyalty: "loyalty",
   deliveries: "deliveries",
   profile: "profile",
 };
@@ -46,8 +67,8 @@ export const DASHBOARD_SECTION_META: {
   {
     id: "overview",
     label: "Overview",
-    permission: "dashboard.overview",
-    description: "Sales, order health, and branch performance across Sam's locations.",
+    permission: "analytics.view",
+    description: "Sales, order health, and branch performance across your organization.",
   },
   {
     id: "pos",
@@ -68,22 +89,58 @@ export const DASHBOARD_SECTION_META: {
     description: "Manage bottle counts, categories, restock, and products per store.",
   },
   {
+    id: "transfers",
+    label: "Transfers",
+    permission: "inventory.transfer",
+    description: "Move stock between locations with a full transfer history.",
+  },
+  {
     id: "deliveries",
     label: "Deliveries",
     permission: "deliveries.view",
     description: "Assign drivers and track each delivery to the door.",
   },
   {
+    id: "customers",
+    label: "Customers",
+    permission: "customers.view",
+    description: "CRM segments, spend, and customer notes for your organization.",
+  },
+  {
+    id: "promotions",
+    label: "Promotions",
+    permission: "promotions.view",
+    description: "Platform, owner, and location promotions with priority rules.",
+  },
+  {
+    id: "loyalty",
+    label: "Loyalty",
+    permission: "loyalty.view",
+    description: "Organization loyalty earn rates, tiers, and rewards.",
+  },
+  {
     id: "locations",
     label: "Locations",
     permission: "locations.view",
-    description: "Add, edit, or remove stores in the Sam's network.",
+    description: "Add, edit, or remove stores in your organization.",
   },
   {
     id: "events",
     label: "Events",
     permission: "events.view",
     description: "Create and manage tastings, launches, and in-store events.",
+  },
+  {
+    id: "reviews",
+    label: "Reviews",
+    permission: "reviews.view",
+    description: "Centralized product, store, and delivery review management.",
+  },
+  {
+    id: "support",
+    label: "Support",
+    permission: "support.view",
+    description: "Customer support tickets routed to store, owner, or platform.",
   },
   {
     id: "users",
@@ -96,6 +153,12 @@ export const DASHBOARD_SECTION_META: {
     label: "Activity",
     permission: "activity.view",
     description: "Audit trail of stock, orders, catalog, and account changes.",
+  },
+  {
+    id: "cron",
+    label: "Cron Jobs",
+    permission: "activity.view",
+    description: "Scheduled background jobs, why they exist, and run history.",
   },
   {
     id: "profile",
@@ -134,7 +197,6 @@ export type ParsedDashboardRoute = {
 
 export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
   const parts = pathname.replace(/\/+$/, "").split("/").filter(Boolean);
-  // ["dashboard"] | ["dashboard", "pos"] | ["dashboard", "orders", "id"]
   const segment = parts[1];
   const rest = parts.slice(2);
 

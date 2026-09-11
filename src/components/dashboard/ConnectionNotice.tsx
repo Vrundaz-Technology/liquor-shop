@@ -66,10 +66,10 @@ export function ConnectionNotice({ feature, preview = false, className, onConnec
         size="sm"
         variant="secondary"
         className="mt-3 w-full shrink-0 sm:mt-0 sm:w-auto"
-        disabled={checking}
+        loading={checking}
         onClick={() => void checkConnection()}
       >
-        <RefreshCw size={14} className={checking ? "animate-spin" : ""} />
+        {!checking ? <RefreshCw size={14} /> : null}
         {checking ? "Checking…" : "Check connection"}
       </Button>
     </div>
