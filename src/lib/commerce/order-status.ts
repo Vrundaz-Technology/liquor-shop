@@ -38,7 +38,7 @@ const DELIVERY_TRANSITIONS: Record<string, string[]> = {
   new: ["accepted", "preparing", "cancelled"],
   accepted: ["preparing", "cancelled"],
   preparing: ["ready", "cancelled"],
-  ready: ["assigned", "cancelled"],
+  ready: ["assigned", "picked_up", "cancelled"],
   assigned: ["picked_up", "out_for_delivery", "cancelled"],
   picked_up: ["out_for_delivery", "cancelled"],
   out_for_delivery: ["delivered", "cancelled"],

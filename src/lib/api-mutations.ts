@@ -534,6 +534,11 @@ export async function apiCreateLocation(input: {
   email: string;
   description?: string;
   pickupAvailable?: boolean;
+  deliveryAvailable?: boolean;
+  deliveryFee?: number;
+  deliveryFreeMinimum?: number;
+  minimumOrderAmount?: number;
+  taxRate?: number;
   deliveryRadiusKm?: number;
   parking?: string;
   heroImage?: string;
@@ -560,6 +565,11 @@ export async function apiPatchLocation(
     email: string;
     description: string;
     pickupAvailable: boolean;
+    deliveryAvailable?: boolean;
+    deliveryFee?: number;
+    deliveryFreeMinimum?: number;
+    minimumOrderAmount?: number;
+    taxRate?: number;
     deliveryRadiusKm: number;
     parking: string;
     heroImage: string;
@@ -635,6 +645,13 @@ export async function apiFetchDeliveries() {
     orders: Order[];
     linkedDriverId?: string | null;
     canDispatch?: boolean;
+    shipdayConfigured?: boolean;
+    locationDispatch?: {
+      id: string;
+      internalDeliveryEnabled: boolean;
+      shipdayEnabled: boolean;
+      dispatchPolicy: "manual" | "internal_first" | "shipday_always";
+    }[];
   }>("/api/deliveries");
 }
 
@@ -642,6 +659,72 @@ export async function apiAssignDelivery(orderId: string, driverId: string) {
   return apiFetch<{ orderId: string; driver: import("@/types").Driver }>("/api/deliveries", {
     method: "PATCH",
     body: JSON.stringify({ action: "assign", orderId, driverId }),
+  });
+}
+
+export async function apiSendDeliveryToShipday(orderId: string) {
+  return apiFetch<{ orderId: string; shipdayOrderId: string }>("/api/deliveries", {
+    method: "PATCH",
+    body: JSON.stringify({ action: "shipday", orderId }),
+  });
+}
+
+export async function apiFetchShipdaySettings() {
+  return apiFetch<{
+    configured: boolean;
+    apiKeyMasked: string | null;
+    apiKeySource: "organization" | "env" | "none";
+    webhookSecretSet: boolean;
+    webhookSecretSource: "organization" | "env" | "none";
+    webhookUrl: string;
+  }>("/api/settings/shipday");
+}
+
+export async function apiSaveShipdaySettings(input: { apiKey?: string; webhookSecret?: string }) {
+  return apiFetch<{
+    configured: boolean;
+    apiKeyMasked: string | null;
+    webhookSecretSet: boolean;
+    webhookUrl: string;
+  }>("/api/settings/shipday", {
+    method: "PATCH",
+    body: JSON.stringify(input),
+  });
+}
+
+export async function apiFetchDeliverySettings() {
+  return apiFetch<{
+    locations: {
+      id: string;
+      shortName: string;
+      name: string;
+      pickupAvailable: boolean;
+      deliveryAvailable: boolean;
+      internalDeliveryEnabled: boolean;
+      shipdayEnabled: boolean;
+      dispatchPolicy: "manual" | "internal_first" | "shipday_always";
+    }[];
+  }>("/api/deliveries/settings");
+}
+
+export async function apiPatchDeliverySettings(input: {
+  locationId: string;
+  pickupAvailable?: boolean;
+  deliveryAvailable?: boolean;
+  internalDeliveryEnabled?: boolean;
+  shipdayEnabled?: boolean;
+  dispatchPolicy?: "manual" | "internal_first" | "shipday_always";
+}) {
+  return apiFetch<{
+    locationId: string;
+    pickupAvailable: boolean;
+    deliveryAvailable: boolean;
+    internalDeliveryEnabled: boolean;
+    shipdayEnabled: boolean;
+    dispatchPolicy: "manual" | "internal_first" | "shipday_always";
+  }>("/api/deliveries/settings", {
+    method: "PATCH",
+    body: JSON.stringify(input),
   });
 }
 

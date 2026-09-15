@@ -32,15 +32,32 @@ export const useDeliveryStore = create<DeliveryState>()(
           },
         })),
       assign: (orderId, driverId) =>
-        set((s) => ({
-          byOrder: {
-            ...s.byOrder,
-            [orderId]: { ...s.byOrder[orderId], driverId, status: "assigned" },
-          },
-          drivers: s.drivers.map((driver) =>
-            driver.id === driverId ? { ...driver, status: "on_route" } : driver,
-          ),
-        })),
+        set((s) => {
+          const previousId = s.byOrder[orderId]?.driverId;
+          return {
+            byOrder: {
+              ...s.byOrder,
+              [orderId]: { ...s.byOrder[orderId], driverId, status: "assigned" },
+            },
+            drivers: s.drivers.map((driver) => {
+              if (driver.id === driverId) {
+                if (!driver.active) return driver;
+                return { ...driver, status: "on_route" };
+              }
+              if (previousId && driver.id === previousId && previousId !== driverId) {
+                const stillBusy = Object.entries(s.byOrder).some(
+                  ([id, row]) =>
+                    id !== orderId &&
+                    row.driverId === previousId &&
+                    row.status !== "delivered" &&
+                    row.status !== "unassigned",
+                );
+                return stillBusy ? driver : { ...driver, status: "available" };
+              }
+              return driver;
+            }),
+          };
+        }),
       setStatus: (orderId, status) =>
         set((s) => {
           const current = s.byOrder[orderId];

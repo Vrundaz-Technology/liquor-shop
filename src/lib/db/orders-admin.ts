@@ -9,6 +9,7 @@ import {
 import { hasPermission } from "@/lib/auth/permissions";
 import { recordActivity } from "@/lib/db/activity";
 import { ensureOrganizationSchema } from "@/lib/db/organization";
+import { ensureDispatchSchema } from "@/lib/db/dispatch-settings";
 import { moneyNumber, moneyOptional } from "@/lib/db/money";
 import {
   canTransitionStatus,
@@ -63,6 +64,9 @@ type OrderListRow = {
   driver_photo: string | null;
   driver_location: string | null;
   driver_status: string | null;
+  delivery_channel: string | null;
+  provider_status: string | null;
+  provider_failed: number | boolean | null;
 };
 
 const STATUS_VALUES = new Set([
@@ -105,6 +109,7 @@ export async function listStoreOrders(
 ): Promise<StoreOrder[]> {
   if (!isDbConfigured()) return [];
   await ensureOrganizationSchema();
+  await ensureDispatchSchema();
 
   const allowAll = hasAllLocationAccess(actor);
   const accessibleIds = accessibleLocations(actor).map((loc) => loc.id);
@@ -177,6 +182,7 @@ export async function listStoreOrders(
     `SELECT o.id, o.user_id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
             o.organization_id, o.subtotal, o.tax_amount, o.discount_amount, o.delivery_fee,
             o.payment_status, o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
+            o.delivery_channel, o.provider_status, o.provider_failed,
             u.name AS customer_name, u.email AS customer_email,
             d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
             d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
@@ -243,6 +249,9 @@ export async function listStoreOrders(
       driverId: row.driver_id ?? undefined,
       driver,
       delivery: parseAddress(row.delivery_address),
+      deliveryChannel: row.delivery_channel === "shipday" ? "shipday" : row.delivery_channel === "internal" ? "internal" : undefined,
+      providerStatus: row.provider_status ?? undefined,
+      providerFailed: row.provider_failed === true || row.provider_failed === 1 || undefined,
       customerId: row.user_id,
       customerName: row.customer_name,
       customerEmail: row.customer_email,

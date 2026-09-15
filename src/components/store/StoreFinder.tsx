@@ -124,7 +124,7 @@ export function StoreFinder({ open, onClose, onSelected }: Props) {
   return (
     <Modal open={open} onClose={onClose} title="Find your store">
       <p className="text-sm text-muted">
-        Enter your ZIP to see nearby Sam&apos;s locations, distance, and delivery windows.
+        Enter your ZIP to see nearby Sam&apos;s locations and distance.
         Product availability follows the store you pick.
       </p>
 
@@ -186,11 +186,7 @@ export function StoreFinder({ open, onClose, onSelected }: Props) {
                         <Truck size={12} aria-hidden />
                         Delivery {row.deliveryEta.label}
                       </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded-sm border border-white/10 px-2 py-1 text-muted">
-                        Delivery unavailable
-                      </span>
-                    )}
+                    ) : null}
                     {row.canPickup ? (
                       <span className="inline-flex items-center gap-1 rounded-sm border border-white/10 px-2 py-1 text-muted">
                         <MapPin size={12} aria-hidden />

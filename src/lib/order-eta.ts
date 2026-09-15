@@ -11,7 +11,8 @@ export function deliveryEtaForStore(
   return eta?.label ?? "30–45 min";
 }
 
-export function pickupEtaForStore(store: StoreLocation): string {
+export function pickupEtaForStore(store: StoreLocation): string | null {
+  if (!store.pickupAvailable) return null;
   const today = store.hours[0];
   if (!today) return "Ready during store hours";
   return `Ready for pickup · open ${today.open}–${today.close}`;

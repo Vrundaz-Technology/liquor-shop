@@ -97,7 +97,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [storeFilter, setStoreFilter] = useState("all");
-  const [showInactive, setShowInactive] = useState(true);
+  const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [editing, setEditing] = useState<Driver | "new" | null>(null);
   const [form, setForm] = useState<DriverForm>(emptyForm(stores[0]?.id ?? "loc1"));
   const [busy, setBusy] = useState(false);
@@ -136,7 +136,11 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
 
   const filteredDrivers = useMemo(() => {
     return drivers
-      .filter((driver) => (showInactive ? true : driver.active))
+      .filter((driver) => {
+        if (statusFilter === "active") return driver.active;
+        if (statusFilter === "inactive") return !driver.active;
+        return true;
+      })
       .filter((driver) => storeFilter === "all" || driver.locationId === storeFilter)
       .sort((a, b) => {
         const storeA = stores.find((store) => store.id === a.locationId)?.shortName ?? a.locationId;
@@ -153,7 +157,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
         if (sortKey === "status") return compareValues(a.status, b.status, sortDir);
         return compareValues(a.name, b.name, sortDir);
       });
-  }, [drivers, showInactive, sortDir, sortKey, storeFilter, stores]);
+  }, [drivers, statusFilter, sortDir, sortKey, storeFilter, stores]);
 
   const openCreate = () => {
     setForm(emptyForm(storeFilter === "all" ? stores[0]?.id ?? "loc1" : storeFilter));
@@ -318,27 +322,27 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
       {error && !editing ? <p className="mt-4 text-sm text-red-300">{error}</p> : null}
 
       <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
-        <label className="block min-w-[10rem] flex-1 text-xs text-muted sm:max-w-xs">
-          Store
-          <Select
-            className="mt-1"
-            value={storeFilter}
-            onChange={setStoreFilter}
-            options={[
-              { value: "all", label: "All stores" },
-              ...stores.map((store) => ({ value: store.id, label: store.shortName })),
-            ]}
-          />
-        </label>
-        <label className="flex min-h-10 items-center gap-2 text-sm text-cream">
-          <input
-            type="checkbox"
-            className="h-4 w-4 accent-(--gold)"
-            checked={showInactive}
-            onChange={(e) => setShowInactive(e.target.checked)}
-          />
-          Show inactive
-        </label>
+        <Select
+          className="min-w-[10rem] flex-1 sm:max-w-xs"
+          label="Store"
+          value={storeFilter}
+          onChange={setStoreFilter}
+          options={[
+            { value: "all", label: "All stores" },
+            ...stores.map((store) => ({ value: store.id, label: store.shortName })),
+          ]}
+        />
+        <Select
+          className="min-w-[10rem] flex-1 sm:max-w-xs"
+          label="Roster"
+          value={statusFilter}
+          onChange={(value) => setStatusFilter(value as "all" | "active" | "inactive")}
+          options={[
+            { value: "all", label: "All drivers" },
+            { value: "active", label: "Active only" },
+            { value: "inactive", label: "Inactive only" },
+          ]}
+        />
       </div>
 
       <ActiveFiltersBar
@@ -355,19 +359,19 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                 },
               ]
             : []),
-          ...(!showInactive
+          ...(statusFilter !== "all"
             ? [
                 {
-                  id: "active",
-                  label: "Active only",
-                  onRemove: () => setShowInactive(true),
+                  id: "status",
+                  label: statusFilter === "active" ? "Active only" : "Inactive only",
+                  onRemove: () => setStatusFilter("all"),
                 },
               ]
             : []),
         ]}
         onClearAll={() => {
           setStoreFilter("all");
-          setShowInactive(true);
+          setStatusFilter("all");
         }}
       />
 
@@ -389,7 +393,11 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
         {loading ? (
           <li className="p-6 text-center text-sm text-muted">Loading drivers…</li>
         ) : filteredDrivers.length === 0 ? (
-          <li className="p-8 text-center text-sm text-muted">No drivers yet.</li>
+          <li className="p-8 text-center text-sm text-muted">
+            {drivers.length === 0
+              ? "No drivers yet."
+              : "No drivers match these filters."}
+          </li>
         ) : (
           filteredDrivers.map((driver) => {
             const store = stores.find((item) => item.id === driver.locationId);
@@ -419,7 +427,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                     </span>
                     {canManage ? (
                       <div className="mt-3 flex flex-wrap gap-2">
-                        <Button size="sm" variant="ghost" className="h-9 px-2.5" onClick={() => openEdit(driver)}>
+                        <Button size="sm" variant="ghost" className="min-h-11 px-3" onClick={() => openEdit(driver)}>
                           <Pencil size={13} />
                           Edit
                         </Button>
@@ -427,8 +435,8 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                           <Button
                             size="sm"
                             variant="secondary"
-                            className="h-9 px-2.5"
-                            disabled={busy || driver.status === "on_route"}
+                            className="min-h-11 px-3"
+                            disabled={busy}
                             onClick={() => void deactivate(driver)}
                           >
                             Deactivate
@@ -449,13 +457,13 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
       </ul>
 
       <div className={`mt-5 hidden lg:block ${tableWrapClass}`}>
-        <table className="w-full min-w-[56rem] text-left text-sm">
+        <table className="w-full min-w-[42rem] text-left text-sm">
           <thead>
             <tr className={tableHeadRowClass}>
               <SortableTh label="Driver" column="name" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Store" column="store" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Vehicle" column="vehicle" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Contact" column="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortableTh label="Contact" column="contact" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="hidden xl:table-cell" />
               <SortableTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <th className="px-4 py-3 text-right font-medium">Action</th>
             </tr>
@@ -471,7 +479,9 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
               <tr>
                 <td colSpan={6} className="px-4 py-12 text-center text-muted">
                   <Truck className="mx-auto mb-3 text-gold/70" size={28} />
-                  No drivers yet.
+                  {drivers.length === 0
+                    ? "No drivers yet."
+                    : "No drivers match these filters."}
                 </td>
               </tr>
             ) : (
@@ -492,7 +502,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                     </td>
                     <td className={tableCellClass}>{store?.shortName ?? driver.locationId}</td>
                     <td className={`${tableCellClass} max-w-[14rem] truncate text-muted`}>{driver.vehicle}</td>
-                    <td className={`${tableCellClass} text-xs text-muted`}>
+                    <td className={`${tableCellClass} hidden text-xs text-muted xl:table-cell`}>
                       <p>{driver.phone}</p>
                       {driver.email ? <p className="mt-0.5">{driver.email}</p> : null}
                     </td>
@@ -509,7 +519,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                     <td className={`${tableCellClass} text-right`}>
                       {canManage ? (
                         <div className="flex justify-end gap-2">
-                          <Button size="sm" variant="ghost" className="h-8 px-2.5" onClick={() => openEdit(driver)}>
+                          <Button size="sm" variant="ghost" className="min-h-10 px-2.5" onClick={() => openEdit(driver)}>
                             <Pencil size={13} />
                             Edit
                           </Button>
@@ -517,14 +527,14 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
                             <Button
                               size="sm"
                               variant="secondary"
-                              className="h-8 px-2.5"
-                              disabled={busy || driver.status === "on_route"}
+                              className="min-h-10 px-2.5"
+                              disabled={busy}
                               onClick={() => void deactivate(driver)}
                             >
                               Deactivate
                             </Button>
                           ) : (
-                            <Button size="sm" variant="secondary" className="h-8 px-2.5" disabled={busy} onClick={() => void reactivate(driver)}>
+                            <Button size="sm" variant="secondary" className="min-h-10 px-2.5" disabled={busy} onClick={() => void reactivate(driver)}>
                               Reactivate
                             </Button>
                           )}

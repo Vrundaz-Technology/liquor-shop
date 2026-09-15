@@ -9,14 +9,16 @@ import { useShallow } from "zustand/react/shallow";
 import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { getProductById } from "@/data/products";
-import { getAllLocations, getPriceForLocation } from "@/data/locations";
+import { getPriceForLocation } from "@/data/locations";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { analyzeCartAvailability } from "@/lib/cart-availability";
 import { useInventoryStore } from "@/store/inventory";
-import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, formatDeliveryPricingSummary } from "@/lib/utils";
+import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, publicFulfillmentSummary } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { BranchAvailabilityPanel } from "@/components/cart/BranchAvailabilityPanel";
+import { FulfillmentModeToggle } from "@/components/cart/FulfillmentModeToggle";
 import { OrderSummaryCard } from "@/components/cart/OrderSummaryCard";
 import { OtherBranchStock } from "@/components/inventory/OtherBranchStock";
 import { LocationStockStrip } from "@/components/inventory/LocationStockStrip";
@@ -62,10 +64,11 @@ export default function CartPage() {
     })),
   );
   const branchId = useBranchStore((s) => s.branchId);
+  const locations = useRuntimeLocations();
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
   const customerLng = useBranchStore((s) => s.customerLng);
-  const branch = getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
+  const branch = locations.find((l) => l.id === branchId) ?? locations[0];
   const isLoggedIn = useUserStore((s) => s.isLoggedIn);
   const profile = useUserStore((s) => s.profile);
   const [code, setCode] = useState(coupon ?? "");
@@ -207,12 +210,33 @@ export default function CartPage() {
   });
   const loyaltyDiscount = loyalty.discount;
   const discount = couponDiscount + loyaltyDiscount;
-  const shippingBase = calculateShipping(subtotal - discount, fulfillment, branch);
-  const shipping = couponQuery.data?.freeDelivery ? 0 : shippingBase;
+  const activeFulfillment: "delivery" | "pickup" | null =
+    fulfillment === "delivery" && branch?.deliveryAvailable
+      ? "delivery"
+      : fulfillment === "pickup" && branch?.pickupAvailable
+        ? "pickup"
+        : branch?.deliveryAvailable
+          ? "delivery"
+          : branch?.pickupAvailable
+            ? "pickup"
+            : null;
+  const shippingBase = calculateShipping(
+    subtotal - discount,
+    activeFulfillment ?? "pickup",
+    branch,
+  );
+  const shipping =
+    couponQuery.data?.freeDelivery && activeFulfillment === "delivery" ? 0 : shippingBase;
   const tax = calculateTax(subtotal - discount, branch);
-  const freeDeliveryGap = amountUntilFreeDelivery(subtotal - discount, branch);
+  const freeDeliveryGap =
+    activeFulfillment === "delivery"
+      ? amountUntilFreeDelivery(subtotal - discount, branch)
+      : null;
   const total = Math.max(0, subtotal - discount + shipping + tax);
-  const canCheckout = lines.length > 0 && !availability.hasConflicts;
+  const canCheckout =
+    lines.length > 0 &&
+    !availability.hasConflicts &&
+    activeFulfillment != null;
 
   useEffect(() => {
     if (loyaltyPointsRedeem > maxRedeemPoints) {
@@ -236,12 +260,13 @@ export default function CartPage() {
   }, [loyaltyQuery.data?.program?.rewards]);
 
   useEffect(() => {
-    if (fulfillment === "delivery" && !branch.deliveryAvailable) {
+    if (!branch) return;
+    if (fulfillment === "delivery" && !branch.deliveryAvailable && branch.pickupAvailable) {
       setFulfillment("pickup");
     } else if (fulfillment === "pickup" && !branch.pickupAvailable && branch.deliveryAvailable) {
       setFulfillment("delivery");
     }
-  }, [branch.deliveryAvailable, branch.pickupAvailable, fulfillment, setFulfillment]);
+  }, [branch, fulfillment, setFulfillment]);
 
   useEffect(() => {
     const pref = profile.preferences?.defaultFulfillment;
@@ -311,7 +336,7 @@ export default function CartPage() {
           Shopping at
         </p>
         <div className="flex flex-wrap gap-2">
-          {getAllLocations().map((loc) => (
+          {locations.map((loc) => (
             <button
               key={loc.id}
               type="button"
@@ -502,33 +527,15 @@ export default function CartPage() {
         <aside className="glass-gold h-fit p-4 sm:p-6 lg:sticky lg:top-[calc(4.5rem+env(safe-area-inset-top,0px))]">
           <p className="text-[10px] uppercase tracking-[0.22em] text-gold">Summary</p>
           <p className="mt-2 text-xs text-muted">
-            Branch: {branch.shortName} · {formatDeliveryPricingSummary(branch)}
+            Branch: {branch.shortName} · {publicFulfillmentSummary(branch)}
           </p>
-          <div className="mt-4 flex gap-2">
-            <button
-              type="button"
-              disabled={!branch.deliveryAvailable}
-              onClick={() => setFulfillment("delivery")}
-              className={`flex-1 py-2 text-xs uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40 ${
-                fulfillment === "delivery"
-                  ? "bg-gold text-black"
-                  : "border border-white/10 text-muted"
-              }`}
-            >
-              Delivery
-            </button>
-            <button
-              type="button"
-              disabled={!branch.pickupAvailable}
-              onClick={() => setFulfillment("pickup")}
-              className={`flex-1 py-2 text-xs uppercase tracking-wider disabled:cursor-not-allowed disabled:opacity-40 ${
-                fulfillment === "pickup"
-                  ? "bg-gold text-black"
-                  : "border border-white/10 text-muted"
-              }`}
-            >
-              Pickup
-            </button>
+          <div className="mt-4">
+            <FulfillmentModeToggle
+              pickupAvailable={Boolean(branch.pickupAvailable)}
+              deliveryAvailable={Boolean(branch.deliveryAvailable)}
+              value={activeFulfillment === "delivery" ? "delivery" : "pickup"}
+              onChange={setFulfillment}
+            />
           </div>
           <div className="mt-4 flex flex-col gap-2 sm:flex-row">
             <Input
@@ -640,22 +647,26 @@ export default function CartPage() {
 
           <OrderSummaryCard
             store={branch}
-            fulfillment={fulfillment}
+            fulfillment={activeFulfillment ?? "pickup"}
             etaLabel={
-              fulfillment === "delivery"
+              activeFulfillment === "delivery"
                 ? deliveryEtaForStore(branch, {
                     lat: customerLat,
                     lng: customerLng,
                     zip: customerZip,
                   })
-                : pickupEtaForStore(branch)
+                : activeFulfillment === "pickup"
+                  ? pickupEtaForStore(branch)
+                  : null
             }
             addressSummary={
-              fulfillment === "delivery"
+              activeFulfillment === "delivery"
                 ? customerZip
                   ? `Delivering near ZIP ${customerZip}`
                   : "Add your ZIP in Find store for a tighter ETA"
-                : `Pickup at ${branch.address}, ${branch.city}`
+                : activeFulfillment === "pickup"
+                  ? `Pickup at ${branch.address}, ${branch.city}`
+                  : "Online pickup and delivery are off for this store"
             }
             paymentSummary="Collected at checkout"
             lines={[
@@ -671,27 +682,43 @@ export default function CartPage() {
                       value: `−${formatPrice(couponDiscount)}`,
                     },
                   ]
-                : couponQuery.data?.freeDelivery
+                : couponQuery.data?.freeDelivery && activeFulfillment === "delivery"
                   ? [{ label: "Delivery", value: "Free with offer", muted: true }]
                   : []),
               ...(loyaltyDiscount > 0
                 ? [{ label: "Loyalty", value: `−${formatPrice(loyaltyDiscount)}` }]
                 : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
               {
-                label: fulfillment === "delivery" ? "Delivery fee" : "Pickup fee",
-                value: shipping === 0 ? "Free" : formatPrice(shipping),
+                label:
+                  activeFulfillment === "delivery"
+                    ? "Delivery fee"
+                    : activeFulfillment === "pickup"
+                      ? "Pickup fee"
+                      : "Fulfillment",
+                value:
+                  activeFulfillment == null
+                    ? "Unavailable"
+                    : shipping === 0
+                      ? "Free"
+                      : formatPrice(shipping),
               },
               { label: "Tax", value: formatPrice(tax) },
               { label: "Total", value: formatPrice(total), emphasis: true },
             ]}
             footer={
               <>
-                {fulfillment === "delivery" && branch ? (
+                {activeFulfillment === "delivery" && branch?.deliveryAvailable ? (
                   <p className="text-[10px] leading-relaxed text-muted">
-                    {formatDeliveryPricingSummary(branch)}
+                    {publicFulfillmentSummary(branch)}
                     {freeDeliveryGap != null
                       ? ` · Add ${formatPrice(freeDeliveryGap)} for free delivery`
                       : ""}
+                  </p>
+                ) : null}
+                {activeFulfillment == null ? (
+                  <p className="mt-4 text-xs leading-relaxed text-amber-200/90">
+                    This store is not taking pickup or delivery online. Choose another branch or
+                    shop in person.
                   </p>
                 ) : null}
                 {availability.hasConflicts ? (

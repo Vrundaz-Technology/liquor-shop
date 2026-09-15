@@ -37,6 +37,7 @@ describe("canTransitionStatus", () => {
   it("allows delivery kitchen flow", () => {
     expect(canTransitionStatus("delivery", "new", "accepted")).toBe(true);
     expect(canTransitionStatus("delivery", "ready", "assigned")).toBe(true);
+    expect(canTransitionStatus("delivery", "ready", "picked_up")).toBe(true);
   });
 
   it("blocks skipping ahead", () => {

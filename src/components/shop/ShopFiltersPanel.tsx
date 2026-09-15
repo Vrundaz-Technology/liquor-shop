@@ -1,8 +1,8 @@
 "use client";
 
-import { getAllLocations } from "@/data/locations";
 import { getCategories } from "@/data/categories";
 import { Select } from "@/components/ui/Select";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import {
   DELIVERY_TIME_OPTIONS,
   SIZE_OPTIONS,
@@ -24,6 +24,8 @@ type Props = {
   /** True when ZIP/coords are set so delivery-time filter can apply. */
   hasDeliveryLocation?: boolean;
   onNeedDeliveryLocation?: () => void;
+  /** Hide delivery-time filter when no store offers delivery. */
+  deliveryOffered?: boolean;
 };
 
 export function ShopFiltersPanel({
@@ -36,10 +38,12 @@ export function ShopFiltersPanel({
   showStore = true,
   hasDeliveryLocation = false,
   onNeedDeliveryLocation,
+  deliveryOffered = true,
 }: Props) {
   const patch = (partial: Partial<ShopFilters>) => onChange({ ...value, ...partial });
   const minPrice = value.minPrice ?? 0;
   const maxPrice = value.maxPrice ?? 5000;
+  const stores = useRuntimeLocations();
 
   return (
     <div className={cn("space-y-4", className)}>
@@ -147,7 +151,7 @@ export function ShopFiltersPanel({
           }
           options={[
             { value: "current", label: "Current store" },
-            ...getAllLocations().map((l) => ({
+            ...stores.map((l) => ({
               value: l.id,
               label: `${l.shortName} · ${l.city}`,
             })),
@@ -155,6 +159,7 @@ export function ShopFiltersPanel({
         />
       ) : null}
 
+      {deliveryOffered ? (
       <div className="space-y-2">
         <Select
           label="Delivery time"
@@ -186,6 +191,7 @@ export function ShopFiltersPanel({
           </p>
         ) : null}
       </div>
+      ) : null}
 
       <Select
         label="Sort by"

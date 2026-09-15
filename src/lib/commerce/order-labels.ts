@@ -56,17 +56,13 @@ export function nextStaffStatus(
   return null;
 }
 
-/** Delivery orders that kitchen has released for driver assignment. */
+/** Dispatch is allowed at confirmation — not after kitchen Ready. */
 export function isDeliveryReadyForDispatch(status: OrderStatus | string) {
-  return [
-    "ready",
-    "assigned",
-    "picked_up",
-    "out_for_delivery",
-    "delivered",
-    "shipped",
-  ].includes(status);
+  return !["cancelled", "delivered"].includes(status);
 }
+
+/** @deprecated alias — dispatch is at confirmation. */
+export const isDeliveryConfirmedForDispatch = isDeliveryReadyForDispatch;
 
 /** Kitchen stages before dispatch (Orders panel). */
 export function isDeliveryKitchenStage(status: OrderStatus | string) {

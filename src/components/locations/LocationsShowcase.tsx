@@ -14,7 +14,7 @@ import {
 import { MapPin, Phone, Clock, Car } from "lucide-react";
 import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import type { StoreLocation } from "@/types";
-import { cn } from "@/lib/utils";
+import { cn, publicFulfillmentSummary, publicStoreServices } from "@/lib/utils";
 
 const LocationsMap = dynamic(
   () => import("@/components/locations/LocationsMap").then((m) => m.LocationsMap),
@@ -197,7 +197,9 @@ function LocationCard({ loc, index }: { loc: StoreLocation; index: number }) {
   useEffect(() => () => cancelAnimationFrame(raf.current), []);
 
   const lift = tilt.active && !reduced;
-  const services = [...loc.services.slice(0, 4)];
+  const services = [
+    ...publicStoreServices(loc.services, loc.deliveryAvailable, loc.pickupAvailable).slice(0, 4),
+  ];
   while (services.length < 4) services.push("");
 
   return (
@@ -327,8 +329,7 @@ function LocationCard({ loc, index }: { loc: StoreLocation; index: number }) {
             </ul>
 
             <p className="mt-3 h-5 text-[12px] tracking-wide text-[var(--muted)]">
-              Pickup {loc.pickupAvailable ? "available" : "unavailable"} · Delivery{" "}
-              {loc.deliveryRadiusKm}km
+              {publicFulfillmentSummary(loc)}
             </p>
 
             <div className="mt-4 grid grid-cols-2 gap-1.5">

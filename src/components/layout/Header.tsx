@@ -20,11 +20,11 @@ import { useCartFeedbackStore } from "@/store/cart-feedback";
 import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { isStaffRole } from "@/lib/auth/roles";
-import { getAllLocations } from "@/data/locations";
 import { accessibleLocations } from "@/lib/auth/location-access";
 import { switchShoppingStore } from "@/lib/switch-store";
 import { shopHref } from "@/lib/shop-url";
 import { formatPrice } from "@/lib/utils";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { AccountMenu } from "@/components/layout/AccountMenu";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { StoreFinder } from "@/components/store/StoreFinder";
@@ -65,13 +65,14 @@ export function Header() {
     (s) => s.isLoggedIn && isStaffRole(s.profile),
   );
   const logout = useUserStore((s) => s.logout);
+  const locations = useRuntimeLocations();
   const onDashboard = pathname.startsWith("/dashboard");
   const branchOptions =
-    isLoggedIn && isStaff ? accessibleLocations(profile) : getAllLocations();
+    isLoggedIn && isStaff ? accessibleLocations(profile, locations) : locations;
   const branch =
     branchOptions.find((l) => l.id === branchId) ??
     branchOptions[0] ??
-    getAllLocations()[0];
+    locations[0];
 
   useEffect(() => {
     const q = query.trim();
@@ -285,14 +286,14 @@ export function Header() {
                 setSearchOpen(true);
                 setAccountOpen(false);
               }}
-              className="rounded-sm p-2 text-[var(--cream)] hover:bg-white/5"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
               aria-label="Search"
             >
               <Search size={18} />
             </button>
             <Link
               href="/wishlist"
-              className="hidden rounded-sm p-2 text-[var(--cream)] hover:bg-white/5 lg:block"
+              className="hidden min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5 lg:inline-flex"
               aria-label="Wishlist"
             >
               <Heart size={18} />

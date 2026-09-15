@@ -10,6 +10,7 @@ import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { hasPermission } from "@/lib/auth/permissions";
 import { canAccessLocation, hasAllLocationAccess } from "@/lib/auth/location-access";
 import { actorOrganizationId, ensureOrganizationSchema, SAMS_ORG_ID } from "@/lib/db/organization";
+import { ensureDispatchSchema, saveLocationDispatch } from "@/lib/db/dispatch-settings";
 import type { EventItem, StoreLocation, UserProfile } from "@/types";
 
 const DEFAULT_HOURS = [
@@ -115,6 +116,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
   await ensureOrganizationSchema();
+  await ensureDispatchSchema();
 
   const shortName = input.shortName.trim();
   const name = input.name.trim() || `Sam's Discount Liquor — ${shortName}`;
@@ -181,6 +183,12 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
     }
   });
 
+  await saveLocationDispatch(id, {
+    internalDeliveryEnabled: true,
+    shipdayEnabled: false,
+    dispatchPolicy: "internal_first",
+  });
+
   const row = await prisma.location.findUnique({
     where: { id },
     include: { inventory: true },
@@ -219,6 +227,7 @@ export async function updateStoreLocation(
   if (!isDbConfigured()) return { error: "Database is not configured.", status: 503 as const };
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
+  await ensureDispatchSchema();
   const existing = await prisma.location.findUnique({ where: { id: locationId } });
   if (!existing) return { error: "Location not found.", status: 404 as const };
 

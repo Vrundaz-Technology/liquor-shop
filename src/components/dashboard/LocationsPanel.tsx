@@ -1,7 +1,9 @@
 "use client";
 
 import { FormEvent, useMemo, useState } from "react";
+import Link from "next/link";
 import { MapPin, Pencil, Plus, Trash2 } from "lucide-react";
+import { dashboardPath } from "@/lib/dashboard/routes";
 import { getAllLocations } from "@/data/locations";
 import {
   apiCreateLocation,
@@ -168,8 +170,6 @@ function toLocationPayload(form: LocationForm) {
     email: form.email.trim(),
     description: form.description.trim(),
     parking: form.parking.trim(),
-    pickupAvailable: form.pickupAvailable,
-    deliveryAvailable: form.deliveryAvailable,
     deliveryRadiusKm: Number.isFinite(radius) ? radius : 8,
     deliveryFee: parseFiniteNumber(form.deliveryFee) ?? 0,
     deliveryFreeMinimum: parseFiniteNumber(form.deliveryFreeMinimum) ?? 0,
@@ -386,6 +386,10 @@ export function LocationsPanel() {
                   {location.phone} · {location.email}
                 </p>
                 <p className="mt-2 text-[11px] text-gold">{formatDeliveryPricingSummary(location)}</p>
+                <p className="mt-1 text-[11px] text-muted">
+                  Pickup {location.pickupAvailable ? "on" : "off"} · Delivery{" "}
+                  {location.deliveryAvailable ? "on" : "off"}
+                </p>
                 <div className="mt-3 flex flex-wrap gap-2">
                   {canEdit ? (
                     <Button size="sm" variant="ghost" className="h-9 px-2.5" onClick={() => openEdit(location)}>
@@ -459,9 +463,10 @@ export function LocationsPanel() {
                 <td className={`${tableCellClass} text-xs`}>
                   <p className="text-gold">{formatDeliveryPricingSummary(location)}</p>
                   <p className="mt-1 text-muted">
+                    Pickup {location.pickupAvailable ? "on" : "off"} ·{" "}
                     {location.deliveryAvailable
                       ? `${location.deliveryRadiusKm} km radius`
-                      : "Delivery disabled"}
+                      : "Delivery off"}
                   </p>
                   <p className="mt-1 text-muted">
                     Tax {(location.taxRate * 100).toFixed(3).replace(/\.?0+$/, "")}%
@@ -617,24 +622,17 @@ export function LocationsPanel() {
               placeholder="Street parking nearby"
             />
           </label>
-          <label className="flex min-h-11 items-center gap-3 text-sm text-cream sm:col-span-2">
-            <input
-              type="checkbox"
-              className="h-5 w-5 accent-(--gold)"
-              checked={form.pickupAvailable}
-              onChange={(e) => setForm((f) => ({ ...f, pickupAvailable: e.target.checked }))}
-            />
-            Pickup available at this store
-          </label>
-          <label className="flex min-h-11 items-center gap-3 text-sm text-cream sm:col-span-2">
-            <input
-              type="checkbox"
-              className="h-5 w-5 accent-(--gold)"
-              checked={form.deliveryAvailable}
-              onChange={(e) => setForm((f) => ({ ...f, deliveryAvailable: e.target.checked }))}
-            />
-            Delivery available from this store
-          </label>
+          <p className="text-xs text-muted sm:col-span-2">
+            Pickup {form.pickupAvailable ? "on" : "off"} · Delivery {form.deliveryAvailable ? "on" : "off"}.
+            Turn these on or off in{" "}
+            <Link
+              href={dashboardPath("deliveries", { settings: true })}
+              className="text-gold underline-offset-2 hover:underline"
+            >
+              Deliveries → Settings
+            </Link>
+            .
+          </p>
 
           <div className="sm:col-span-2">
             <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Business hours</p>
@@ -807,7 +805,15 @@ export function LocationsPanel() {
           <div className="sm:col-span-2">
             <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Delivery & pricing</p>
             <p className="mt-1 text-xs text-muted">
-              Cart, checkout, and orders use these rates for this store only.
+              Cart, checkout, and orders use these rates for this store. Pickup and delivery on/off
+              are in{" "}
+              <Link
+                href={dashboardPath("deliveries", { settings: true })}
+                className="text-gold underline-offset-2 hover:underline"
+              >
+                Deliveries → Settings
+              </Link>
+              .
             </p>
           </div>
           <label className="block text-xs text-muted">

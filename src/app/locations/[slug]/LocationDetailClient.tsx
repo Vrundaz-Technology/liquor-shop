@@ -9,6 +9,7 @@ import { ProductCard } from "@/components/product/ProductCard";
 import { Button } from "@/components/ui/Button";
 import Link from "next/link";
 import { switchShoppingStore } from "@/lib/switch-store";
+import { publicFulfillmentSummary, publicStoreServices } from "@/lib/fulfillment-pricing";
 import { useCatalogStore } from "@/store/catalog";
 import { useInventoryStore } from "@/store/inventory";
 import { useMemo, useEffect, useState } from "react";
@@ -48,6 +49,11 @@ export function LocationDetailPage() {
   const featuredIds = loc.inventory.filter((i) => i.featured).map((i) => i.productId);
   void catalogRevision;
   void inventoryRevision;
+  const locServices = publicStoreServices(
+    loc.services,
+    loc.deliveryAvailable,
+    loc.pickupAvailable,
+  );
   const featured = getAllProducts()
     .filter((p) => featuredIds.includes(p.id) && !isHidden(loc.id, p.id))
     .slice(0, 4);
@@ -102,6 +108,18 @@ export function LocationDetailPage() {
               <p>{loc.address}, {loc.city}, {loc.state} {loc.zip}</p>
               <p className="mt-2">{loc.phone}</p>
               <p className="mt-2">{loc.email}</p>
+              <p className="mt-4 text-gold">Fulfillment</p>
+              <p className="mt-1 text-cream">{publicFulfillmentSummary(loc)}</p>
+              {locServices.length > 0 ? (
+                <>
+                  <p className="mt-4 text-gold">Services</p>
+                  <ul className="mt-2 list-disc pl-4">
+                    {locServices.map((service) => (
+                      <li key={service}>{service}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
               <p className="mt-4 text-gold">Offers</p>
               <ul className="mt-2 list-disc pl-4">
                 {loc.featuredOffers.map((o) => (

@@ -25,7 +25,7 @@ import {
   type ShopFilters,
 } from "@/lib/shop-catalog";
 import { DEFAULT_SHOP_FILTERS, parseShopFilters, shopFiltersToSearchParams } from "@/lib/shop-url";
-import { getAllLocations } from "@/data/locations";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 
 export function ShopCatalog() {
   const router = useRouter();
@@ -40,6 +40,7 @@ export function ShopCatalog() {
   );
 
   const catalogRevision = useCatalogStore((s) => s.revision);
+  const locations = useRuntimeLocations();
   const branchId = useBranchStore((s) => s.branchId);
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
@@ -91,6 +92,7 @@ export function ShopCatalog() {
       customerLng,
       catalogRevision,
       inventoryRevision,
+      locations,
     ],
   );
 
@@ -123,8 +125,15 @@ export function ShopCatalog() {
       ? `${(filters.q ?? "").trim().slice(0, 28)}…`
       : (filters.q ?? "").trim();
   const currentStore =
-    getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
+    locations.find((l) => l.id === branchId) ?? locations[0];
   const hasDeliveryLocation = customerLat != null && customerLng != null;
+  const deliveryOffered = locations.some((loc) => loc.deliveryAvailable);
+
+  useEffect(() => {
+    if (!deliveryOffered && (filters.maxDeliveryMinutes ?? 0) > 0) {
+      setFilters((f) => ({ ...f, maxDeliveryMinutes: 0 }));
+    }
+  }, [deliveryOffered, filters.maxDeliveryMinutes]);
 
   const goToPage = (next: number) => {
     setPage(next);
@@ -200,6 +209,7 @@ export function ShopCatalog() {
               types={types}
               hasDeliveryLocation={hasDeliveryLocation}
               onNeedDeliveryLocation={() => setFinderOpen(true)}
+              deliveryOffered={deliveryOffered}
             />
           </aside>
         </div>

@@ -55,25 +55,31 @@ export async function geocodeUsZip(zip: string): Promise<GeoPoint | null> {
 }
 
 /** Match stores by ZIP prefix / exact ZIP when geocoding fails. */
-export function storesMatchingZipFallback(zip: string): NearbyStore[] {
+export function storesMatchingZipFallback(
+  zip: string,
+  stores: StoreLocation[] = getAllLocations(),
+): NearbyStore[] {
   const clean = zip.trim().replace(/\s+/g, "").slice(0, 5);
   if (!/^\d{5}$/.test(clean)) return [];
   const prefix = clean.slice(0, 3);
-  return getAllLocations()
+  return stores
     .map((store) => {
       const exact = store.zip === clean;
       const near = store.zip.startsWith(prefix);
       if (!exact && !near) return null;
+      const canPickup = Boolean(store.pickupAvailable);
       const miles = exact ? 0.8 : 3.5;
       const eta = store.deliveryAvailable ? estimateDeliveryEta(miles) : null;
+      const canDeliver = Boolean(store.deliveryAvailable && eta);
+      if (!canPickup && !canDeliver) return null;
       return {
         store,
         miles,
         milesLabel: formatMiles(miles),
-        withinDeliveryRadius: store.deliveryAvailable,
+        withinDeliveryRadius: Boolean(store.deliveryAvailable),
         deliveryEta: eta,
-        canPickup: store.pickupAvailable,
-        canDeliver: Boolean(store.deliveryAvailable && eta),
+        canPickup,
+        canDeliver,
       } satisfies NearbyStore;
     })
     .filter(Boolean)
@@ -82,14 +88,15 @@ export function storesMatchingZipFallback(zip: string): NearbyStore[] {
 
 export function findNearbyStores(
   point: GeoPoint,
-  opts?: { maxMiles?: number; requireDelivery?: boolean },
+  opts?: { maxMiles?: number; requireDelivery?: boolean; stores?: StoreLocation[] },
 ): NearbyStore[] {
   const maxMiles = opts?.maxMiles ?? 40;
-  const rows: NearbyStore[] = getAllLocations().map((store) => {
+  const catalog = opts?.stores ?? getAllLocations();
+  const rows: NearbyStore[] = catalog.map((store) => {
     const miles = haversineMiles(point, { lat: store.lat, lng: store.lng });
     const radiusMi = kmToMiles(store.deliveryRadiusKm || 0);
     const withinDeliveryRadius =
-      store.deliveryAvailable && radiusMi > 0 && miles <= radiusMi + 0.05;
+      Boolean(store.deliveryAvailable) && radiusMi > 0 && miles <= radiusMi + 0.05;
     const deliveryEta = withinDeliveryRadius ? estimateDeliveryEta(miles) : null;
     return {
       store,
@@ -97,7 +104,7 @@ export function findNearbyStores(
       milesLabel: formatMiles(miles),
       withinDeliveryRadius,
       deliveryEta,
-      canPickup: store.pickupAvailable,
+      canPickup: Boolean(store.pickupAvailable),
       canDeliver: Boolean(withinDeliveryRadius && deliveryEta),
     };
   });
@@ -109,24 +116,27 @@ export function findNearbyStores(
       return row.canDeliver || row.canPickup;
     })
     .sort((a, b) => {
-      // Prefer deliverable stores, then closer.
       if (a.canDeliver !== b.canDeliver) return a.canDeliver ? -1 : 1;
       return a.miles - b.miles;
     });
 }
 
-export async function findStoresForZip(zip: string): Promise<{
+export async function findStoresForZip(
+  zip: string,
+  stores?: StoreLocation[],
+): Promise<{
   point: GeoPoint | null;
   stores: NearbyStore[];
   source: "geo" | "zip-fallback";
 }> {
+  const catalog = stores ?? getAllLocations();
   const point = await geocodeUsZip(zip);
   if (point) {
-    return { point, stores: findNearbyStores(point), source: "geo" };
+    return { point, stores: findNearbyStores(point, { stores: catalog }), source: "geo" };
   }
   return {
     point: null,
-    stores: storesMatchingZipFallback(zip),
+    stores: storesMatchingZipFallback(zip, catalog),
     source: "zip-fallback",
   };
 }

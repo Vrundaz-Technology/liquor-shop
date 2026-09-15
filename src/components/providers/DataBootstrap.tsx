@@ -28,7 +28,7 @@ export function DataBootstrap() {
 
     async function loadCatalog() {
       try {
-        const res = await fetch("/api/bootstrap");
+        const res = await fetch("/api/bootstrap", { cache: "no-store" });
         if (!res.ok) throw new Error("bootstrap failed");
         const data = await res.json();
         if (cancelled) return;

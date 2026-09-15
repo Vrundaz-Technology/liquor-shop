@@ -749,7 +749,9 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                   onClick={() => router.push(dashboardPath("deliveries"))}
                 >
                   <Truck size={14} />
-                  Assign driver
+                  {selectedOrder.driverId || selectedOrder.deliveryChannel === "shipday"
+                    ? "Open deliveries"
+                    : "Assign at confirmation"}
                 </Button>
               ) : selectedOrder.fulfillment === "delivery" && canViewDeliveries ? (
                 <Button

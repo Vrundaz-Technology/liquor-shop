@@ -1,4 +1,4 @@
-import type { DeliveryAddress, DeliveryStatus, Driver, Order } from "@/types";
+import type { DeliveryAddress, DeliveryStatus, Driver, Order, UserProfile } from "@/types";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { drivers as seedDrivers } from "@/data/drivers";
 import { recordActivity } from "@/lib/db/activity";
@@ -7,7 +7,13 @@ import { accessibleLocations, hasAllLocationAccess } from "@/lib/auth/location-a
 import { hasPermission } from "@/lib/auth/permissions";
 import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import { moneyNumber } from "@/lib/db/money";
-import type { UserProfile } from "@/types";
+import { parseAddressSafe } from "@/lib/db/delivery-address";
+import {
+  canMarkInternalPickedUp,
+  isDeliveryConfirmedForDispatch,
+  orderStatusAfterAssign,
+} from "@/lib/commerce/dispatch";
+import { dispatchFieldsFromRow, ensureDispatchSchema } from "@/lib/db/dispatch-settings";
 
 let ready = false;
 
@@ -34,6 +40,7 @@ export async function ensureDeliverySchema() {
   await addColumnIfMissing("orders", "delivery_status", "VARCHAR(191) NULL");
   await addColumnIfMissing("orders", "delivery_phone", "VARCHAR(191) NULL");
   await addColumnIfMissing("orders", "delivery_address", "JSON NULL");
+  await ensureDispatchSchema();
   for (const driver of seedDrivers) {
     await prisma.$executeRawUnsafe(
       `INSERT INTO drivers (id, name, phone, email, vehicle, location_id, status, active, photo_url)
@@ -121,21 +128,7 @@ export function canDispatchDeliveries(actor: UserProfile) {
   return hasPermission(actor, "deliveries.manage");
 }
 
-function parseAddress(value: unknown): DeliveryAddress | undefined {
-  if (!value || typeof value !== "object") return undefined;
-  const row = value as Record<string, unknown>;
-  if (typeof row.line1 !== "string" || typeof row.city !== "string") return undefined;
-  return {
-    name: typeof row.name === "string" ? row.name : "",
-    phone: typeof row.phone === "string" ? row.phone : "",
-    line1: row.line1,
-    line2: typeof row.line2 === "string" ? row.line2 : undefined,
-    city: row.city,
-    state: typeof row.state === "string" ? row.state : "",
-    zip: typeof row.zip === "string" ? row.zip : "",
-    notes: typeof row.notes === "string" ? row.notes : undefined,
-  };
-}
+const parseAddress = parseAddressSafe;
 
 export async function listDrivers(locationId?: string) {
   await ensureDeliverySchema();
@@ -183,6 +176,16 @@ type DeliveryRow = {
   driver_photo: string | null;
   driver_location: string | null;
   driver_status: string | null;
+  delivery_channel: string | null;
+  shipday_order_id: string | null;
+  provider_status: string | null;
+  provider_tracking_url: string | null;
+  provider_cost: unknown;
+  provider_name: string | null;
+  provider_courier_name: string | null;
+  provider_courier_phone: string | null;
+  provider_failed: number | boolean | null;
+  dispatched_at: Date | string | null;
 };
 
 function mapDeliveryOrder(row: DeliveryRow, items: Order["items"]): Order {
@@ -212,8 +215,19 @@ function mapDeliveryOrder(row: DeliveryRow, items: Order["items"]): Order {
     driverId: row.driver_id ?? undefined,
     driver,
     delivery: parseAddress(row.delivery_address),
+    ...dispatchFieldsFromRow(row),
   };
 }
+
+const DELIVERY_ORDER_SELECT = `SELECT o.id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
+              o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
+              o.delivery_channel, o.shipday_order_id, o.provider_status, o.provider_tracking_url,
+              o.provider_cost, o.provider_name, o.provider_courier_name, o.provider_courier_phone,
+              o.provider_failed, o.dispatched_at,
+              d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
+              d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
+       FROM orders o
+       LEFT JOIN drivers d ON d.id = o.driver_id`;
 
 export async function listDeliveryOrders(actor: UserProfile) {
   await ensureDeliverySchema();
@@ -226,12 +240,7 @@ export async function listDeliveryOrders(actor: UserProfile) {
   if (!dispatcher) {
     if (!linkedDriverId) return [];
     const rows = await prisma.$queryRawUnsafe<DeliveryRow[]>(
-      `SELECT o.id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
-              o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
-              d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
-              d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
-       FROM orders o
-       LEFT JOIN drivers d ON d.id = o.driver_id
+      `${DELIVERY_ORDER_SELECT}
        WHERE o.fulfillment = 'delivery' AND o.status <> 'cancelled'
          AND o.driver_id = ?
        ORDER BY o.created_at DESC
@@ -243,24 +252,14 @@ export async function listDeliveryOrders(actor: UserProfile) {
 
   const rows = allowAll
     ? await prisma.$queryRawUnsafe<DeliveryRow[]>(
-        `SELECT o.id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
-                o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
-                d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
-                d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
-         FROM orders o
-         LEFT JOIN drivers d ON d.id = o.driver_id
+        `${DELIVERY_ORDER_SELECT}
          WHERE o.fulfillment = 'delivery' AND o.status <> 'cancelled'
          ORDER BY o.created_at DESC
          LIMIT 80`,
       )
     : ids.length
       ? await prisma.$queryRawUnsafe<DeliveryRow[]>(
-          `SELECT o.id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
-                  o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
-                  d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
-                  d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
-           FROM orders o
-           LEFT JOIN drivers d ON d.id = o.driver_id
+          `${DELIVERY_ORDER_SELECT}
            WHERE o.fulfillment = 'delivery' AND o.status <> 'cancelled'
              AND o.location_id IN (${ids.map(() => "?").join(",")})
            ORDER BY o.created_at DESC
@@ -292,6 +291,42 @@ async function mapDeliveryRows(rows: DeliveryRow[]) {
   return rows.map((row) => mapDeliveryOrder(row, itemsByOrder.get(row.id) ?? []));
 }
 
+/** Free a driver when they have no open delivery runs left. */
+export async function releaseDriverIfIdle(driverId: string, exceptOrderId?: string) {
+  if (!driverId) return;
+  if (exceptOrderId) {
+    await prisma.$executeRawUnsafe(
+      `UPDATE drivers SET status = 'available'
+       WHERE id = ?
+         AND NOT EXISTS (
+           SELECT 1 FROM orders
+           WHERE driver_id = ?
+             AND id <> ?
+             AND fulfillment = 'delivery'
+             AND status <> 'cancelled'
+             AND COALESCE(delivery_status, 'unassigned') <> 'delivered'
+         )`,
+      driverId,
+      driverId,
+      exceptOrderId,
+    );
+    return;
+  }
+  await prisma.$executeRawUnsafe(
+    `UPDATE drivers SET status = 'available'
+     WHERE id = ?
+       AND NOT EXISTS (
+         SELECT 1 FROM orders
+         WHERE driver_id = ?
+           AND fulfillment = 'delivery'
+           AND status <> 'cancelled'
+           AND COALESCE(delivery_status, 'unassigned') <> 'delivered'
+       )`,
+    driverId,
+    driverId,
+  );
+}
+
 export async function assignDriver(orderId: string, driverId: string, actorUserId?: string) {
   await ensureDeliverySchema();
   const orderRows = await prisma.$queryRawUnsafe<
@@ -302,23 +337,28 @@ export async function assignDriver(orderId: string, driverId: string, actorUserI
       status: string;
       driver_id: string | null;
       delivery_status: string | null;
+      delivery_channel: string | null;
+      shipday_order_id: string | null;
+      provider_failed: number | boolean | null;
     }[]
   >(
-    `SELECT id, fulfillment, location_id, status, driver_id, delivery_status FROM orders WHERE id = ? LIMIT 1`,
+    `SELECT id, fulfillment, location_id, status, driver_id, delivery_status,
+            delivery_channel, shipday_order_id, provider_failed
+     FROM orders WHERE id = ? LIMIT 1`,
     orderId,
   );
   const order = orderRows[0];
   if (!order) throw new Error("Order not found.");
   if (order.fulfillment !== "delivery") throw new Error("Only delivery orders can be assigned a driver.");
-  if (order.status === "cancelled" || order.status === "delivered") {
+  if (!isDeliveryConfirmedForDispatch(order.status)) {
     throw new Error("This order can no longer be assigned.");
   }
-  // Kitchen must finish first so the customer timeline shows Preparing → Ready.
-  const kitchenPending = ["new", "accepted", "processing", "preparing"];
-  if (kitchenPending.includes(order.status)) {
-    throw new Error(
-      "Mark this order Ready in Orders before assigning a driver.",
-    );
+  const shipdayLocked =
+    order.delivery_channel === "shipday" &&
+    Boolean(order.shipday_order_id) &&
+    !(order.provider_failed === true || order.provider_failed === 1);
+  if (shipdayLocked) {
+    throw new Error("This order is already with Shipday.");
   }
 
   const driverRows = await prisma.$queryRawUnsafe<Parameters<typeof asDriver>[0][]>(
@@ -340,11 +380,19 @@ export async function assignDriver(orderId: string, driverId: string, actorUserI
     previousDriverName = prevDriverRows[0]?.name ?? order.driver_id;
   }
 
+  const nextStatus = orderStatusAfterAssign(order.status);
   await prisma.$executeRawUnsafe(
-    `UPDATE orders SET driver_id = ?, delivery_status = 'assigned', status = 'assigned' WHERE id = ?`,
+    `UPDATE orders
+     SET driver_id = ?, delivery_status = 'assigned', status = ?,
+         delivery_channel = 'internal', dispatched_at = COALESCE(dispatched_at, CURRENT_TIMESTAMP(3))
+     WHERE id = ?`,
     driverId,
+    nextStatus,
     orderId,
   );
+  if (order.driver_id && order.driver_id !== driverId) {
+    await releaseDriverIfIdle(order.driver_id, orderId);
+  }
   await prisma.$executeRawUnsafe(
     `UPDATE drivers SET status = 'on_route' WHERE id = ?`,
     driverId,
@@ -412,18 +460,44 @@ export async function updateDeliveryStatus(
   actorUserId?: string,
 ) {
   await ensureDeliverySchema();
-  const previousRows = await prisma.$queryRawUnsafe<{ delivery_status: string | null }[]>(
-    `SELECT delivery_status FROM orders WHERE id = ? LIMIT 1`,
+  const previousRows = await prisma.$queryRawUnsafe<
+    {
+      delivery_status: string | null;
+      status: string;
+      delivery_channel: string | null;
+      fulfillment: string;
+    }[]
+  >(
+    `SELECT delivery_status, status, delivery_channel, fulfillment FROM orders WHERE id = ? LIMIT 1`,
     orderId,
   );
-  const previousStatus = previousRows[0]?.delivery_status ?? null;
+  const previous = previousRows[0];
+  if (!previous) throw new Error("Order not found.");
+  if (previous.fulfillment !== "delivery") throw new Error("Only delivery orders can be updated.");
+  if (previous.delivery_channel === "shipday" && status === "unassigned") {
+    throw new Error("Shipday orders cannot be unassigned here. Cancel the order or wait for Shipday.");
+  }
+  if (
+    (status === "picked_up" || status === "en_route") &&
+    previous.delivery_channel !== "shipday" &&
+    !canMarkInternalPickedUp(previous.status)
+  ) {
+    throw new Error("Pack this order in Orders before pickup.");
+  }
+
+  const previousStatus = previous.delivery_status ?? null;
+  const kitchenOpen = ["new", "accepted", "processing", "preparing"].includes(previous.status);
   const orderStatus =
     status === "delivered"
       ? "delivered"
       : status === "unassigned"
-        ? "ready"
+        ? kitchenOpen
+          ? previous.status
+          : "ready"
         : status === "assigned"
-          ? "assigned"
+          ? kitchenOpen
+            ? previous.status
+            : "assigned"
           : status === "picked_up"
             ? "picked_up"
             : "out_for_delivery";
@@ -434,14 +508,18 @@ export async function updateDeliveryStatus(
     orderId,
   );
   if (status === "delivered" || status === "unassigned") {
-    await prisma.$executeRawUnsafe(
-      `UPDATE drivers SET status = 'available'
-       WHERE id = (SELECT driver_id FROM orders WHERE id = ?)`,
+    const driverRows = await prisma.$queryRawUnsafe<{ driver_id: string | null }[]>(
+      `SELECT driver_id FROM orders WHERE id = ? LIMIT 1`,
       orderId,
     );
+    const freedId = driverRows[0]?.driver_id;
+    if (freedId) await releaseDriverIfIdle(freedId, orderId);
   }
   if (status === "unassigned") {
-    await prisma.$executeRawUnsafe(`UPDATE orders SET driver_id = NULL WHERE id = ?`, orderId);
+    await prisma.$executeRawUnsafe(
+      `UPDATE orders SET driver_id = NULL, delivery_channel = NULL WHERE id = ?`,
+      orderId,
+    );
   }
   await recordActivity({
     actorUserId,
@@ -494,12 +572,7 @@ export async function hydrateOrderDelivery(order: Order): Promise<Order> {
   if (!isDbConfigured()) return order;
   await ensureDeliverySchema();
   const rows = await prisma.$queryRawUnsafe<DeliveryRow[]>(
-    `SELECT o.id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
-            o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
-            d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
-            d.photo_url AS driver_photo, d.location_id AS driver_location, d.status AS driver_status
-     FROM orders o
-     LEFT JOIN drivers d ON d.id = o.driver_id
+    `${DELIVERY_ORDER_SELECT}
      WHERE o.id = ?
      LIMIT 1`,
     order.id,

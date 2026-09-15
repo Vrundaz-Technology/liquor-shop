@@ -9,6 +9,7 @@ import type {
   UserProfile,
 } from "@/types";
 import { mapLocationPricing } from "@/lib/db/location-pricing";
+import { mapDispatchSettings } from "@/lib/db/dispatch-settings";
 import { moneyNumber, moneyOptional } from "@/lib/db/money";
 import type {
   Category as DbCategory,
@@ -147,6 +148,7 @@ export function mapLocation(row: DbLocationRow): StoreLocation {
     pickupAvailable: row.pickupAvailable,
     ...mapLocationPricing(row),
     deliveryRadiusKm: row.deliveryRadiusKm,
+    ...mapDispatchSettings(row as Record<string, unknown>),
     minimumOrderAmount: moneyNumber(ext.minimumOrderAmount),
     paymentSettings:
       ext.paymentSettings && typeof ext.paymentSettings === "object"

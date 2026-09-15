@@ -41,6 +41,12 @@ const DELIVERY_FLOW: {
     statuses: ["new", "accepted", "processing"],
   },
   {
+    id: "driver_assigned",
+    label: "Driver assigned",
+    description: "A driver or courier is assigned at confirmation",
+    statuses: ["assigned"],
+  },
+  {
     id: "preparing",
     label: "Preparing",
     description: "Staff are packing your bottles",
@@ -49,14 +55,8 @@ const DELIVERY_FLOW: {
   {
     id: "ready",
     label: "Ready",
-    description: "Order is ready for a driver",
+    description: "Order is packed and waiting for pickup",
     statuses: ["ready"],
-  },
-  {
-    id: "driver_assigned",
-    label: "Driver assigned",
-    description: "A driver is assigned to your run",
-    statuses: ["assigned"],
   },
   {
     id: "picked_up",
@@ -77,6 +77,14 @@ const DELIVERY_FLOW: {
     statuses: ["delivered"],
   },
 ];
+
+function deliveryDispatchStarted(order: Pick<Order, "driverId" | "deliveryStatus" | "deliveryChannel">) {
+  return Boolean(
+    order.driverId ||
+      order.deliveryChannel === "shipday" ||
+      (order.deliveryStatus && order.deliveryStatus !== "unassigned"),
+  );
+}
 
 const PICKUP_FLOW: {
   id: TrackingStepId;
@@ -162,29 +170,62 @@ export function buildTrackingSteps(order: Order): TrackingStep[] {
     ];
   }
 
-  const flow = order.fulfillment === "pickup" ? PICKUP_FLOW : DELIVERY_FLOW;
-  // Prefer deliveryStatus for the distinct "picked up" moment when order.status
-  // has already advanced to out_for_delivery (legacy dual-field writes).
-  let effective = status;
-  if (
-    order.fulfillment === "delivery" &&
-    order.deliveryStatus === "picked_up" &&
-    (status === "assigned" || status === "out_for_delivery")
-  ) {
-    effective = "picked_up";
-  }
-  if (order.fulfillment === "delivery" && order.deliveryStatus === "en_route") {
-    effective = "out_for_delivery";
+  if (order.fulfillment === "pickup") {
+    const rank = statusRank(PICKUP_FLOW, status);
+    return PICKUP_FLOW.map((step, index) => ({
+      id: step.id,
+      label: step.label,
+      description: step.description,
+      done: index <= rank,
+      current: index === rank,
+    }));
   }
 
-  const rank = statusRank(flow, effective);
-  return flow.map((step, index) => ({
-    id: step.id,
-    label: step.label,
-    description: step.description,
-    done: index <= rank,
-    current: index === rank,
-  }));
+  const dispatched = deliveryDispatchStarted(order);
+  const kitchen = status;
+  const enRoute =
+    order.deliveryStatus === "en_route" || kitchen === "out_for_delivery" || kitchen === "shipped";
+  const picked =
+    order.deliveryStatus === "picked_up" || kitchen === "picked_up" || enRoute || kitchen === "delivered";
+  const packed =
+    kitchen === "ready" ||
+    kitchen === "assigned" ||
+    picked ||
+    kitchen === "delivered";
+  const preparingDone = packed || kitchen === "preparing";
+  const delivered = kitchen === "delivered" || order.deliveryStatus === "delivered";
+
+  const doneById: Record<string, boolean> = {
+    confirmed: true,
+    driver_assigned: dispatched,
+    preparing: preparingDone,
+    ready: packed,
+    picked_up: picked,
+    out_for_delivery: enRoute || delivered,
+    delivered,
+  };
+
+  const shipday = order.deliveryChannel === "shipday";
+  return DELIVERY_FLOW.map((step) => {
+    const done = doneById[step.id] ?? false;
+    return {
+      id: step.id,
+      label:
+        step.id === "driver_assigned" && shipday
+          ? "Courier dispatched"
+          : step.label,
+      description:
+        step.id === "driver_assigned" && shipday
+          ? "Sent to Shipday at confirmation"
+          : step.description,
+      done,
+      current: false,
+    };
+  }).map((step, index, list) => {
+    const firstOpen = list.findIndex((s) => !s.done);
+    const currentIndex = firstOpen === -1 ? list.length - 1 : firstOpen;
+    return { ...step, current: index === currentIndex };
+  });
 }
 
 export function customerStatusLabel(order: Order): string {
@@ -244,7 +285,7 @@ export function trackingEtaLabel(order: Order): string | null {
       : "Arriving soon";
   }
 
-  if (status === "assigned" || status === "ready") {
+  if (status === "assigned" || status === "ready" || order.deliveryStatus === "assigned") {
     return minutes != null
       ? `Estimated delivery · ${Math.max(15, minutes - 10)}–${minutes + 5} min`
       : deliveryEtaForStore(store, deliveryAddressForEta(order.delivery));

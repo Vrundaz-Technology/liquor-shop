@@ -90,7 +90,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-sm p-2 text-muted transition hover:bg-white/5 hover:text-cream"
+            className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-sm text-muted transition hover:bg-white/5 hover:text-cream"
             aria-label="Close"
           >
             <X size={16} />

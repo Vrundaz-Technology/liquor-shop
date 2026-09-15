@@ -1578,6 +1578,14 @@ export async function placeOrder(input: {
       throw new Error("Delivery address is required for delivery orders.");
     }
     await saveOrderDelivery(result.order.id, input.delivery);
+    try {
+      const { autoDispatchOnConfirmation } = await import("@/lib/db/shipday-orders");
+      await autoDispatchOnConfirmation(result.order.id, input.activityActorUserId ?? result.userId);
+      const { hydrateOrderDelivery } = await import("@/lib/db/delivery");
+      result.order = await hydrateOrderDelivery(result.order);
+    } catch (error) {
+      console.error("[placeOrder] auto-dispatch failed", error);
+    }
   }
 
   if (result.loyaltyPointsUsed > 0) {
@@ -1858,8 +1866,27 @@ export async function cancelOrder(
 
     await tx.order.update({
       where: { id: orderId },
-      data: { status: "cancelled" },
+      data: {
+        status: "cancelled",
+        driverId: null,
+        deliveryStatus: order.fulfillment === "delivery" ? "unassigned" : order.deliveryStatus,
+      },
     });
+
+    if (order.driverId) {
+      await tx.$executeRaw`
+        UPDATE drivers SET status = 'available'
+        WHERE id = ${order.driverId}
+          AND NOT EXISTS (
+            SELECT 1 FROM orders
+            WHERE driver_id = ${order.driverId}
+              AND id <> ${orderId}
+              AND fulfillment = 'delivery'
+              AND status <> 'cancelled'
+              AND COALESCE(delivery_status, 'unassigned') <> 'delivered'
+          )
+      `;
+    }
 
     const sales = await tx.inventoryLedger.findMany({
       where: { orderId, reason: "sale" },
@@ -1891,12 +1918,23 @@ export async function cancelOrder(
     }
 
     return {
-      order: mapOrder({ ...order, status: "cancelled" }),
+      order: mapOrder({
+        ...order,
+        status: "cancelled",
+        driverId: null,
+        deliveryStatus: order.fulfillment === "delivery" ? "unassigned" : order.deliveryStatus,
+      }),
       previousStatus,
     };
   });
 
   if (cancelled) {
+    try {
+      const { cancelShipdayIfNeeded } = await import("@/lib/db/shipday-orders");
+      await cancelShipdayIfNeeded(cancelled.order.id);
+    } catch (error) {
+      console.error("[cancelOrder] Shipday cancel failed", error);
+    }
     const who = opts?.actorName || "Customer";
     await recordActivity({
       actorUserId,

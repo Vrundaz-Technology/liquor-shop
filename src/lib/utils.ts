@@ -57,6 +57,9 @@ export {
   amountUntilFreeDelivery,
   pricingFromLocation,
   DEFAULT_FULFILLMENT_PRICING,
+  customerFulfillmentModes,
+  publicFulfillmentSummary,
+  publicStoreServices,
 } from "@/lib/fulfillment-pricing";
 
 export function getRecommendations(

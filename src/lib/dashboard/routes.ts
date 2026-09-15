@@ -98,7 +98,7 @@ export const DASHBOARD_SECTION_META: {
     id: "deliveries",
     label: "Deliveries",
     permission: "deliveries.view",
-    description: "Assign drivers and track each delivery to the door.",
+    description: "Assign drivers, send to Shipday, and track each delivery to the door.",
   },
   {
     id: "customers",
@@ -122,7 +122,7 @@ export const DASHBOARD_SECTION_META: {
     id: "locations",
     label: "Locations",
     permission: "locations.view",
-    description: "Add, edit, or remove stores in your organization.",
+    description: "Stores, hours, and customer fees. Pickup and delivery on/off live under Deliveries.",
   },
   {
     id: "events",
@@ -174,10 +174,13 @@ export function isDashboardSection(value: string | null | undefined): value is D
 
 export function dashboardPath(
   section: DashboardSection,
-  opts?: { orderId?: string; drivers?: boolean; categories?: boolean },
+  opts?: { orderId?: string; drivers?: boolean; settings?: boolean; categories?: boolean },
 ): string {
   if (section === "orders" && opts?.orderId) {
     return `/dashboard/orders/${encodeURIComponent(opts.orderId)}`;
+  }
+  if (section === "deliveries" && opts?.settings) {
+    return "/dashboard/deliveries/settings";
   }
   if (section === "deliveries" && opts?.drivers) {
     return "/dashboard/deliveries/drivers";
@@ -191,7 +194,7 @@ export function dashboardPath(
 export type ParsedDashboardRoute = {
   section: DashboardSection;
   orderId: string | null;
-  deliveriesSection: "deliveries" | "drivers";
+  deliveriesSection: "deliveries" | "drivers" | "settings";
   inventoryView: "stock" | "categories";
 };
 
@@ -222,7 +225,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section: "deliveries",
       orderId: null,
-      deliveriesSection: rest[0] === "drivers" ? "drivers" : "deliveries",
+      deliveriesSection:
+        rest[0] === "drivers" ? "drivers" : rest[0] === "settings" ? "settings" : "deliveries",
       inventoryView: "stock",
     };
   }

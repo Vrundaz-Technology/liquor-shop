@@ -121,12 +121,18 @@ model Location {
   services            Json
   parking             String
   pickupAvailable     Boolean  @map("pickup_available")
-  deliveryAvailable   Boolean  @default(true) @map("delivery_available")
-  deliveryRadiusKm    Float    @map("delivery_radius_km")
-  deliveryFee         Decimal  @default(12.50) @map("delivery_fee") @db.Decimal(12, 2)
-  deliveryFreeMinimum Decimal  @default(150.00) @map("delivery_free_minimum") @db.Decimal(12, 2)
-  minimumOrderAmount  Decimal  @default(0.00) @map("minimum_order_amount") @db.Decimal(12, 2)
-  taxRate             Decimal  @default(0.08875) @map("tax_rate") @db.Decimal(8, 6)
+  deliveryAvailable         Boolean  @default(true) @map("delivery_available")
+  deliveryRadiusKm          Float    @map("delivery_radius_km")
+  deliveryFee               Decimal  @default(12.50) @map("delivery_fee") @db.Decimal(12, 2)
+  deliveryFreeMinimum       Decimal  @default(150.00) @map("delivery_free_minimum") @db.Decimal(12, 2)
+  minimumOrderAmount        Decimal  @default(0.00) @map("minimum_order_amount") @db.Decimal(12, 2)
+  taxRate                   Decimal  @default(0.08875) @map("tax_rate") @db.Decimal(8, 6)
+  /** Own-fleet dispatch from this store. */
+  internalDeliveryEnabled   Boolean  @default(true) @map("internal_delivery_enabled")
+  /** Allow sending this store's deliveries to Shipday. */
+  shipdayEnabled            Boolean  @default(false) @map("shipday_enabled")
+  /** manual | internal_first | shipday_always — runs at order confirmation. */
+  dispatchPolicy            String   @default("internal_first") @map("dispatch_policy")
   paymentSettings     Json?    @map("payment_settings")
   featuredOffers      Json     @map("featured_offers")
   description         String   @db.Text
@@ -446,9 +452,19 @@ model Order {
   deliveryStatus  String?  @map("delivery_status")
   deliveryPhone   String?  @map("delivery_phone")
   deliveryAddress Json?    @map("delivery_address")
-  couponCode      String?  @map("coupon_code")
-  promotionId     String?  @map("promotion_id")
-  createdAt       DateTime @default(now()) @map("created_at")
+  couponCode             String?   @map("coupon_code")
+  promotionId            String?   @map("promotion_id")
+  deliveryChannel        String?   @map("delivery_channel")
+  shipdayOrderId         String?   @map("shipday_order_id")
+  providerStatus         String?   @map("provider_status")
+  providerTrackingUrl    String?   @map("provider_tracking_url")
+  providerCost           Decimal?  @map("provider_cost") @db.Decimal(12, 2)
+  providerName           String?   @map("provider_name")
+  providerCourierName    String?   @map("provider_courier_name")
+  providerCourierPhone   String?   @map("provider_courier_phone")
+  providerFailed         Boolean   @default(false) @map("provider_failed")
+  dispatchedAt           DateTime? @map("dispatched_at")
+  createdAt              DateTime  @default(now()) @map("created_at")
 
   user           User               @relation("OrderCustomer", fields: [userId], references: [id], onDelete: Restrict, onUpdate: Cascade)
   assignedStaff  User?              @relation("OrderAssignee", fields: [assignedStaffId], references: [id], onDelete: SetNull, onUpdate: Cascade)
@@ -469,6 +485,8 @@ model Order {
   @@index([driverId])
   @@index([assignedStaffId])
   @@index([promotionId])
+  @@index([shipdayOrderId])
+  @@index([deliveryChannel])
   @@map("orders")
 }
 

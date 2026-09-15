@@ -23,7 +23,7 @@ import {
   uniqueTypes,
   type ShopFilters,
 } from "@/lib/shop-catalog";
-import { getAllLocations } from "@/data/locations";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 
 export function CategoryPage() {
   const params = useParams<{ category: string }>();
@@ -48,6 +48,7 @@ export function CategoryPage() {
   });
 
   const branchId = useBranchStore((s) => s.branchId);
+  const locations = useRuntimeLocations();
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
   const customerLng = useBranchStore((s) => s.customerLng);
@@ -96,6 +97,7 @@ export function CategoryPage() {
       customerLng,
       catalogRevision,
       inventoryRevision,
+      locations,
     ],
   );
 
@@ -123,7 +125,9 @@ export function CategoryPage() {
   const from = filtered.length ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, filtered.length);
   const currentStore =
-    getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
+    locations.find((l) => l.id === branchId) ?? locations[0];
+  const deliveryOffered = locations.some((loc) => loc.deliveryAvailable);
+  const hasDeliveryLocation = customerLat != null && customerLng != null;
 
   if (!meta) {
     notFound();
@@ -187,6 +191,9 @@ export function CategoryPage() {
               brands={brands}
               types={types}
               showCategory={false}
+              hasDeliveryLocation={hasDeliveryLocation}
+              onNeedDeliveryLocation={() => setFinderOpen(true)}
+              deliveryOffered={deliveryOffered}
             />
           </aside>
         </div>

@@ -3,7 +3,10 @@ import {
   amountUntilFreeDelivery,
   calculateShipping,
   calculateTax,
+  customerFulfillmentModes,
   pricingFromLocation,
+  publicFulfillmentSummary,
+  publicStoreServices,
 } from "@/lib/fulfillment-pricing";
 
 describe("calculateShipping", () => {
@@ -40,5 +43,39 @@ describe("amountUntilFreeDelivery", () => {
     const loc = pricingFromLocation({ deliveryFreeMinimum: 150, deliveryAvailable: true });
     expect(amountUntilFreeDelivery(120, loc)).toBe(30);
     expect(amountUntilFreeDelivery(150, loc)).toBeNull();
+  });
+});
+
+describe("public fulfillment helpers", () => {
+  it("hides delivery copy when delivery is off", () => {
+    expect(
+      publicFulfillmentSummary({
+        pickupAvailable: true,
+        deliveryAvailable: false,
+        deliveryRadiusKm: 12,
+      }),
+    ).toBe("Pickup available");
+    expect(
+      publicStoreServices(["Gift wrapping", "Same-day delivery", "Tasting"], false, true),
+    ).toEqual(["Gift wrapping", "Tasting"]);
+    expect(customerFulfillmentModes({ pickupAvailable: true, deliveryAvailable: false })).toEqual([
+      "pickup",
+    ]);
+  });
+
+  it("hides pickup copy when pickup is off", () => {
+    expect(
+      publicFulfillmentSummary({
+        pickupAvailable: false,
+        deliveryAvailable: true,
+        deliveryRadiusKm: 8,
+      }),
+    ).toBe("Delivery 8 km");
+    expect(
+      publicStoreServices(["Curbside pickup", "Gift wrapping", "Same-day delivery"], true, false),
+    ).toEqual(["Gift wrapping", "Same-day delivery"]);
+    expect(customerFulfillmentModes({ pickupAvailable: false, deliveryAvailable: true })).toEqual([
+      "delivery",
+    ]);
   });
 });

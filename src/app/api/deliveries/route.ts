@@ -10,9 +10,15 @@ import {
   listDrivers,
   updateDeliveryStatus,
 } from "@/lib/db/delivery";
+import { sendOrderToShipday } from "@/lib/db/shipday-orders";
+import {
+  isShipdayConfigured,
+  loadLocationDispatch,
+  resolveShipdayApiKey,
+} from "@/lib/db/dispatch-settings";
 import { isDbConfigured } from "@/lib/db/prisma";
 import { drivers as seedDrivers } from "@/data/drivers";
-import { canAccessLocation } from "@/lib/auth/location-access";
+import { canAccessLocation, accessibleLocations } from "@/lib/auth/location-access";
 import { prisma } from "@/lib/db/prisma";
 
 const patchSchema = z.discriminatedUnion("action", [
@@ -25,6 +31,10 @@ const patchSchema = z.discriminatedUnion("action", [
     action: z.literal("status"),
     orderId: z.string().min(1),
     status: z.enum(["unassigned", "assigned", "picked_up", "en_route", "delivered"]),
+  }),
+  z.object({
+    action: z.literal("shipday"),
+    orderId: z.string().min(1),
   }),
 ]);
 
@@ -62,7 +72,14 @@ export async function GET() {
   if (error) return error;
   try {
     if (!isDbConfigured()) {
-      return NextResponse.json({ drivers: seedDrivers, orders: [], linkedDriverId: null });
+      return NextResponse.json({
+        drivers: seedDrivers,
+        orders: [],
+        linkedDriverId: null,
+        canDispatch: canDispatchDeliveries(user),
+        shipdayConfigured: false,
+        locationDispatch: [],
+      });
     }
     const dispatcher = canDispatchDeliveries(user);
     const linkedDriverId = await findLinkedDriverId(user);
@@ -70,11 +87,24 @@ export async function GET() {
     const visibleDrivers = dispatcher
       ? drivers.filter((driver) => canAccessLocation(user, driver.locationId))
       : drivers.filter((driver) => driver.id === linkedDriverId);
+    const locationIds = [
+      ...new Set([
+        ...accessibleLocations(user).map((loc) => loc.id),
+        ...orders.map((order) => order.locationId),
+      ]),
+    ];
+    const locationDispatch = await Promise.all(
+      locationIds.map(async (id) => ({ id, ...(await loadLocationDispatch(id)) })),
+    );
+    const orgId = user.organizationId;
+    const apiKey = await resolveShipdayApiKey(orgId);
     return NextResponse.json({
       drivers: visibleDrivers,
       orders,
       linkedDriverId,
       canDispatch: dispatcher,
+      shipdayConfigured: isShipdayConfigured(apiKey),
+      locationDispatch,
     });
   } catch (err) {
     console.error("[GET /api/deliveries]", err);
@@ -92,9 +122,9 @@ export async function PATCH(request: Request) {
     }
 
     const canManage = hasPermission(user, "deliveries.manage");
-    if (parsed.data.action === "assign" && !canManage) {
+    if ((parsed.data.action === "assign" || parsed.data.action === "shipday") && !canManage) {
       return NextResponse.json(
-        { error: "You do not have permission to assign drivers." },
+        { error: "You do not have permission to dispatch deliveries." },
         { status: 403 },
       );
     }
@@ -123,6 +153,16 @@ export async function PATCH(request: Request) {
     if (parsed.data.action === "assign") {
       const driver = await assignDriver(parsed.data.orderId, parsed.data.driverId, user.id);
       return NextResponse.json({ orderId: parsed.data.orderId, driver });
+    }
+    if (parsed.data.action === "shipday") {
+      const result = await sendOrderToShipday(parsed.data.orderId, user.id);
+      if (!result.ok) {
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
+      return NextResponse.json({
+        orderId: parsed.data.orderId,
+        shipdayOrderId: result.shipdayOrderId,
+      });
     }
     await updateDeliveryStatus(parsed.data.orderId, parsed.data.status, user.id);
     return NextResponse.json({ orderId: parsed.data.orderId, status: parsed.data.status });

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { findStoresForZip } from "@/lib/store-finder";
+import { fetchAllLocations } from "@/lib/db/queries";
 
 /** Public: ZIP → eligible nearby stores with distance + delivery ETA. */
 export async function GET(request: Request) {
@@ -12,7 +13,8 @@ export async function GET(request: Request) {
   }
 
   try {
-    const result = await findStoresForZip(zip.slice(0, 5));
+    const locations = await fetchAllLocations({ inventoryMode: "featured" });
+    const result = await findStoresForZip(zip.slice(0, 5), locations);
     return NextResponse.json({
       ok: true,
       zip: zip.slice(0, 5),

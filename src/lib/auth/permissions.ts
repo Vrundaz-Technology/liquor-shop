@@ -273,7 +273,7 @@ export const PERMISSION_META: Record<
     group: "Deliveries",
     kind: "action",
     label: "Manage deliveries",
-    description: "Assign drivers, update delivery status, and manage the driver roster",
+    description: "Assign drivers, send to Shipday, update status, and manage delivery settings",
   },
   "customers.view": {
     group: "CRM",

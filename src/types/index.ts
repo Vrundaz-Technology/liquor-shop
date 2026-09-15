@@ -124,6 +124,9 @@ export type ActivityAction =
   | "event.deleted"
   | "delivery.assigned"
   | "delivery.status"
+  | "delivery.shipday_sent"
+  | "delivery.shipday_status"
+  | "delivery.shipday_failed"
   | "driver.created"
   | "driver.updated"
   | "driver.deactivated"
@@ -203,6 +206,12 @@ export type StoreLocation = {
   parking: string;
   pickupAvailable: boolean;
   deliveryAvailable: boolean;
+  /** Own drivers may take orders from this store. */
+  internalDeliveryEnabled?: boolean;
+  /** Staff may send this store's deliveries to Shipday. */
+  shipdayEnabled?: boolean;
+  /** Dispatch policy used at order confirmation. */
+  dispatchPolicy?: "manual" | "internal_first" | "shipday_always";
   deliveryRadiusKm: number;
   deliveryFee: number;
   deliveryFreeMinimum: number;
@@ -403,6 +412,16 @@ export type Order = {
   assignedStaffId?: string;
   couponCode?: string;
   promotionId?: string;
+  deliveryChannel?: "internal" | "shipday";
+  shipdayOrderId?: string;
+  providerStatus?: string;
+  providerTrackingUrl?: string;
+  providerCost?: number;
+  providerName?: string;
+  providerCourierName?: string;
+  providerCourierPhone?: string;
+  providerFailed?: boolean;
+  dispatchedAt?: string;
 };
 
 export type UserRole = "customer" | "staff" | "admin" | "owner";

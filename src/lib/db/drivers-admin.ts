@@ -66,6 +66,9 @@ export async function listDriversForAdmin(
     filters.push("active = true");
   }
   if (opts?.locationId) {
+    if (!canAccessLocation(actor, opts.locationId)) {
+      return [];
+    }
     filters.push("location_id = ?");
     params.push(opts.locationId);
   } else if (!allowAll && ids?.length) {

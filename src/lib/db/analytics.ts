@@ -1,5 +1,6 @@
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { ensureOrganizationSchema, actorOrganizationId, SAMS_ORG_ID } from "@/lib/db/organization";
+import { ensureDispatchSchema } from "@/lib/db/dispatch-settings";
 import {
   accessibleLocations,
   canAccessLocation,
@@ -30,6 +31,8 @@ export type LocationMetrics = {
   thirdPartyDeliveryCosts: number;
   productCost: number;
   estimatedProfit: number;
+  internalDeliveryOrders: number;
+  shipdayDeliveryOrders: number;
 };
 
 export type AnalyticsOverview = {
@@ -55,6 +58,8 @@ export type AnalyticsOverview = {
     estimatedProfit: number;
     newCustomers: number;
     returningCustomers: number;
+    internalDeliveryOrders: number;
+    shipdayDeliveryOrders: number;
   };
   locationCounts: Record<string, number>;
   locations: LocationMetrics[];
@@ -86,6 +91,9 @@ type LocAggRow = {
   delivery_orders: number | bigint;
   pickup_orders: number | bigint;
   refunds: number | string | null;
+  third_party_delivery_costs?: number | string | null;
+  shipday_orders?: number | bigint;
+  internal_delivery_orders?: number | bigint;
 };
 
 function asCount(value: number | bigint | null | undefined) {
@@ -139,12 +147,13 @@ function financeFromRow(row: {
   tax: number;
   deliveryRevenue: number;
   productCost: number;
+  thirdPartyDeliveryCosts?: number;
 }) {
   const netSales = Math.max(0, row.grossSales - row.discounts);
   const productCost =
     row.productCost > 0 ? row.productCost : Math.round(netSales * 0.55 * 100) / 100;
   const deliveryCosts = 0;
-  const thirdPartyDeliveryCosts = 0;
+  const thirdPartyDeliveryCosts = row.thirdPartyDeliveryCosts ?? 0;
   // Profit on merchandise + delivery fee collected − estimated COGS − known delivery costs.
   const estimatedProfit =
     netSales - productCost + row.deliveryRevenue - deliveryCosts - thirdPartyDeliveryCosts;
@@ -175,6 +184,7 @@ function mapLocationRow(
     tax,
     deliveryRevenue,
     productCost: productCostByLocation.get(row.location_id) ?? 0,
+    thirdPartyDeliveryCosts: moneyNumber(row.third_party_delivery_costs),
   });
   return {
     locationId: row.location_id,
@@ -194,6 +204,8 @@ function mapLocationRow(
     thirdPartyDeliveryCosts: finance.thirdPartyDeliveryCosts,
     productCost: finance.productCost,
     estimatedProfit: finance.estimatedProfit,
+    internalDeliveryOrders: asCount(row.internal_delivery_orders),
+    shipdayDeliveryOrders: asCount(row.shipday_orders),
   };
 }
 
@@ -227,6 +239,8 @@ function sumLocations(locations: LocationMetrics[], refunds: number) {
     productCost,
     estimatedCogs: productCost,
     estimatedProfit,
+    internalDeliveryOrders: locations.reduce((s, l) => s + l.internalDeliveryOrders, 0),
+    shipdayDeliveryOrders: locations.reduce((s, l) => s + l.shipdayDeliveryOrders, 0),
   };
 }
 
@@ -241,6 +255,7 @@ export async function fetchOwnerAnalytics(
     return emptyAnalytics(opts);
   }
   await ensureOrganizationSchema();
+  await ensureDispatchSchema();
   const orgId = actorOrganizationId(actor) ?? SAMS_ORG_ID;
   const to = opts.to ?? new Date().toISOString().slice(0, 10);
   const from =
@@ -301,7 +316,10 @@ export async function fetchOwnerAnalytics(
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.delivery_fee ELSE 0 END), 0) AS DECIMAL(14,2)) AS delivery_revenue,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'delivery' THEN 1 ELSE 0 END) AS UNSIGNED) AS delivery_orders,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'pickup' THEN 1 ELSE 0 END) AS UNSIGNED) AS pickup_orders,
-       CAST(COALESCE(SUM(CASE WHEN o.status = 'cancelled' THEN o.total ELSE 0 END), 0) AS DECIMAL(14,2)) AS refunds
+       CAST(COALESCE(SUM(CASE WHEN o.status = 'cancelled' THEN o.total ELSE 0 END), 0) AS DECIMAL(14,2)) AS refunds,
+       CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'delivery' AND COALESCE(o.delivery_channel, 'internal') <> 'shipday' THEN 1 ELSE 0 END) AS UNSIGNED) AS internal_delivery_orders,
+       CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.delivery_channel = 'shipday' THEN 1 ELSE 0 END) AS UNSIGNED) AS shipday_orders,
+       CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' AND o.delivery_channel = 'shipday' THEN COALESCE(o.provider_cost, 0) ELSE 0 END), 0) AS DECIMAL(14,2)) AS third_party_delivery_costs
      FROM orders o
      INNER JOIN locations l ON l.id = o.location_id
      WHERE ${allScope.whereSql}
@@ -429,6 +447,8 @@ export async function fetchOwnerAnalytics(
       thirdPartyDeliveryCosts: 0,
       productCost: 0,
       estimatedProfit: 0,
+      internalDeliveryOrders: 0,
+      shipdayDeliveryOrders: 0,
     };
   });
 
@@ -511,6 +531,8 @@ function emptyAnalytics(opts: { from?: string; to?: string }): AnalyticsOverview
       estimatedProfit: 0,
       newCustomers: 0,
       returningCustomers: 0,
+      internalDeliveryOrders: 0,
+      shipdayDeliveryOrders: 0,
     },
     locationCounts: {},
     locations: [],
