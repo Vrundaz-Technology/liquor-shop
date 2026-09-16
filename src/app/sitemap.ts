@@ -8,12 +8,19 @@ import { SITE } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
 
+type SitemapEntry = MetadataRoute.Sitemap[number];
+type ChangeFrequency = NonNullable<SitemapEntry["changeFrequency"]>;
+
 async function safeList<T>(load: () => Promise<T[]>, fallback: T[]): Promise<T[]> {
   try {
     return await load();
   } catch {
     return fallback;
   }
+}
+
+function entry(url: string, changeFrequency: ChangeFrequency, priority: number): SitemapEntry {
+  return { url, changeFrequency, priority };
 }
 
 export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
@@ -25,38 +32,22 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     safeList(fetchEvents, seedEvents),
   ]);
 
+  const staticPages: MetadataRoute.Sitemap = [
+    entry(base, "weekly", 1),
+    entry(`${base}/virtual-store`, "weekly", 0.9),
+    entry(`${base}/shop`, "weekly", 0.9),
+    entry(`${base}/locations`, "monthly", 0.8),
+    entry(`${base}/events`, "weekly", 0.7),
+  ];
+
   return [
-    { url: base, lastModified: new Date(), changeFrequency: "weekly", priority: 1 },
-    { url: `${base}/virtual-store`, changeFrequency: "weekly", priority: 0.9 },
-    { url: `${base}/shop`, changeFrequency: "weekly", priority: 0.9 },
-    { url: `${base}/locations`, changeFrequency: "monthly", priority: 0.8 },
-    { url: `${base}/events`, changeFrequency: "weekly", priority: 0.7 },
-    ...categories.map((c) => ({
-      url: `${base}/shop/${c.slug}`,
-      changeFrequency: "weekly" as const,
-      priority: 0.7,
-    })),
-    ...products.map((p) => ({
-      url: `${base}/products/${p.slug}`,
-      changeFrequency: "weekly",
-      priority: 0.8,
-    })),
-    ...products.map((p) => ({
-      url: `${base}/ar/${p.slug}`,
-      changeFrequency: "monthly",
-      priority: 0.6,
-    })),
-    ...locations.map((l) => ({
-      url: `${base}/locations/${l.slug}`,
-      changeFrequency: "monthly",
-      priority: 0.6,
-    })),
+    ...staticPages,
+    ...categories.map((c) => entry(`${base}/shop/${c.slug}`, "weekly", 0.7)),
+    ...products.map((p) => entry(`${base}/products/${p.slug}`, "weekly", 0.8)),
+    ...products.map((p) => entry(`${base}/ar/${p.slug}`, "monthly", 0.6)),
+    ...locations.map((l) => entry(`${base}/locations/${l.slug}`, "monthly", 0.6)),
     ...events
       .filter((e) => e.active !== false)
-      .map((e) => ({
-        url: `${base}/events/${e.slug}`,
-        changeFrequency: "weekly" as const,
-        priority: 0.6,
-      })),
+      .map((e) => entry(`${base}/events/${e.slug}`, "weekly", 0.6)),
   ];
 }
