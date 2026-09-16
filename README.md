@@ -55,7 +55,7 @@ Re-seeding updates catalog copy only. Live stock, event seats, loyalty points, a
 
 ## Schema changes
 
-`npm run build` runs `prisma migrate deploy` before `next build`, so **schema changes ship with the deploy that needs them**. `DATABASE_URL` must be available at build time. Use `npm run build:only` to build without touching the database.
+Run `npm run db:deploy` (`prisma migrate deploy`) as its own deploy step, then `npm run build`. Migrations stay out of the Next.js build so a database error cannot fail compilation. `DATABASE_URL` is required for `db:deploy`, not for `build`.
 
 To change the schema:
 
@@ -68,7 +68,7 @@ To change the schema:
 
 ### Baselining an existing database
 
-A database created before migrations existed has the tables but no `_prisma_migrations` table, so `prisma migrate deploy` refuses to run and fails with `P3005: The database schema is not empty`. Because `build` now runs `migrate deploy`, **this would fail the build.**
+A database created before migrations existed has the tables but no `_prisma_migrations` table, so `prisma migrate deploy` refuses to run and fails with `P3005: The database schema is not empty`.
 
 Run once per pre-existing database, before the first deploy:
 
