@@ -55,7 +55,7 @@ Re-seeding updates catalog copy only. Live stock, event seats, loyalty points, a
 
 ## Schema changes
 
-Run `npm run db:deploy` (`prisma migrate deploy`) as its own deploy step, then `npm run build`. Migrations stay out of the Next.js build so a database error cannot fail compilation. `DATABASE_URL` is required for `db:deploy`, not for `build`.
+`npm run build` runs `prebuild` first (`prisma migrate deploy`), then Next.js. Use `npm run build:only` if you need a compile without touching the database. `DATABASE_URL` must be set for `prebuild`.
 
 To change the schema:
 
