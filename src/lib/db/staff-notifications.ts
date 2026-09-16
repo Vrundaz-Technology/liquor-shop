@@ -168,7 +168,7 @@ export async function emitStaffNotification(input: {
       `INSERT INTO staff_notifications
         (id, organization_id, type, title, body, entity_type, entity_id, location_id,
          actor_user_id, severity, dedupe_key, href, metadata)
-       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON))`,
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
       id,
       organizationId,
       input.type,

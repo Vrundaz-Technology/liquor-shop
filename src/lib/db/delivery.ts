@@ -148,7 +148,7 @@ export async function saveOrderDelivery(orderId: string, delivery: DeliveryAddre
   await ensureDeliverySchema();
   await prisma.$executeRawUnsafe(
     `UPDATE orders
-     SET delivery_address = CAST(? AS JSON),
+     SET delivery_address = ?,
          delivery_phone = ?,
          delivery_status = COALESCE(delivery_status, 'unassigned')
      WHERE id = ?`,

@@ -303,7 +303,7 @@ export async function createPlatformReview(input: {
     `INSERT INTO platform_reviews
       (id, target_type, product_id, location_id, order_id, user_id, user_name,
        rating, title, body, date, verified, status, report_count, helpful, images, created_at)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'published', 0, 0, CAST(? AS JSON), NOW(3))`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'published', 0, 0, ?, NOW(3))`,
     id,
     input.targetType,
     input.productId ?? null,

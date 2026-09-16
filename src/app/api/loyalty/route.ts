@@ -145,8 +145,8 @@ export async function PATCH(request: Request) {
          referral_points = ?,
          referral_signup_points = ?,
          active = ?,
-         tiers = CAST(? AS JSON),
-         rewards = CAST(? AS JSON),
+         tiers = ?,
+         rewards = ?,
          updated_at = NOW(3)
      WHERE id = ?`,
     nextName,

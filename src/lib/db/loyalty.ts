@@ -100,7 +100,7 @@ export async function ensureLoyaltyProgram(organizationId: string) {
     `INSERT INTO loyalty_programs
       (id, organization_id, name, points_per_dollar, redeem_rate,
        birthday_points, referral_points, referral_signup_points, tiers, rewards, active)
-     VALUES (?,?,?,?,?,?,?,?,?,CAST(? AS JSON),true)`,
+     VALUES (?,?,?,?,?,?,?,?,?,?,true)`,
     id,
     organizationId,
     "Store Loyalty",

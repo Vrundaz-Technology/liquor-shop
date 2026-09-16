@@ -977,7 +977,7 @@ export async function updateOwnProfileFields(
       ...patch.preferences,
     };
     await prisma.$executeRawUnsafe(
-      `UPDATE users SET preferences = CAST(? AS JSON) WHERE id = ?`,
+      `UPDATE users SET preferences = ? WHERE id = ?`,
       JSON.stringify(nextPrefs),
       userId,
     );

@@ -547,7 +547,7 @@ export async function ensureOrganizationSchema() {
   // Ensure Sam's org exists and backfill locations/users/orders
   await prisma.$executeRawUnsafe(
     `INSERT INTO organizations (id, name, slug, settings, active)
-     VALUES (?, ?, ?, CAST(? AS JSON), true)
+     VALUES (?, ?, ?, ?, true)
      ON DUPLICATE KEY UPDATE name = VALUES(name)`,
     SAMS_ORG_ID,
     "Sam's Discount Liquor",

@@ -444,7 +444,7 @@ export async function upsertPromotion(data: {
   await prisma.$executeRawUnsafe(
     `INSERT INTO promotions
       (id, organization_id, location_id, scope, name, code, type, value, min_subtotal, priority, stackable, active, starts_at, ends_at, rules)
-     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,CAST(? AS JSON))
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
      ON DUPLICATE KEY UPDATE
        name = VALUES(name),
        code = VALUES(code),

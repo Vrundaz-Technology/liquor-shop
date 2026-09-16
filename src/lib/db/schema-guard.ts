@@ -5,6 +5,9 @@ import { prisma } from "./prisma";
  * `CREATE INDEX IF NOT EXISTS` (MariaDB does, but we target the common subset
  * so the same build runs on either server). The existence check therefore
  * lives here, against information_schema, instead of in the DDL itself.
+ *
+ * Do not use CAST(? AS JSON) in raw SQL. Hostinger MariaDB rejects that
+ * syntax (1064). Bind a JSON.stringify(...) string as `?` instead.
  */
 
 /** MySQL error codes that mean "the thing I tried to add is already there". */

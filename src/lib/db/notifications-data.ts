@@ -146,7 +146,7 @@ export async function syncAbandonedCart(
   }
   await prisma.$executeRawUnsafe(
     `INSERT INTO abandoned_carts (user_id, items_json, item_count, updated_at, reminded_at)
-     VALUES (?, CAST(? AS JSON), ?, NOW(3), NULL)
+     VALUES (?, ?, ?, NOW(3), NULL)
      ON DUPLICATE KEY UPDATE
        items_json = VALUES(items_json),
        item_count = VALUES(item_count),
