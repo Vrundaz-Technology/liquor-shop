@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { CategoryPage } from "./CategoryClient";
 import { getCategories } from "@/data/categories";
 
@@ -18,5 +19,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function Page({ params }: Props) {
   await params;
-  return <CategoryPage />;
+  return (
+    <Suspense
+      fallback={
+        <div className="mx-auto max-w-7xl px-3 py-16 text-sm text-muted sm:px-4 md:px-8">
+          Loading collection…
+        </div>
+      }
+    >
+      <CategoryPage />
+    </Suspense>
+  );
 }

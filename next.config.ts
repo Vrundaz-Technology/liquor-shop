@@ -1,11 +1,17 @@
 import type { NextConfig } from "next";
 
+/** Turbopack can poison the on-disk image LRU in dev; keep optimizer for production. */
+const disableImageOptimizer =
+  process.env.NEXT_IMAGE_UNOPTIMIZED === "1" ||
+  process.env.NODE_ENV === "development";
+
 const nextConfig: NextConfig = {
   images: {
-    // Bypass next/image disk LRU — Next 15 + Turbopack can write 0-byte
-    // cache files that permanently poison the optimizer (calculateSize = 0).
-    // Local /public assets are already sized for the shop.
-    unoptimized: true,
+    unoptimized: disableImageOptimizer,
+    formats: ["image/avif", "image/webp"],
+    minimumCacheTTL: 60 * 60 * 24 * 7,
+    deviceSizes: [640, 750, 828, 1080, 1200, 1920],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256, 384],
     remotePatterns: [
       { protocol: "https", hostname: "placehold.co" },
       { protocol: "https", hostname: "images.unsplash.com" },
@@ -23,6 +29,7 @@ const nextConfig: NextConfig = {
     serverActions: {
       bodySizeLimit: "2mb",
     },
+    optimizePackageImports: ["lucide-react", "recharts", "date-fns", "framer-motion"],
   },
   async headers() {
     return [

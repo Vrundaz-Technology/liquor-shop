@@ -36,7 +36,7 @@ export function compareValues(a: string | number, b: string | number, dir: SortD
 
 export const tableWrapClass = "overflow-x-auto border border-white/10";
 export const tableHeadRowClass =
-  "border-b border-(--gold)/30 bg-white/[0.03] text-[10px] uppercase tracking-[0.16em] text-muted";
+  "border-b border-(--gold)/30 bg-white/[0.03] text-[10px] uppercase tracking-[0.14em] text-muted";
 export const tableRowClass = "border-b border-white/5 last:border-0 hover:bg-white/[0.02]";
 export const tableCellClass = "px-4 py-3.5 align-middle";
 
@@ -59,12 +59,18 @@ export function SortableTh<K extends string>({
 }) {
   const active = sortKey === column;
   return (
-    <th className={cn("px-4 py-3 font-medium", align === "right" && "text-right", className)}>
+    <th
+      className={cn(
+        "px-4 py-3 font-medium whitespace-nowrap",
+        align === "right" && "text-right",
+        className,
+      )}
+    >
       <button
         type="button"
         onClick={() => onSort(column)}
         className={cn(
-          "inline-flex items-center gap-1.5 uppercase tracking-[inherit] transition-colors",
+          "inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-[inherit] transition-colors",
           align === "right" && "ml-auto",
           active ? "text-gold" : "hover:text-cream",
         )}
@@ -72,12 +78,12 @@ export function SortableTh<K extends string>({
         {label}
         {active ? (
           sortDir === "asc" ? (
-            <ArrowUp size={11} strokeWidth={2.25} className="text-gold" />
+            <ArrowUp size={11} strokeWidth={2.25} className="shrink-0 text-gold" />
           ) : (
-            <ArrowDown size={11} strokeWidth={2.25} className="text-gold" />
+            <ArrowDown size={11} strokeWidth={2.25} className="shrink-0 text-gold" />
           )
         ) : (
-          <ArrowUpDown size={11} strokeWidth={2} className="opacity-45" />
+          <ArrowUpDown size={11} strokeWidth={2} className="shrink-0 opacity-45" />
         )}
       </button>
     </th>

@@ -1,15 +1,20 @@
 import { NextResponse } from "next/server";
 import { requireUser } from "@/lib/auth/require";
 import { mePatchSchema } from "@/lib/db/validators";
-import { redeemLoyaltyPoints, updateUserProfile, fetchUserById } from "@/lib/db/queries";
+import { redeemUserLoyaltyPoints, updateUserProfile, fetchUserById } from "@/lib/db/queries";
 import { updateOwnPassword, updateOwnProfileFields } from "@/lib/db/users";
 import { applyAuthCookies, issueTokens } from "@/lib/auth/session";
 import { validatePassword } from "@/lib/auth/password";
 
-export async function GET() {
+export async function GET(request: Request) {
   try {
     const { user, error } = await requireUser();
     if (error) return error;
+    const includeOrders = new URL(request.url).searchParams.get("orders") === "1";
+    if (includeOrders) {
+      const full = await fetchUserById(user.id);
+      return NextResponse.json({ user: full ?? user });
+    }
     return NextResponse.json({ user });
   } catch (error) {
     console.error("[GET /api/auth/me]", error);
@@ -26,9 +31,18 @@ export async function PATCH(request: Request) {
       return NextResponse.json({ error: "Invalid profile payload." }, { status: 400 });
     }
     if ("redeemPoints" in parsed.data) {
-      const ok = await redeemLoyaltyPoints(user.id, parsed.data.redeemPoints);
-      if (!ok) {
-        return NextResponse.json({ error: "Not enough loyalty points." }, { status: 409 });
+      try {
+        const { resolveMemberOrganizationId } = await import("@/lib/db/loyalty");
+        const orgId = await resolveMemberOrganizationId({
+          preferredBranchId: user.preferredBranchId,
+          organizationId: user.organizationId,
+        });
+        await redeemUserLoyaltyPoints(user.id, parsed.data.redeemPoints, orgId);
+      } catch (err) {
+        return NextResponse.json(
+          { error: err instanceof Error ? err.message : "Not enough loyalty points." },
+          { status: 409 },
+        );
       }
       const next = await fetchUserById(user.id);
       return NextResponse.json({ user: next ?? user });
@@ -62,6 +76,10 @@ export async function PATCH(request: Request) {
       ...(profilePatch.name ? { name: profilePatch.name } : {}),
       ...(profilePatch.email ? { email: profilePatch.email } : {}),
       ...(profilePatch.avatarUrl !== undefined ? { avatarUrl: profilePatch.avatarUrl } : {}),
+      ...(profilePatch.birthday !== undefined
+        ? { birthday: profilePatch.birthday === "" ? null : profilePatch.birthday }
+        : {}),
+      ...(profilePatch.preferences !== undefined ? { preferences: profilePatch.preferences } : {}),
     };
     if (Object.keys(extrasPatch).length > 0) {
       const extraResult = await updateOwnProfileFields(user.id, extrasPatch);

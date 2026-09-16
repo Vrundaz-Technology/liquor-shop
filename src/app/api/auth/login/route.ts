@@ -29,6 +29,12 @@ export async function POST(request: Request) {
         entityType: "user",
         entityId: user.id,
         summary: `${user.name} signed in as ${user.role}`,
+        metadata: {
+          changes: [
+            { field: "signed in", to: user.role },
+            { field: "email", to: user.email },
+          ],
+        },
       });
     } catch (activityError) {
       console.error("[POST /api/auth/login] activity log write failed", activityError);

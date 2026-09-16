@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Product } from "@/types";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 
 type Props = {
   products: Product[];
@@ -275,7 +276,8 @@ export function BottleCarousel({
               </span>
             </Link>
             <p className="mt-2 text-sm text-[var(--muted)]">
-              {current.origin} · {current.abv}% ABV
+              {current.origin} · {current.abv}%{" "}
+              <AbbrTooltip term="ABV" />
             </p>
             <Link
               href={`/products/${current.slug}`}

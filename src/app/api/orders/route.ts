@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { cancelOrder, fetchInventoryState, placeOrder, StockConflictError } from "@/lib/db/queries";
 import {
+  countUnreadNewOrders,
   listStoreOrders,
   staffCancelOrder,
   staffUpdateOrderStatus,
@@ -23,15 +24,24 @@ export async function GET(request: Request) {
       | Order["fulfillment"]
       | "all";
     const q = url.searchParams.get("q") || undefined;
+    const fromDate = url.searchParams.get("fromDate") || undefined;
+    const toDate = url.searchParams.get("toDate") || undefined;
+    const unreadOnly = url.searchParams.get("unread") === "1";
 
-    const orders = await listStoreOrders(user, {
-      locationId,
-      status,
-      fulfillment,
-      q,
-    });
+    const [orders, unreadOrderCount] = await Promise.all([
+      listStoreOrders(user, {
+        locationId,
+        status,
+        fulfillment,
+        q,
+        fromDate,
+        toDate,
+        unreadOnly,
+      }),
+      countUnreadNewOrders(user),
+    ]);
 
-    return NextResponse.json({ orders });
+    return NextResponse.json({ orders, unreadOrderCount });
   } catch (error) {
     console.error("[GET /api/orders]", error);
     return NextResponse.json({ error: "Failed to load orders." }, { status: 500 });

@@ -11,10 +11,18 @@ import {
   apiLogout,
   apiMe,
   apiRedeemPoints,
+  apiClaimBirthdayReward,
   apiSignup,
   apiUpdateMe,
 } from "@/lib/api-mutations";
-import { clearClientAccessToken, setClientAccessToken } from "@/lib/auth/client-token";
+import { refreshSession } from "@/lib/api-client";
+import { clearClientAccessToken, getClientAccessToken, setClientAccessToken } from "@/lib/auth/client-token";
+import {
+  clearSessionSketch,
+  hasAuthHint,
+  readSessionSketch,
+  writeSessionSketch,
+} from "@/lib/auth/session-hint";
 import { useInventoryStore } from "@/store/inventory";
 import { useBranchStore } from "@/store/branch";
 import { useWishlistStore } from "@/store/wishlist";
@@ -28,9 +36,11 @@ function applyAuth(isLoggedIn: boolean, profile: UserProfile) {
   if (isLoggedIn) {
     useWishlistStore.getState().bindUser(profile.id);
     useCartStore.getState().bindUser(profile.id);
+    writeSessionSketch(profile);
   } else {
     useWishlistStore.getState().unbindUser();
     useCartStore.getState().unbindUser();
+    clearSessionSketch();
   }
   return { isLoggedIn, profile };
 }
@@ -41,25 +51,51 @@ function syncPreferredBranch(profile: UserProfile) {
   }
 }
 
+function profileFromSketch(): UserProfile | null {
+  const sketch = readSessionSketch();
+  if (!sketch) return null;
+  return {
+    ...demoUser,
+    ...sketch,
+    orders: [],
+    addresses: [],
+    recentlyViewed: [],
+    active: true,
+  };
+}
+
 type UserState = {
   isLoggedIn: boolean;
   profile: UserProfile;
   authReady: boolean;
   login: (email: string, password: string) => Promise<void>;
-  signup: (name: string, email: string, password: string) => Promise<void>;
+  signup: (name: string, email: string, password: string, referralCode?: string) => Promise<void>;
   logout: () => Promise<void>;
   hydrateSession: () => Promise<void>;
+  loadOrdersIntoProfile: () => Promise<void>;
   addViewed: (productId: string) => void;
-  setPreferredBranch: (id: string) => void;
-  updateName: (name: string) => Promise<void>;
   updateProfile: (
-    patch: Partial<Pick<UserProfile, "name" | "email" | "avatarUrl">> & {
+    patch: Partial<
+      Pick<
+        UserProfile,
+        | "name"
+        | "email"
+        | "addresses"
+        | "preferredBranchId"
+        | "preferences"
+      >
+    > & {
+      avatarUrl?: string | null;
+      birthday?: string | null;
       password?: string;
       currentPassword?: string;
     },
   ) => Promise<void>;
+  setPreferredBranch: (id: string) => void;
+  updateName: (name: string) => Promise<void>;
   changePassword: (password: string, currentPassword: string) => Promise<void>;
   redeemPoints: (points: number) => boolean;
+  claimBirthdayReward: () => Promise<{ points: number }>;
   addOrder: (order: Order, options?: { loyaltyPoints?: number }) => void;
   cancelOrder: (orderId: string) => Order | null;
   isStaff: () => boolean;
@@ -76,8 +112,8 @@ export const useUserStore = create<UserState>()((set, get) => ({
     syncPreferredBranch(user);
     set({ ...applyAuth(true, user), authReady: true });
   },
-  signup: async (name, email, password) => {
-    const { user, accessToken } = await apiSignup(name, email, password);
+  signup: async (name, email, password, referralCode) => {
+    const { user, accessToken } = await apiSignup(name, email, password, referralCode);
     setClientAccessToken(accessToken);
     syncPreferredBranch(user);
     set({ ...applyAuth(true, user), authReady: true });
@@ -92,13 +128,46 @@ export const useUserStore = create<UserState>()((set, get) => ({
     set({ ...applyAuth(false, demoUser), authReady: true });
   },
   hydrateSession: async () => {
+    // Optimistic UI from last session so header never flashes "Sign in".
+    if (hasAuthHint()) {
+      const sketched = profileFromSketch();
+      if (sketched) {
+        syncPreferredBranch(sketched);
+        set({ ...applyAuth(true, sketched), authReady: false });
+      }
+    }
+
     try {
+      // Access JWT lives only in memory — after refresh, mint first (avoids failed /me + retry).
+      if (!getClientAccessToken()) {
+        const refreshed = await refreshSession();
+        if (refreshed?.user) {
+          syncPreferredBranch(refreshed.user);
+          set({ ...applyAuth(true, refreshed.user), authReady: true });
+          return;
+        }
+        if (!refreshed) {
+          clearClientAccessToken();
+          set({ ...applyAuth(false, demoUser), authReady: true });
+          return;
+        }
+      }
+
       const { user } = await apiMe();
       syncPreferredBranch(user);
       set({ ...applyAuth(true, user), authReady: true });
     } catch {
       clearClientAccessToken();
       set({ ...applyAuth(false, demoUser), authReady: true });
+    }
+  },
+  loadOrdersIntoProfile: async () => {
+    if (!get().isLoggedIn) return;
+    try {
+      const { user } = await apiMe({ includeOrders: true });
+      set((s) => applyAuth(s.isLoggedIn, { ...user, orders: user.orders ?? [] }));
+    } catch (error) {
+      console.error(error);
     }
   },
   addViewed: (productId) =>
@@ -116,6 +185,7 @@ export const useUserStore = create<UserState>()((set, get) => ({
     }),
   setPreferredBranch: (id) =>
     set((s) => {
+      useBranchStore.getState().setBranch(id);
       if (isDbConnected() && s.isLoggedIn) {
         void apiUpdateMe({ preferredBranchId: id }).catch(console.error);
       }
@@ -144,6 +214,17 @@ export const useUserStore = create<UserState>()((set, get) => ({
       profile: { ...s.profile, loyaltyPoints: current - points },
     }));
     return true;
+  },
+  claimBirthdayReward: async () => {
+    const result = await apiClaimBirthdayReward();
+    set((s) =>
+      applyAuth(s.isLoggedIn, {
+        ...s.profile,
+        loyaltyPoints: result.balance,
+        canClaimBirthday: false,
+      }),
+    );
+    return { points: result.points };
   },
   addOrder: (order, options) =>
     set((s) => {
@@ -174,7 +255,12 @@ export const useUserStore = create<UserState>()((set, get) => ({
           if (res.inventory) {
             useInventoryStore
               .getState()
-              .syncFromServer(res.inventory.stocks, res.inventory.seats, res.inventory.hidden);
+              .syncFromServer(
+                res.inventory.stocks,
+                res.inventory.seats,
+                res.inventory.hidden,
+                res.inventory.reserved,
+              );
           }
         })
         .catch(console.error);

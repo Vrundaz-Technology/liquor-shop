@@ -1,8 +1,8 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useState } from "react";
-import { KeyRound, Pencil, RefreshCw, Search, ShieldCheck, UserPlus, Users } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { KeyRound, Pencil, Plus, RefreshCw, ShieldCheck, UserPlus, Users } from "lucide-react";
 import { format, formatDistanceToNow } from "date-fns";
 import { apiCreateUser, apiFetchRoles, apiFetchUsers, apiPatchUser } from "@/lib/api-mutations";
 import { setCustomRoleCatalog } from "@/lib/auth/role-catalog";
@@ -24,8 +24,11 @@ import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { useUserStore } from "@/store/user";
 import type { ManagedUser, UserProfile } from "@/types";
 import { Input } from "@/components/ui/Input";
+import { SearchInput } from "@/components/ui/SearchInput";
+import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
+import { NativeSelect } from "@/components/ui/NativeSelect";
 import { Pagination } from "@/components/ui/Pagination";
 import { MobileSortBar, SortableTh, tableHeadRowClass, useTableSort } from "@/components/ui/SortableTh";
 import { UserAvatar } from "@/components/ui/UserAvatar";
@@ -63,6 +66,7 @@ export function UsersPanel() {
   );
   const [saving, setSaving] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
+  const [pendingRoleCreate, setPendingRoleCreate] = useState(false);
   const [editing, setEditing] = useState<ManagedUser | null>(null);
   const [resetting, setResetting] = useState<ManagedUser | null>(null);
   const [customRoles, setCustomRoles] = useState<CustomRoleDefinition[]>([]);
@@ -79,13 +83,19 @@ export function UsersPanel() {
   const canAssign = hasPermission(actor, "users.assign_roles");
   const canCustomizePermissions = hasPermission(actor, "users.edit");
   const canManageRoles = canAssign;
+  const clearPendingRoleCreate = useCallback(() => setPendingRoleCreate(false), []);
 
   useEffect(() => {
     if (view === "permissions" && !canManageRoles) setView("directory");
   }, [view, canManageRoles]);
 
-  const load = async (pageOverride?: number) => {
+  const load = async (
+    pageOverride?: number,
+    overrides?: { q?: string; role?: string },
+  ) => {
     const activePage = pageOverride ?? page;
+    const activeQ = overrides?.q ?? q;
+    const activeRole = overrides?.role ?? role;
     if (!isDbConnected()) {
       setUsers([]);
       setTotal(0);
@@ -97,8 +107,8 @@ export function UsersPanel() {
     setError("");
     try {
       const data = await apiFetchUsers({
-        q: q.trim() || undefined,
-        role: role === "all" ? undefined : role,
+        q: activeQ.trim() || undefined,
+        role: activeRole === "all" ? undefined : activeRole,
         limit: pageSize,
         offset: (activePage - 1) * pageSize,
         sortKey,
@@ -112,6 +122,13 @@ export function UsersPanel() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const clearFilters = () => {
+    setQ("");
+    setRole("all");
+    setPage(1);
+    void load(1, { q: "", role: "all" });
   };
 
   useEffect(() => {
@@ -235,10 +252,22 @@ export function UsersPanel() {
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
-          <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading}>
-            <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
+          <Button size="sm" variant="secondary" onClick={() => void load()} loading={loading}>
+            {!loading ? <RefreshCw size={14} /> : null}
             Refresh
           </Button>
+          {canManageRoles ? (
+            <Button
+              size="sm"
+              onClick={() => {
+                setView("permissions");
+                setPendingRoleCreate(true);
+              }}
+            >
+              <Plus size={14} />
+              Add role
+            </Button>
+          ) : null}
           {canCreate && (
             <Button
               size="sm"
@@ -281,30 +310,30 @@ export function UsersPanel() {
       ) : null}
 
       {view === "permissions" && canManageRoles ? (
-        <CustomRolesPanel highlight={actor.role} />
+        <CustomRolesPanel
+          highlight={actor.role}
+          autoOpenCreate={pendingRoleCreate}
+          onCreateOpened={clearPendingRoleCreate}
+        />
       ) : (
         <>
-          <div className="mt-5 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_180px_160px]">
-            <label>
-              <span className="text-xs text-muted">Search</span>
-              <div className="relative mt-1">
-                <Search
-                  size={14}
-                  className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted"
-                />
-                <Input
-                  className="py-2 pl-9"
-                  placeholder="Search name or email…"
-                  value={q}
-                  onChange={(e) => setQ(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      setPage(1);
-                      void load(1);
-                    }
-                  }}
-                />
-              </div>
+          <div className="mt-5 grid grid-cols-1 items-end gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,1fr)_minmax(11rem,12rem)_minmax(8rem,9rem)]">
+            <label className="min-w-0">
+              <span className="mb-1.5 block text-[10px] uppercase tracking-[0.16em] text-gold">
+                Search
+              </span>
+              <SearchInput
+                placeholder="Search name or email…"
+                value={q}
+                onChange={setQ}
+                aria-label="Search users"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    setPage(1);
+                    void load(1);
+                  }
+                }}
+              />
             </label>
             <Select
               label="Role"
@@ -316,22 +345,59 @@ export function UsersPanel() {
                 ...customRoles.map((r) => ({ value: r.slug, label: r.label })),
               ]}
             />
-            <label>
-              <span className="text-xs text-muted">Per page</span>
-              <select
+            <label className="min-w-0">
+              <span className="mb-1.5 block text-[10px] uppercase tracking-[0.16em] text-gold">
+                Per page
+              </span>
+              <NativeSelect
                 value={pageSize}
                 aria-label="Users per page"
                 onChange={(e) => setPageSize(Number(e.target.value))}
-                className="mt-1 w-full rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2 text-sm text-cream outline-none scheme-dark hover:border-white/20 focus:border-(--gold)/40 [&_option]:bg-(--bg-elevated) [&_option]:text-cream"
               >
                 {[5, 10, 20].map((n) => (
                   <option key={n} value={n}>
                     {n}
                   </option>
                 ))}
-              </select>
+              </NativeSelect>
             </label>
           </div>
+
+          <ActiveFiltersBar
+            className="mt-3"
+            resultCount={total}
+            resultNoun="user"
+            chips={[
+              ...(q.trim()
+                ? [
+                    {
+                      id: "q",
+                      label: `“${q.trim()}”`,
+                      onRemove: () => {
+                        setQ("");
+                        setPage(1);
+                        void load(1, { q: "" });
+                      },
+                    },
+                  ]
+                : []),
+              ...(role !== "all"
+                ? [
+                    {
+                      id: "role",
+                      label:
+                        customRoles.find((r) => r.slug === role)?.label ??
+                        roleLabel(role),
+                      onRemove: () => {
+                        setRole("all");
+                        setPage(1);
+                      },
+                    },
+                  ]
+                : []),
+            ]}
+            onClearAll={clearFilters}
+          />
 
           <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs text-muted">
@@ -818,7 +884,7 @@ function ResetPasswordModal({
           <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" className="w-full sm:w-auto" disabled={busy || !user}>
+          <Button type="submit" className="w-full sm:w-auto" loading={busy} disabled={!user}>
             {busy ? "Saving…" : "Reset password"}
           </Button>
         </div>

@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { dashboardPath, parseDashboardPath } from "@/lib/dashboard/routes";
-import { Contact, LayoutGrid, Table2, Truck } from "lucide-react";
+import { Contact, LayoutGrid, Settings, Table2, Truck } from "lucide-react";
 import { DriversPanel } from "@/components/dashboard/DriversPanel";
+import { DeliverySettingsPanel } from "@/components/dashboard/DeliverySettingsPanel";
 import { PanelLoading } from "@/components/dashboard/DashboardLoading";
 import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import { useUserStore } from "@/store/user";
 import { isDbConnected } from "@/lib/runtime-data";
-import { apiAssignDelivery, apiFetchDeliveries, apiUpdateDeliveryStatus } from "@/lib/api-mutations";
+import { apiAssignDelivery, apiFetchDeliveries, apiSendDeliveryToShipday, apiUpdateDeliveryStatus } from "@/lib/api-mutations";
 import { drivers as seedDrivers } from "@/data/drivers";
 import { demoUser } from "@/data/events";
 import { getAllLocations } from "@/data/locations";
@@ -18,6 +19,7 @@ import { formatPrice } from "@/lib/utils";
 import { useDeliveryStore } from "@/store/delivery";
 import { hasPermission } from "@/lib/auth/permissions";
 import { Select } from "@/components/ui/Select";
+import { NativeSelect } from "@/components/ui/NativeSelect";
 import { Button } from "@/components/ui/Button";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import {
@@ -30,7 +32,11 @@ import {
   useTableSort,
 } from "@/components/ui/SortableTh";
 import { cn } from "@/lib/utils";
+import { usePersistedViewMode } from "@/hooks/usePersistedViewMode";
+import { isDeliveryKitchenStage } from "@/lib/commerce/order-labels";
 import type { DeliveryStatus, Driver, Order } from "@/types";
+
+const DELIVERIES_VIEW_KEY = "sams.dashboard.view.deliveries";
 
 const STATUS_LABEL: Record<DeliveryStatus, string> = {
   unassigned: "Unassigned",
@@ -54,9 +60,8 @@ const NEXT_STATUS: Partial<Record<DeliveryStatus, DeliveryStatus>> = {
   en_route: "delivered",
 };
 
-type ViewMode = "cards" | "table";
-type SortKey = "order" | "store" | "status" | "total";
-type DeliveriesSection = "deliveries" | "drivers";
+type SortKey = "order" | "store" | "status" | "address" | "items" | "total";
+type DeliveriesSection = "deliveries" | "drivers" | "settings";
 
 const DELIVERIES_SECTIONS: {
   id: DeliveriesSection;
@@ -65,6 +70,7 @@ const DELIVERIES_SECTIONS: {
 }[] = [
   { id: "deliveries", label: "Deliveries", icon: Truck },
   { id: "drivers", label: "Drivers", icon: Contact },
+  { id: "settings", label: "Settings", icon: Settings },
 ];
 
 function formatAddress(order: Order) {
@@ -83,17 +89,16 @@ function itemsSummary(order: Order) {
   return `${name} + ${order.items.length - 1} more · ${qty} bottles`;
 }
 
-const selectClass =
-  "rounded-sm border border-white/10 bg-(--bg-elevated) px-2 py-1.5 text-xs text-cream scheme-dark outline-none focus:border-(--gold)/40 [&_option]:bg-(--bg-elevated)";
-
 export function DeliveriesPanel() {
   const router = useRouter();
   const pathname = usePathname();
   const profile = useUserStore((s) => s.profile);
   const canView = hasPermission(profile, "deliveries.view");
+  const canManage = hasPermission(profile, "deliveries.manage");
+  const parsedSection = parseDashboardPath(pathname).deliveriesSection;
   const section: DeliveriesSection =
-    parseDashboardPath(pathname).deliveriesSection === "drivers"
-      ? "drivers"
+    canManage && (parsedSection === "drivers" || parsedSection === "settings")
+      ? parsedSection
       : "deliveries";
 
   const setSection = useCallback(
@@ -101,7 +106,9 @@ export function DeliveriesPanel() {
       router.push(
         next === "drivers"
           ? dashboardPath("deliveries", { drivers: true })
-          : dashboardPath("deliveries"),
+          : next === "settings"
+            ? dashboardPath("deliveries", { settings: true })
+            : dashboardPath("deliveries"),
         { scroll: false },
       );
     },
@@ -114,37 +121,49 @@ export function DeliveriesPanel() {
     );
   }
 
+  const tabs = canManage
+    ? DELIVERIES_SECTIONS
+    : DELIVERIES_SECTIONS.filter((tab) => tab.id === "deliveries");
+
   return (
     <section className="mt-0 min-w-0">
-      <div
-        className="-mx-3 h-scroll border-b border-white/10 px-3 sm:mx-0 sm:px-0"
-        role="tablist"
-        aria-label="Deliveries sections"
-      >
-        {DELIVERIES_SECTIONS.map((tab) => {
-          const active = section === tab.id;
-          const Icon = tab.icon;
-          return (
-            <button
-              key={tab.id}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => setSection(tab.id)}
-              className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 py-3 text-xs uppercase tracking-[0.14em] transition-colors sm:px-4 sm:text-sm ${
-                active
-                  ? "border-(--gold) text-cream"
-                  : "border-transparent text-muted hover:text-cream"
-              }`}
-            >
-              <Icon size={14} className={active ? "text-gold" : ""} />
-              <span>{tab.label}</span>
-            </button>
-          );
-        })}
-      </div>
+      {canManage ? (
+        <div
+          className="-mx-3 h-scroll border-b border-white/10 px-3 sm:mx-0 sm:px-0"
+          role="tablist"
+          aria-label="Deliveries sections"
+        >
+          {tabs.map((tab) => {
+            const active = section === tab.id;
+            const Icon = tab.icon;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setSection(tab.id)}
+                className={`inline-flex min-h-11 items-center gap-2 border-b-2 px-3 py-3 text-xs uppercase tracking-[0.14em] transition-colors sm:px-4 sm:text-sm ${
+                  active
+                    ? "border-(--gold) text-cream"
+                    : "border-transparent text-muted hover:text-cream"
+                }`}
+              >
+                <Icon size={14} className={active ? "text-gold" : ""} />
+                <span>{tab.label}</span>
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
 
-      {section === "drivers" ? <DriversPanel embedded /> : <DeliveriesQueuePanel />}
+      {section === "drivers" && canManage ? (
+        <DriversPanel embedded />
+      ) : section === "settings" && canManage ? (
+        <DeliverySettingsPanel />
+      ) : (
+        <DeliveriesQueuePanel />
+      )}
     </section>
   );
 }
@@ -158,10 +177,15 @@ function DeliveriesQueuePanel() {
   const localDrivers = useDeliveryStore((s) => s.drivers);
   const [drivers, setDrivers] = useState<Driver[]>(seedDrivers);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [linkedDriverId, setLinkedDriverId] = useState<string | null>(null);
+  const [shipdayConfigured, setShipdayConfigured] = useState(false);
+  const [locationDispatch, setLocationDispatch] = useState<
+    Record<string, { shipdayEnabled: boolean; internalDeliveryEnabled: boolean }>
+  >({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("cards");
+  const [viewMode, setViewMode] = usePersistedViewMode(DELIVERIES_VIEW_KEY, "cards");
   const { sortKey, sortDir, toggleSort } = useTableSort<SortKey>("status", "asc", ["status"]);
 
   const load = async () => {
@@ -172,6 +196,7 @@ function DeliveriesQueuePanel() {
         .map((order) => enrich(order));
       setDrivers(localDrivers);
       setOrders(fallback);
+      setLinkedDriverId(null);
       setLoading(false);
       return;
     }
@@ -179,6 +204,19 @@ function DeliveriesQueuePanel() {
       const data = await apiFetchDeliveries();
       setDrivers(data.drivers);
       setOrders(data.orders.map((order) => enrich(order)));
+      setLinkedDriverId(data.linkedDriverId ?? null);
+      setShipdayConfigured(Boolean(data.shipdayConfigured));
+      setLocationDispatch(
+        Object.fromEntries(
+          (data.locationDispatch ?? []).map((row) => [
+            row.id,
+            {
+              shipdayEnabled: row.shipdayEnabled,
+              internalDeliveryEnabled: row.internalDeliveryEnabled,
+            },
+          ]),
+        ),
+      );
       setError("");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load deliveries.");
@@ -196,6 +234,12 @@ function DeliveriesQueuePanel() {
     if (!isDbConnected()) setDrivers(localDrivers);
   }, [localDrivers]);
 
+  const canAdvanceOrder = (order: Order) => {
+    if (canManage) return true;
+    if (!linkedDriverId) return false;
+    return order.driverId === linkedDriverId || order.driver?.id === linkedDriverId;
+  };
+
   const openCount = orders.filter((order) => order.deliveryStatus !== "delivered").length;
 
   const sortedOrders = useMemo(() => {
@@ -207,6 +251,14 @@ function DeliveriesQueuePanel() {
       const statusB = b.deliveryStatus ?? "unassigned";
       if (sortKey === "order") return compareValues(a.id, b.id, sortDir);
       if (sortKey === "store") return compareValues(locA, locB, sortDir);
+      if (sortKey === "address") return compareValues(formatAddress(a), formatAddress(b), sortDir);
+      if (sortKey === "items") {
+        return compareValues(
+          a.items.reduce((sum, item) => sum + item.quantity, 0),
+          b.items.reduce((sum, item) => sum + item.quantity, 0),
+          sortDir,
+        );
+      }
       if (sortKey === "total") return compareValues(a.total, b.total, sortDir);
       return compareValues(STATUS_RANK[statusA], STATUS_RANK[statusB], sortDir);
     });
@@ -230,7 +282,7 @@ function DeliveriesQueuePanel() {
   };
 
   const advance = async (order: Order) => {
-    if (!canManage) return;
+    if (!canAdvanceOrder(order)) return;
     const current = order.deliveryStatus ?? "unassigned";
     const next = NEXT_STATUS[current];
     if (!next) return;
@@ -249,22 +301,78 @@ function DeliveriesQueuePanel() {
     }
   };
 
+  const sendToShipday = async (orderId: string) => {
+    if (!canManage) return;
+    setBusy(orderId);
+    try {
+      await apiSendDeliveryToShipday(orderId);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not send to Shipday.");
+    } finally {
+      setBusy(null);
+    }
+  };
+
   const renderActions = (order: Order, compact = false) => {
     const status = order.deliveryStatus ?? "unassigned";
     const storeDrivers = drivers.filter((driver) => driver.locationId === order.locationId);
     const next = NEXT_STATUS[status];
+    const shipday = order.deliveryChannel === "shipday";
+    const locFlags = locationDispatch[order.locationId];
+    const canShipday =
+      canManage &&
+      Boolean(locFlags?.shipdayEnabled) &&
+      shipdayConfigured &&
+      (status === "unassigned" || Boolean(order.providerFailed));
+    const canAssign =
+      canManage &&
+      !shipday &&
+      (locFlags?.internalDeliveryEnabled ?? true) &&
+      status !== "delivered";
+    const kitchenPacked = !isDeliveryKitchenStage(order.status);
+    const canAdvance =
+      canAdvanceOrder(order) &&
+      Boolean(next) &&
+      status !== "delivered" &&
+      !shipday &&
+      (next !== "picked_up" || kitchenPacked);
 
-    if (!canManage || status === "delivered") {
+    if (status === "delivered" || (!canManage && !canAdvance && !shipday)) {
       return order.driver ? (
         <span className="text-xs text-muted">{order.driver.name}</span>
+      ) : shipday ? (
+        <span className="text-xs text-muted">{order.providerCourierName ?? "Shipday"}</span>
       ) : (
-        <span className="text-xs text-muted">—</span>
+        <span className="text-xs text-muted">{canManage ? "—" : "Awaiting assignment"}</span>
       );
     }
 
     return (
       <div className={cn("space-y-2", compact ? "min-w-[10rem]" : "w-full max-w-sm")}>
-        {order.driver ? (
+        {shipday ? (
+          <div>
+            <p className="text-[10px] uppercase tracking-[0.14em] text-gold">
+              Shipday{order.providerFailed ? " · failed" : ""}
+            </p>
+            <p className="truncate text-xs text-cream">
+              {order.providerCourierName ?? order.providerStatus ?? "Waiting for courier"}
+            </p>
+            {order.providerTrackingUrl ? (
+              <a
+                href={order.providerTrackingUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="text-[11px] text-gold underline-offset-2 hover:underline"
+              >
+                Live tracking
+              </a>
+            ) : null}
+            {order.providerCost != null && order.providerCost > 0 ? (
+              <p className="text-[11px] text-muted">Cost {formatPrice(order.providerCost)}</p>
+            ) : null}
+          </div>
+        ) : order.driver ? (
           <div className="flex items-center gap-2">
             <UserAvatar name={order.driver.name} src={order.driver.photoUrl} size={compact ? 28 : 40} />
             <div className="min-w-0">
@@ -280,52 +388,77 @@ function DeliveriesQueuePanel() {
           </span>
         ) : (
           <p className="inline-flex items-center gap-2 text-xs uppercase tracking-wider text-muted">
-            <Truck size={14} /> Waiting for a driver
+            <Truck size={14} /> Waiting at confirmation
           </p>
         )}
 
-        {compact ? (
-          <select
-            aria-label={`Assign driver for ${order.id}`}
-            className={`${selectClass} w-full`}
-            value={order.driverId ?? ""}
-            disabled={busy === order.id}
-            onChange={(e) => {
-              if (e.target.value) void assign(order.id, e.target.value);
-            }}
-          >
-            <option value="">Choose driver</option>
-            {storeDrivers.map((driver) => (
-              <option key={driver.id} value={driver.id}>
-                {driver.name} · {driver.status === "available" ? "free" : driver.status.replace("_", " ")}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <Select
-            label="Assign driver"
-            value={order.driverId ?? ""}
-            onChange={(value) => {
-              if (value) void assign(order.id, value);
-            }}
-            options={[
-              { value: "", label: "Choose a driver" },
-              ...storeDrivers.map((driver) => ({
-                value: driver.id,
-                label: `${driver.name} · ${driver.status === "available" ? "free" : driver.status.replace("_", " ")}`,
-              })),
-            ]}
-          />
-        )}
+        {canAssign && !kitchenPacked && status !== "unassigned" && next === "picked_up" ? (
+          <p className="text-[11px] leading-snug text-amber-200/90">
+            Driver is assigned. Pack this order in Orders before pickup.
+          </p>
+        ) : null}
 
-        {next ? (
+        {canAssign ? (
+          compact ? (
+            <NativeSelect
+              aria-label={`Assign driver for ${order.id}`}
+              className="min-h-11 px-2 py-1.5 text-xs"
+              value={order.driverId ?? ""}
+              disabled={busy === order.id}
+              onChange={(e) => {
+                if (e.target.value) void assign(order.id, e.target.value);
+              }}
+            >
+              <option value="">Choose driver</option>
+              {storeDrivers.map((driver) => (
+                <option key={driver.id} value={driver.id}>
+                  {driver.name} · {driver.status === "available" ? "free" : driver.status.replace("_", " ")}
+                </option>
+              ))}
+            </NativeSelect>
+          ) : (
+            <Select
+              label="Assign driver"
+              value={order.driverId ?? ""}
+              onChange={(value) => {
+                if (value) void assign(order.id, value);
+              }}
+              options={[
+                { value: "", label: "Choose a driver" },
+                ...storeDrivers.map((driver) => ({
+                  value: driver.id,
+                  label: `${driver.name} · ${driver.status === "available" ? "free" : driver.status.replace("_", " ")}`,
+                })),
+              ]}
+            />
+          )
+        ) : null}
+
+        {canShipday ? (
           <Button
             size="sm"
-            className={compact ? "w-full" : "w-full"}
-            disabled={busy === order.id || (status === "unassigned" && !order.driverId)}
+            variant="secondary"
+            className="min-h-11 w-full"
+            loading={busy === order.id}
+            onClick={() => void sendToShipday(order.id)}
+          >
+            Send to Shipday
+          </Button>
+        ) : null}
+
+        {shipday && !order.providerFailed ? (
+          <p className="text-[11px] text-muted">Status updates from Shipday webhook.</p>
+        ) : null}
+
+        {canAdvance ? (
+          <Button
+            size="sm"
+            className="min-h-11 w-full"
+            loading={busy === order.id}
+            disabled={status === "unassigned" && !order.driverId}
             onClick={() => void advance(order)}
           >
-            Mark {STATUS_LABEL[next].toLowerCase()}
+            Mark {STATUS_LABEL[next!].toLowerCase()}
           </Button>
         ) : null}
       </div>
@@ -333,12 +466,14 @@ function DeliveriesQueuePanel() {
   };
 
   return (
-    <div className="pt-6">
+    <div className="min-w-0 pt-6">
       <div className="flex flex-col gap-4 border-b border-white/10 pb-5 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h2 className="font-display text-2xl text-cream sm:text-3xl">Deliveries</h2>
           <p className="mt-1 text-sm text-muted">
-            Sam&apos;s own drivers. Assign a run, then move it from pickup to en route to delivered.
+            {canManage
+              ? "Assign a driver or send to Shipday as soon as the order is confirmed. Kitchen still packs in Orders; pickup waits until packed."
+              : "Your assigned runs only. Mark pickup, en route, and delivered as you go."}
           </p>
           <p className="mt-2 text-xs uppercase tracking-wider text-gold">
             {openCount} active · {drivers.filter((d) => d.status === "available").length} drivers free
@@ -382,7 +517,7 @@ function DeliveriesQueuePanel() {
       ) : viewMode === "table" ? (
         <>
           <div className={`mt-6 hidden lg:block ${tableWrapClass}`}>
-            <table className="w-full min-w-[56rem] text-left text-sm">
+            <table className="w-full min-w-[44rem] text-left text-sm">
             <thead>
               <tr className={tableHeadRowClass}>
                 <SortableTh
@@ -406,8 +541,20 @@ function DeliveriesQueuePanel() {
                   sortDir={sortDir}
                   onSort={toggleSort}
                 />
-                <th className="px-4 py-3 font-medium">Address</th>
-                <th className="px-4 py-3 font-medium">Items</th>
+                <SortableTh
+                  label="Address"
+                  column="address"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                />
+                <SortableTh
+                  label="Items"
+                  column="items"
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                />
                 <SortableTh
                   label="Total"
                   column="total"
@@ -434,6 +581,7 @@ function DeliveriesQueuePanel() {
                     </td>
                     <td className={tableCellClass}>
                       <span className="text-[11px] uppercase tracking-[0.14em] text-gold">
+                        {order.deliveryChannel === "shipday" ? "Shipday · " : ""}
                         {STATUS_LABEL[status]}
                       </span>
                     </td>
@@ -466,7 +614,10 @@ function DeliveriesQueuePanel() {
                       <p className="text-[10px] uppercase tracking-[0.18em] text-gold">
                         {order.id} · {loc?.shortName ?? order.locationId}
                       </p>
-                      <p className="mt-1 font-display text-xl text-cream">{STATUS_LABEL[status]}</p>
+                      <p className="mt-1 font-display text-xl text-cream">
+                        {order.deliveryChannel === "shipday" ? "Shipday · " : ""}
+                        {STATUS_LABEL[status]}
+                      </p>
                       <p className="mt-1 text-sm text-muted">{formatAddress(order)}</p>
                       <p className="mt-2 text-sm text-gold">{formatPrice(order.total)}</p>
                     </div>
@@ -489,7 +640,10 @@ function DeliveriesQueuePanel() {
                     <p className="text-[10px] uppercase tracking-[0.18em] text-gold">
                       {order.id} · {loc?.shortName ?? order.locationId}
                     </p>
-                    <p className="mt-1 font-display text-xl text-cream">{STATUS_LABEL[status]}</p>
+                    <p className="mt-1 font-display text-xl text-cream">
+                      {order.deliveryChannel === "shipday" ? "Shipday · " : ""}
+                      {STATUS_LABEL[status]}
+                    </p>
                     <p className="mt-1 text-sm text-muted">{formatAddress(order)}</p>
                     <ul className="mt-3 space-y-1 text-sm text-muted">
                       {order.items.map((item) => {

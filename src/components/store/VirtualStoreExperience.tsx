@@ -20,6 +20,8 @@ import type { Product } from "@/types";
 import { formatPrice } from "@/lib/utils";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { NativeSelect } from "@/components/ui/NativeSelect";
 import { useCartStore } from "@/store/cart";
 import { addToCart } from "@/lib/add-to-cart";
 import { useBranchStore } from "@/store/branch";
@@ -780,7 +782,7 @@ export function VirtualStoreExperience() {
   );
   const branchId = useBranchStore((s) => s.branchId);
   const branch = getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
-  const getOnHand = useInventoryStore((s) => s.getOnHand);
+  const getAvailable = useInventoryStore((s) => s.getAvailable);
   const isHidden = useInventoryStore((s) => s.isHidden);
   const inventoryRevision = useInventoryStore((s) => s.revision);
   const catalogRevision = useCatalogStore((s) => s.revision);
@@ -794,14 +796,14 @@ export function VirtualStoreExperience() {
 
   const stockByProduct = useMemo(() => {
     const map: Record<string, number> = {};
-    for (const p of candidates) map[p.id] = getOnHand(branchId, p.id);
+    for (const p of candidates) map[p.id] = getAvailable(branchId, p.id);
     for (const bay of shelfData) {
       for (const p of bay.bottles) {
-        if (map[p.id] == null) map[p.id] = getOnHand(branchId, p.id);
+        if (map[p.id] == null) map[p.id] = getAvailable(branchId, p.id);
       }
     }
     return map;
-  }, [branchId, candidates, getOnHand, shelfData, inventoryRevision]);
+  }, [branchId, candidates, getAvailable, shelfData, inventoryRevision]);
 
   const bayCounts = useMemo(() => {
     const map: Record<string, number> = {};
@@ -886,7 +888,7 @@ export function VirtualStoreExperience() {
           <label className="sr-only" htmlFor="aisle-select">
             Aisle section
           </label>
-          <select
+          <NativeSelect
             id="aisle-select"
             value={section.name}
             onChange={(e) => {
@@ -895,14 +897,14 @@ export function VirtualStoreExperience() {
               setWalk(false);
               setSection(next);
             }}
-            className="w-full rounded-sm border border-[var(--gold)]/30 bg-black/85 px-3 py-2.5 text-sm text-[var(--cream)] [color-scheme:dark] backdrop-blur-md [&_option]:bg-[#0a0908]"
+            className="border-[var(--gold)]/30 bg-black/85 px-3 py-2.5 text-[var(--cream)] backdrop-blur-md hover:border-[var(--gold)]/30 [&_option]:bg-[#0a0908] [&_option]:text-[var(--cream)]"
           >
             {SECTIONS.map((s) => (
               <option key={s.name} value={s.name}>
                 {s.hasShelves ? `${s.name} (${bayCounts[s.name] ?? 0})` : s.name}
               </option>
             ))}
-          </select>
+          </NativeSelect>
         </div>
         <div className="pointer-events-auto mx-auto hidden w-full max-w-6xl overflow-x-auto rounded-sm border border-[var(--gold)]/30 bg-black/80 px-1.5 py-1.5 backdrop-blur-md lg:flex lg:flex-nowrap lg:items-center lg:justify-between lg:gap-0.5">
           {SECTIONS.map((s) => {
@@ -1000,7 +1002,8 @@ export function VirtualStoreExperience() {
               ) : null}
             </div>
             <p className="mt-1 text-sm text-[var(--muted)]">
-              {selected.origin} · {selected.abv}% ABV
+              {selected.origin} · {selected.abv}%{" "}
+              <AbbrTooltip term="ABV" />
             </p>
             <p className="mt-3 text-xl text-[var(--gold)]">
               {formatPrice(selectedPrice)}

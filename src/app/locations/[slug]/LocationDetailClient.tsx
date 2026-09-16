@@ -8,20 +8,39 @@ import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { ProductCard } from "@/components/product/ProductCard";
 import { Button } from "@/components/ui/Button";
 import Link from "next/link";
-import { useBranchStore } from "@/store/branch";
+import { switchShoppingStore } from "@/lib/switch-store";
+import { publicFulfillmentSummary, publicStoreServices } from "@/lib/fulfillment-pricing";
 import { useCatalogStore } from "@/store/catalog";
 import { useInventoryStore } from "@/store/inventory";
-import { useMemo } from "react";
+import { useMemo, useEffect, useState } from "react";
+import { ReviewForm, ReviewList } from "@/components/reviews/ReviewForm";
+import type { PlatformReview } from "@/types";
 
 export function LocationDetailPage() {
   const { slug } = useParams<{ slug: string }>();
   const locations = useRuntimeLocations();
   const loc = useMemo(() => locations.find((l) => l.slug === slug), [locations, slug]);
-  const setBranch = useBranchStore((s) => s.setBranch);
   const publicEvents = usePublicEvents();
   const catalogRevision = useCatalogStore((s) => s.revision);
   const isHidden = useInventoryStore((s) => s.isHidden);
   const inventoryRevision = useInventoryStore((s) => s.revision);
+  const [storeReviews, setStoreReviews] = useState<PlatformReview[]>([]);
+
+  useEffect(() => {
+    if (!loc) return;
+    let cancelled = false;
+    void fetch(`/api/reviews?locationId=${encodeURIComponent(loc.id)}&targetType=store`)
+      .then((r) => r.json())
+      .then((data: { reviews?: PlatformReview[] }) => {
+        if (!cancelled) setStoreReviews(data.reviews ?? []);
+      })
+      .catch(() => {
+        if (!cancelled) setStoreReviews([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loc]);
 
   if (!loc) {
     notFound();
@@ -30,6 +49,11 @@ export function LocationDetailPage() {
   const featuredIds = loc.inventory.filter((i) => i.featured).map((i) => i.productId);
   void catalogRevision;
   void inventoryRevision;
+  const locServices = publicStoreServices(
+    loc.services,
+    loc.deliveryAvailable,
+    loc.pickupAvailable,
+  );
   const featured = getAllProducts()
     .filter((p) => featuredIds.includes(p.id) && !isHidden(loc.id, p.id))
     .slice(0, 4);
@@ -47,7 +71,7 @@ export function LocationDetailPage() {
           </h1>
           <p className="mt-1 text-sm text-gold sm:text-base">Sam&apos;s Discount Liquor</p>
           <p className="mt-3 max-w-xl text-sm text-muted sm:text-base">{loc.description}</p>
-          <Button className="mt-6" onClick={() => setBranch(loc.id)}>
+          <Button className="mt-6" onClick={() => switchShoppingStore(loc.id)}>
             Shop this branch
           </Button>
         </div>
@@ -84,6 +108,18 @@ export function LocationDetailPage() {
               <p>{loc.address}, {loc.city}, {loc.state} {loc.zip}</p>
               <p className="mt-2">{loc.phone}</p>
               <p className="mt-2">{loc.email}</p>
+              <p className="mt-4 text-gold">Fulfillment</p>
+              <p className="mt-1 text-cream">{publicFulfillmentSummary(loc)}</p>
+              {locServices.length > 0 ? (
+                <>
+                  <p className="mt-4 text-gold">Services</p>
+                  <ul className="mt-2 list-disc pl-4">
+                    {locServices.map((service) => (
+                      <li key={service}>{service}</li>
+                    ))}
+                  </ul>
+                </>
+              ) : null}
               <p className="mt-4 text-gold">Offers</p>
               <ul className="mt-2 list-disc pl-4">
                 {loc.featuredOffers.map((o) => (
@@ -100,6 +136,21 @@ export function LocationDetailPage() {
             {featured.map((p, i) => (
               <ProductCard key={p.id} product={p} index={i} locationId={loc.id} />
             ))}
+          </div>
+        </div>
+
+        <div className="mt-16">
+          <h2 className="font-display text-3xl text-cream">Store reviews</h2>
+          <p className="mt-2 text-sm text-muted">
+            Rate your experience shopping at {loc.shortName}.
+          </p>
+          <div className="mt-6 grid gap-8 lg:grid-cols-2">
+            <ReviewForm
+              targetType="store"
+              locationId={loc.id}
+              onCreated={(review) => setStoreReviews((prev) => [review, ...prev])}
+            />
+            <ReviewList reviews={storeReviews} />
           </div>
         </div>
 

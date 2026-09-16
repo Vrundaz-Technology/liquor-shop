@@ -1,9 +1,8 @@
 "use client";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { ROLE_BLURBS, canAssignRole, isDemoAccountEmail, roleBlurb, roleLabel } from "@/lib/auth/roles";
 import {
-  PERMISSIONS,
   effectivePermissions,
   overridesFromEnabled,
   rolePermissions,
@@ -74,6 +73,15 @@ export function UserFormModal({
   const editingSelf = Boolean(actorId && initial?.id && actorId === initial.id);
   const lockedPermissions = !canCustomizePermissions || editingSelf || form.role === "owner";
 
+  const overridePreview = useMemo(() => {
+    if (form.role === "owner") return { added: 0, removed: 0 };
+    const overrides = overridesFromEnabled(form.role, form.enabled);
+    return {
+      added: overrides.permissionGrants.length,
+      removed: overrides.permissionRevokes.length,
+    };
+  }, [form.enabled, form.role]);
+
   useEffect(() => {
     if (!open) return;
     const role =
@@ -119,14 +127,23 @@ export function UserFormModal({
       title={mode === "create" ? "Create user" : "Edit profile"}
       subtitle={
         mode === "create"
-          ? "Add an account, then grant or remove permissions for this person only."
-          : "Update profile details and this user’s permissions."
+          ? "Set profile, store access, and per-user permission overrides."
+          : "Update profile, store access, and permission overrides."
       }
       className="sm:max-w-2xl"
     >
-      <form onSubmit={submit} className="space-y-6">
-        <section className="space-y-4">
-          <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Profile</p>
+      <form onSubmit={submit} className="space-y-5">
+        <section className="space-y-4 rounded-sm border border-white/10 bg-white/[0.02] px-4 py-4">
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Profile</p>
+            {overridePreview.added > 0 || overridePreview.removed > 0 ? (
+              <p className="text-[10px] uppercase tracking-[0.12em] text-muted">
+                {overridePreview.added > 0 ? `+${overridePreview.added} extra` : null}
+                {overridePreview.added > 0 && overridePreview.removed > 0 ? " · " : null}
+                {overridePreview.removed > 0 ? `−${overridePreview.removed} removed` : null}
+              </p>
+            ) : null}
+          </div>
           <AvatarUpload
             name={form.name}
             value={form.avatarUrl}
@@ -175,26 +192,15 @@ export function UserFormModal({
                     className="[&_button]:h-[46px] [&_button]:px-4"
                     value={form.role}
                     onChange={(value) =>
-                      setForm((f) => {
-                        const nextRole = value;
-                        if (nextRole === "owner") {
-                          return {
-                            ...f,
-                            role: nextRole,
-                            enabled: effectivePermissions("owner"),
-                          };
-                        }
-                        const previousDefaults = new Set(rolePermissions(f.role));
-                        const extras = f.enabled.filter((permission) => !previousDefaults.has(permission));
-                        const nextDefaults = rolePermissions(nextRole);
-                        const extraSet = new Set(nextDefaults);
-                        for (const permission of extras) extraSet.add(permission);
-                        return {
-                          ...f,
-                          role: nextRole,
-                          enabled: PERMISSIONS.filter((permission) => extraSet.has(permission)),
-                        };
-                      })
+                      setForm((f) => ({
+                        ...f,
+                        role: value,
+                        // Role change resets overrides to the new template (industry-standard).
+                        enabled:
+                          value === "owner"
+                            ? effectivePermissions("owner")
+                            : rolePermissions(value),
+                      }))
                     }
                     options={assignableRoles.map((r) => ({ value: r, label: roleLabel(r) }))}
                   />
@@ -204,9 +210,13 @@ export function UserFormModal({
               </div>
             </label>
           </div>
-          <p className="text-[12px] text-muted">{roleBlurb(form.role) || ROLE_BLURBS.staff}</p>
+          <p className="text-[12px] leading-5 text-muted">
+            {roleBlurb(form.role) || ROLE_BLURBS.staff}
+          </p>
           {demoLocked ? (
-            <p className="text-xs text-muted">Demo account email is locked so the shared logins keep working.</p>
+            <p className="text-xs text-muted">
+              Demo account email is locked so the shared logins keep working.
+            </p>
           ) : null}
         </section>
 
@@ -218,13 +228,16 @@ export function UserFormModal({
           onChange={(allowedLocationIds) => setForm((f) => ({ ...f, allowedLocationIds }))}
         />
 
-        <UserPermissionEditor
-          role={form.role}
-          enabled={form.enabled}
-          actor={actor}
-          locked={lockedPermissions}
-          onChange={(enabled) => setForm((f) => ({ ...f, enabled }))}
-        />
+        <div className="rounded-sm border border-white/10 bg-white/[0.02] px-4 py-4">
+          <UserPermissionEditor
+            role={form.role}
+            enabled={form.enabled}
+            actor={actor}
+            locked={lockedPermissions}
+            showReset
+            onChange={(enabled) => setForm((f) => ({ ...f, enabled }))}
+          />
+        </div>
 
         {error ? <p className="text-sm text-red-300">{error}</p> : null}
 
@@ -232,7 +245,7 @@ export function UserFormModal({
           <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={onClose} disabled={busy}>
             Cancel
           </Button>
-          <Button type="submit" className="w-full sm:w-auto" disabled={busy || assignableRoles.length === 0}>
+          <Button type="submit" className="w-full sm:w-auto" loading={busy} disabled={assignableRoles.length === 0}>
             {busy ? "Saving…" : mode === "create" ? "Add user" : "Save profile"}
           </Button>
         </div>

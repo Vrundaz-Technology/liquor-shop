@@ -35,19 +35,35 @@ const TIER_THRESHOLDS = {
 } as const;
 
 const STATUS_LABELS: Record<Order["status"], string> = {
+  new: "New",
+  accepted: "Accepted",
+  preparing: "Preparing",
+  ready: "Ready",
+  assigned: "Assigned",
+  out_for_delivery: "Out for delivery",
+  delivered: "Delivered",
+  ready_for_pickup: "Ready for pickup",
+  picked_up: "Picked up",
+  completed: "Completed",
+  cancelled: "Cancelled",
   processing: "Processing",
   shipped: "Shipped",
-  ready: "Ready",
-  delivered: "Delivered",
-  cancelled: "Cancelled",
 };
 
 const STATUS_FILLS: Record<Order["status"], string> = {
+  new: CHART_COLORS.goldBright,
+  accepted: CHART_COLORS.goldBright,
+  preparing: CHART_COLORS.gold,
+  ready: CHART_COLORS.gold,
+  assigned: CHART_COLORS.info,
+  out_for_delivery: CHART_COLORS.info,
+  delivered: CHART_COLORS.success,
+  ready_for_pickup: CHART_COLORS.gold,
+  picked_up: CHART_COLORS.success,
+  completed: CHART_COLORS.success,
+  cancelled: CHART_COLORS.danger,
   processing: CHART_COLORS.goldBright,
   shipped: CHART_COLORS.info,
-  ready: CHART_COLORS.gold,
-  delivered: CHART_COLORS.success,
-  cancelled: CHART_COLORS.danger,
 };
 
 export type ChartSelection =
@@ -60,7 +76,12 @@ export type ChartSelection =
 
 export function activeOrders(orders: Order[]) {
   return orders.filter((o) =>
-    ["processing", "shipped", "ready"].includes(o.status),
+    ![
+      "delivered",
+      "picked_up",
+      "completed",
+      "cancelled",
+    ].includes(o.status),
   );
 }
 

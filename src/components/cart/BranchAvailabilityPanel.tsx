@@ -6,6 +6,7 @@ import { MapPin, AlertTriangle, PackageMinus, ArrowRightLeft } from "lucide-reac
 import { useCartStore } from "@/store/cart";
 import { addToCart } from "@/lib/add-to-cart";
 import { useBranchStore } from "@/store/branch";
+import { switchShoppingStore } from "@/lib/switch-store";
 import {
   analyzeCartAvailability,
   locationsWithProduct,
@@ -25,7 +26,6 @@ export function BranchAvailabilityPanel({ compact = false }: Props) {
   const items = useCartStore((s) => s.items);
   const removeItem = useCartStore((s) => s.removeItem);
   const branchId = useBranchStore((s) => s.branchId);
-  const setBranch = useBranchStore((s) => s.setBranch);
   const inventoryRevision = useInventoryStore((s) => s.revision);
   void inventoryRevision;
 
@@ -83,9 +83,16 @@ export function BranchAvailabilityPanel({ compact = false }: Props) {
             {analysis.unavailable.length} bottle
             {analysis.unavailable.length === 1 ? "" : "s"} in your cart{" "}
             {analysis.unavailable.length === 1 ? "is" : "are"} not available at this
-            store. Switch branch, remove them to checkout here, or pick a
-            suggestion in stock.
+            store. One order can only ship from one store — switch branch, remove
+            unavailable bottles, or choose a store that can fulfill everything.
           </p>
+          {!analysis.fullCoverageLocation &&
+          !analysis.betterLocations.some((c) => c.coversAll) ? (
+            <p className="mt-2 text-xs text-(--danger)">
+              No single store can fulfill this entire mix. Remove conflicting items
+              before checkout.
+            </p>
+          ) : null}
         </div>
       </div>
 
@@ -128,7 +135,7 @@ export function BranchAvailabilityPanel({ compact = false }: Props) {
                       <button
                         key={loc.id}
                         type="button"
-                        onClick={() => setBranch(loc.id)}
+                        onClick={() => switchShoppingStore(loc.id)}
                         className="underline decoration-(--gold)/40 underline-offset-2 hover:text-gold-bright"
                       >
                         {loc.shortName}
@@ -156,7 +163,7 @@ export function BranchAvailabilityPanel({ compact = false }: Props) {
             type="button"
             className="w-full"
             size={compact ? "sm" : "md"}
-            onClick={() => setBranch(best.id)}
+            onClick={() => switchShoppingStore(best.id)}
           >
             <ArrowRightLeft size={14} />
             Switch to {best.shortName}

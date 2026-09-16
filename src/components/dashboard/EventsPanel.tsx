@@ -22,6 +22,11 @@ import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { compareValues, MobileSortBar, SortableTh, tableCellClass, tableHeadRowClass, tableRowClass, tableWrapClass, useTableSort } from "@/components/ui/SortableTh";
 import { formatPrice } from "@/lib/utils";
+import {
+  moneyAmountAtMost,
+  parseFiniteNumber,
+  sanitizeMoneyInput,
+} from "@/lib/validation/money";
 
 const EVENT_TYPES: { value: EventItem["type"]; label: string }[] = [
   { value: "wine-tasting", label: "Wine tasting" },
@@ -58,8 +63,12 @@ function validateEventForm(form: EventForm) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(form.date)) return "Pick a valid date.";
   if (!form.startTime || !form.endTime) return "Start and end times are required.";
   if (form.endTime <= form.startTime) return "End time must be after start time.";
-  const price = Number(form.price);
-  if (!Number.isFinite(price) || price < 0) return "Enter a valid price.";
+  const priceCheck = moneyAmountAtMost(10_000, "Ticket price cannot exceed $10,000").safeParse(
+    parseFiniteNumber(form.price),
+  );
+  if (!priceCheck.success) {
+    return priceCheck.error.issues[0]?.message ?? "Enter a valid price.";
+  }
   const seats = Number(form.seatsTotal);
   if (!Number.isInteger(seats) || seats < 1) return "Seats must be a whole number of at least 1.";
   return null;
@@ -73,7 +82,7 @@ export function EventsPanel() {
     () => allEvents.filter((event) => canAccessLocation(actor, event.locationId)),
     [actor, allEvents],
   );
-  const { sortKey, sortDir, toggleSort } = useTableSort<"event" | "store" | "when" | "seats">(
+  const { sortKey, sortDir, toggleSort } = useTableSort<"event" | "store" | "when" | "seats" | "status">(
     "when",
     "asc",
   );
@@ -90,6 +99,13 @@ export function EventsPanel() {
         return compareValues(`${a.date} ${a.startTime}`, `${b.date} ${b.startTime}`, sortDir);
       }
       if (sortKey === "seats") return compareValues(a.seatsAvailable, b.seatsAvailable, sortDir);
+      if (sortKey === "status") {
+        return compareValues(
+          a.active !== false ? "Active" : "Inactive",
+          b.active !== false ? "Active" : "Inactive",
+          sortDir,
+        );
+      }
       return compareValues(a.title, b.title, sortDir);
     });
   }, [events, sortDir, sortKey]);
@@ -234,6 +250,7 @@ export function EventsPanel() {
           { key: "store", label: "Store" },
           { key: "when", label: "When" },
           { key: "seats", label: "Seats" },
+          { key: "status", label: "Status" },
         ]}
         sortKey={sortKey}
         sortDir={sortDir}
@@ -307,7 +324,7 @@ export function EventsPanel() {
               <SortableTh label="Store" column="store" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="When" column="when" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Seats" column="seats" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th className="px-4 py-3 font-medium">Status</th>
+              <SortableTh label="Status" column="status" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <th className="px-4 py-3 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -459,7 +476,16 @@ export function EventsPanel() {
           </label>
           <label className="block text-xs text-muted">
             Price
-            <Input className="mt-1" type="number" min={0} value={form.price} onChange={(e) => setForm((f) => ({ ...f, price: e.target.value }))} required />
+            <Input
+              className="mt-1"
+              inputMode="decimal"
+              min={0}
+              value={form.price}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, price: sanitizeMoneyInput(e.target.value, 2) }))
+              }
+              required
+            />
           </label>
           <label className="block text-xs text-muted">
             Start
@@ -500,7 +526,7 @@ export function EventsPanel() {
             <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setEditing(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" className="w-full sm:w-auto" disabled={busy || stores.length === 0}>
+            <Button type="submit" className="w-full sm:w-auto" loading={busy} disabled={stores.length === 0}>
               {busy ? "Saving…" : "Save event"}
             </Button>
           </div>

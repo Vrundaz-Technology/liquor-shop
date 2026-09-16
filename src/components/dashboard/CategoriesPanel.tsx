@@ -312,7 +312,7 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
             <Button type="button" variant="secondary" className="w-full sm:w-auto" onClick={() => setEditing(null)} disabled={busy}>
               Cancel
             </Button>
-            <Button type="submit" className="w-full sm:w-auto" disabled={busy}>
+            <Button type="submit" className="w-full sm:w-auto" loading={busy}>
               {busy ? "Saving…" : "Save category"}
             </Button>
           </div>

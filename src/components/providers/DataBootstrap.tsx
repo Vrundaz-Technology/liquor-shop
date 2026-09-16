@@ -28,7 +28,7 @@ export function DataBootstrap() {
 
     async function loadCatalog() {
       try {
-        const res = await fetch("/api/bootstrap");
+        const res = await fetch("/api/bootstrap", { cache: "no-store" });
         if (!res.ok) throw new Error("bootstrap failed");
         const data = await res.json();
         if (cancelled) return;
@@ -47,6 +47,7 @@ export function DataBootstrap() {
             data.inventory.stocks,
             data.inventory.seats,
             data.inventory.hidden,
+            data.inventory.reserved,
           );
         } else {
           setHydrated(true);

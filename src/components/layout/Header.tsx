@@ -20,12 +20,16 @@ import { useCartFeedbackStore } from "@/store/cart-feedback";
 import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { isStaffRole } from "@/lib/auth/roles";
-import { getAllLocations } from "@/data/locations";
 import { accessibleLocations } from "@/lib/auth/location-access";
-import { searchAll } from "@/lib/search";
+import { switchShoppingStore } from "@/lib/switch-store";
+import { shopHref } from "@/lib/shop-url";
 import { formatPrice } from "@/lib/utils";
+import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { AccountMenu } from "@/components/layout/AccountMenu";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { StoreFinder } from "@/components/store/StoreFinder";
+import type { Product } from "@/types";
+import type { getCategories } from "@/data/categories";
 
 const nav = [
   { href: "/virtual-store", label: "Virtual Store" },
@@ -46,24 +50,44 @@ export function Header() {
   const branchButtonRef = useRef<HTMLButtonElement>(null);
   const [query, setQuery] = useState("");
   const [listening, setListening] = useState(false);
+  const [storeFinderOpen, setStoreFinderOpen] = useState(false);
+  const [results, setResults] = useState<{
+    products: Product[];
+    categories: ReturnType<typeof getCategories>;
+  } | null>(null);
   const count = useCartStore((s) => s.items.reduce((n, i) => n + i.quantity, 0));
   const cartBump = useCartFeedbackStore((s) => s.bump);
   const branchId = useBranchStore((s) => s.branchId);
-  const setBranch = useBranchStore((s) => s.setBranch);
   const isLoggedIn = useUserStore((s) => s.isLoggedIn);
+  const authReady = useUserStore((s) => s.authReady);
   const profile = useUserStore((s) => s.profile);
   const isStaff = useUserStore(
     (s) => s.isLoggedIn && isStaffRole(s.profile),
   );
   const logout = useUserStore((s) => s.logout);
+  const locations = useRuntimeLocations();
   const onDashboard = pathname.startsWith("/dashboard");
   const branchOptions =
-    isLoggedIn && isStaff ? accessibleLocations(profile) : getAllLocations();
+    isLoggedIn && isStaff ? accessibleLocations(profile, locations) : locations;
   const branch =
     branchOptions.find((l) => l.id === branchId) ??
     branchOptions[0] ??
-    getAllLocations()[0];
-  const results = query.trim() ? searchAll(query) : null;
+    locations[0];
+
+  useEffect(() => {
+    const q = query.trim();
+    if (!q) {
+      setResults(null);
+      return;
+    }
+    let cancelled = false;
+    void import("@/lib/search").then(({ searchAll }) => {
+      if (!cancelled) setResults(searchAll(q));
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [query]);
 
   const handleSignOut = async () => {
     await logout();
@@ -77,8 +101,8 @@ export function Header() {
     if (!isLoggedIn || !isStaff) return;
     const options = accessibleLocations(profile);
     if (options.some((loc) => loc.id === branchId)) return;
-    if (options[0]) setBranch(options[0].id);
-  }, [branchId, isLoggedIn, isStaff, profile, setBranch]);
+    if (options[0]) switchShoppingStore(options[0].id);
+  }, [branchId, isLoggedIn, isStaff, profile]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -262,19 +286,25 @@ export function Header() {
                 setSearchOpen(true);
                 setAccountOpen(false);
               }}
-              className="rounded-sm p-2 text-[var(--cream)] hover:bg-white/5"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
               aria-label="Search"
             >
               <Search size={18} />
             </button>
             <Link
               href="/wishlist"
-              className="hidden rounded-sm p-2 text-[var(--cream)] hover:bg-white/5 lg:block"
+              className="hidden min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5 lg:inline-flex"
               aria-label="Wishlist"
             >
               <Heart size={18} />
             </Link>
-            {isLoggedIn ? (
+            {!authReady && !isLoggedIn ? (
+              <span
+                className="inline-flex h-9 w-9 shrink-0 animate-pulse rounded-sm bg-white/10 sm:h-10 sm:w-10"
+                aria-label="Checking account"
+                title="Checking account"
+              />
+            ) : isLoggedIn ? (
               <AccountMenu
                 open={accountOpen}
                 onOpenChange={(next) => {
@@ -330,6 +360,17 @@ export function Header() {
             <p className="mb-3 text-[10px] uppercase tracking-[0.2em] text-[var(--gold)]">
               Select Branch
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                setBranchOpen(false);
+                setStoreFinderOpen(true);
+              }}
+              className="mb-3 flex w-full items-center justify-center gap-2 rounded-sm border border-(--gold)/35 bg-(--gold)/10 px-3 py-2.5 text-[11px] uppercase tracking-[0.14em] text-gold transition hover:bg-(--gold)/15"
+            >
+              <MapPin size={13} aria-hidden />
+              Find by ZIP
+            </button>
             {branchOptions.map((loc) => (
               <button
                 key={loc.id}
@@ -337,7 +378,7 @@ export function Header() {
                 role="option"
                 aria-selected={loc.id === branchId}
                 onClick={() => {
-                  setBranch(loc.id);
+                  switchShoppingStore(loc.id);
                   setBranchOpen(false);
                 }}
                 className={cn(
@@ -386,6 +427,17 @@ export function Header() {
                   className="min-w-0 flex-1 bg-transparent text-base text-[var(--cream)] outline-none placeholder:italic placeholder:text-[var(--placeholder)] sm:text-lg"
                   aria-label="Search products"
                 />
+                {query ? (
+                  <button
+                    type="button"
+                    onClick={() => setQuery("")}
+                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--cream)]"
+                    aria-label="Clear search"
+                    title="Clear search"
+                  >
+                    <X size={16} strokeWidth={2.25} />
+                  </button>
+                ) : null}
                 <button
                   onClick={startVoice}
                   className={cn(
@@ -439,6 +491,15 @@ export function Header() {
                       </span>
                     </Link>
                   ))}
+                  {results.products.length > 0 ? (
+                    <Link
+                      href={shopHref({ q: query.trim(), inStockOnly: true, sort: "popular" })}
+                      onClick={() => setSearchOpen(false)}
+                      className="mt-3 block border-t border-white/10 pt-3 text-center text-xs uppercase tracking-[0.14em] text-gold hover:underline"
+                    >
+                      View all results in shop
+                    </Link>
+                  ) : null}
                   {!results.products.length && !results.categories.length && (
                     <p className="text-sm text-[var(--muted)]">No matches found.</p>
                   )}
@@ -504,7 +565,13 @@ export function Header() {
                     : "text-[var(--cream)]",
                 )}
               >
-                {isStaff ? "Dashboard" : isLoggedIn ? "Account" : "Sign in"}
+                {!authReady && !isLoggedIn
+                  ? "Account"
+                  : isStaff
+                    ? "Dashboard"
+                    : isLoggedIn
+                      ? "Account"
+                      : "Sign in"}
               </Link>
               {isStaff ? (
                 <Link
@@ -538,6 +605,16 @@ export function Header() {
               <p className="mb-3 flex items-center gap-2 text-[10px] uppercase tracking-[0.2em] text-[var(--gold)]">
                 <MapPin size={12} /> Select branch
               </p>
+              <button
+                type="button"
+                onClick={() => {
+                  setOpen(false);
+                  setStoreFinderOpen(true);
+                }}
+                className="mb-3 flex w-full items-center justify-center gap-2 rounded-sm border border-(--gold)/35 bg-(--gold)/10 px-3 py-3 text-[11px] uppercase tracking-[0.14em] text-gold"
+              >
+                Find stores by ZIP
+              </button>
               <p className="mb-3 text-xs text-[var(--muted)]">
                 Current:{" "}
                 <span className="text-[var(--cream)]">{branch.shortName}</span>
@@ -551,7 +628,7 @@ export function Header() {
                     key={loc.id}
                     type="button"
                     onClick={() => {
-                      setBranch(loc.id);
+                      switchShoppingStore(loc.id);
                       setOpen(false);
                     }}
                     className={cn(
@@ -578,6 +655,8 @@ export function Header() {
           </motion.div>
         )}
       </AnimatePresence>
+
+      <StoreFinder open={storeFinderOpen} onClose={() => setStoreFinderOpen(false)} />
     </>
   );
 }

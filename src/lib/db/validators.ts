@@ -1,4 +1,11 @@
 import { z } from "zod";
+import {
+  moneyAmountAtMost,
+  nullableMoneySchema,
+  positiveMoneySchema,
+  taxRateSchema,
+} from "@/lib/validation/money";
+import { PERMISSIONS, isPermission } from "@/lib/auth/permissions";
 
 export const categorySlugSchema = z
   .string()
@@ -36,8 +43,19 @@ export const bottleFieldsSchema = z.object({
   name: z.string().trim().min(1).max(120),
   brand: z.string().trim().min(1).max(80),
   category: categorySlugSchema,
-  price: z.number().positive(),
-  compareAtPrice: z.number().positive().nullable().optional(),
+  price: positiveMoneySchema,
+  compareAtPrice: positiveMoneySchema.nullable().optional(),
+  costPrice: moneyAmountAtMost(999_999.99).nullable().optional(),
+  sku: z.string().trim().max(64).optional().or(z.literal("")),
+  upc: z
+    .string()
+    .trim()
+    .max(32)
+    .regex(/^[0-9-]*$/, "UPC may only contain digits and hyphens")
+    .optional()
+    .or(z.literal("")),
+  minQty: z.number().int().min(1).max(99).optional(),
+  maxQty: z.number().int().min(1).max(999).nullable().optional(),
   abv: z.number().gt(0).lte(80),
   volumeMl: z.number().int().positive(),
   origin: z.string().max(120).default(""),
@@ -72,19 +90,37 @@ export const signupSchema = z.object({
   name: z.string().trim().min(2).max(120),
   email: z.string().email(),
   password: z.string().min(8).max(200),
+  referralCode: z.string().trim().min(4).max(32).optional(),
 });
 
 export const addressSchema = z.object({
   id: z.string().min(1),
-  label: z.string().min(1).max(80),
-  line1: z.string().min(1).max(200),
-  city: z.string().min(1).max(80),
-  state: z.string().min(1).max(40),
-  zip: z.string().min(1).max(20),
+  label: z.string().trim().min(1).max(80),
+  line1: z.string().trim().min(1).max(200),
+  city: z.string().trim().min(1).max(80),
+  state: z.string().trim().min(1).max(40),
+  zip: z
+    .string()
+    .trim()
+    .regex(/^\d{5}(-\d{4})?$/, "Use a 5-digit ZIP"),
   isDefault: z.boolean(),
 });
 
-const avatarUrlSchema = z.string().max(900_000);
+const avatarUrlSchema = z
+  .string()
+  .max(900_000)
+  .refine(
+    (value) => {
+      const v = value.trim();
+      if (!v) return true;
+      if (v.startsWith("/uploads/")) return v.length <= 300;
+      if (v.startsWith("https://") || v.startsWith("http://")) return v.length <= 2_000;
+      // Legacy inline avatars (prefer /uploads going forward).
+      if (v.startsWith("data:image/")) return v.length <= 900_000;
+      return false;
+    },
+    { message: "Invalid profile photo." },
+  );
 
 export const mePatchSchema = z.union([
   z.object({
@@ -95,7 +131,24 @@ export const mePatchSchema = z.union([
         avatarUrl: avatarUrlSchema.nullable().optional(),
         preferredBranchId: z.string().min(1).optional(),
         recentlyViewed: z.array(z.string()).max(12).optional(),
-        addresses: z.array(addressSchema).optional(),
+        addresses: z.array(addressSchema).max(12).optional(),
+        birthday: z
+          .union([z.string().regex(/^\d{4}-\d{2}-\d{2}$/), z.literal(""), z.null()])
+          .optional(),
+        preferences: z
+          .object({
+            defaultFulfillment: z.enum(["delivery", "pickup"]).optional(),
+            marketingEmails: z.boolean().optional(),
+            smsUpdates: z.boolean().optional(),
+            pushUpdates: z.boolean().optional(),
+            orderEmailUpdates: z.boolean().optional(),
+            loyaltyAlerts: z.boolean().optional(),
+            backInStockAlerts: z.boolean().optional(),
+            priceAlerts: z.boolean().optional(),
+            abandonedCartReminders: z.boolean().optional(),
+            favoriteCategory: z.string().trim().max(40).nullable().optional(),
+          })
+          .optional(),
         password: z.string().min(8).max(200).optional(),
         currentPassword: z.string().min(1).max(200).optional(),
       })
@@ -114,34 +167,12 @@ export const mePatchSchema = z.union([
   }),
 ]);
 
-const permissionListSchema = z.array(z.enum([
-  "dashboard.access",
-  "dashboard.overview",
-  "inventory.view",
-  "inventory.adjust",
-  "inventory.restock",
-  "inventory.reset",
-  "catalog.create",
-  "catalog.edit",
-  "catalog.delete",
-  "activity.view",
-  "users.view",
-  "users.create",
-  "users.edit",
-  "users.assign_roles",
-  "users.deactivate",
-  "users.reset_password",
-  "locations.view",
-  "locations.create",
-  "locations.edit",
-  "locations.delete",
-  "events.view",
-  "events.create",
-  "events.edit",
-  "events.delete",
-  "deliveries.view",
-  "deliveries.manage",
-]));
+const permissionSchema = z.custom<(typeof PERMISSIONS)[number]>(
+  (value): value is (typeof PERMISSIONS)[number] => typeof value === "string" && isPermission(value),
+  { message: "Unknown permission." },
+);
+
+const permissionListSchema = z.array(permissionSchema);
 
 export const createUserSchema = z.object({
   name: z.string().trim().min(2).max(120),
@@ -215,6 +246,7 @@ export const placeOrderSchema = z
     locationId: z.string().min(1),
     fulfillment: z.enum(["delivery", "pickup"]),
     coupon: z.string().nullable().optional(),
+    loyaltyPointsRedeem: z.number().int().min(0).max(1_000_000).optional(),
     ageConfirmed: z.literal(true, {
       error: "Confirm you are 21 or older to place this order.",
     }),
@@ -281,7 +313,22 @@ export const cancelOrderSchema = z.object({
 export const patchOrderSchema = z.object({
   orderId: z.string().min(1),
   action: z.enum(["cancel", "status"]).optional().default("cancel"),
-  status: z.enum(["processing", "shipped", "ready", "delivered"]).optional(),
+  status: z
+    .enum([
+      "new",
+      "accepted",
+      "preparing",
+      "ready",
+      "assigned",
+      "out_for_delivery",
+      "delivered",
+      "ready_for_pickup",
+      "picked_up",
+      "completed",
+      "processing",
+      "shipped",
+    ])
+    .optional(),
   /** @deprecated Ignored — cancel requires a signed-in session. */
   userId: z.string().min(1).optional(),
 });
@@ -336,6 +383,16 @@ export const inventoryPatchSchema = z.discriminatedUnion("action", [
     hidden: z.boolean(),
     actorUserId: z.string().min(1).optional(),
   }),
+  z.object({
+    action: z.literal("pricing"),
+    locationId: z.string().min(1),
+    productId: z.string().min(1),
+    basePrice: nullableMoneySchema.optional(),
+    salePrice: nullableMoneySchema.optional(),
+    costPrice: nullableMoneySchema.optional(),
+    promoPrice: nullableMoneySchema.optional(),
+    actorUserId: z.string().min(1).optional(),
+  }),
 ]);
 
 export const locationWriteSchema = z.object({
@@ -350,10 +407,45 @@ export const locationWriteSchema = z.object({
   description: z.string().trim().max(4000).optional(),
   pickupAvailable: z.boolean().optional(),
   deliveryAvailable: z.boolean().optional(),
-  deliveryRadiusKm: z.number().min(0).max(200).optional(),
-  deliveryFee: z.number().min(0).max(500).optional(),
-  deliveryFreeMinimum: z.number().min(0).max(10000).optional(),
-  taxRate: z.number().min(0).max(0.25).optional(),
+  deliveryRadiusKm: z
+    .number()
+    .finite()
+    .min(0)
+    .max(200)
+    .refine((n) => Math.abs(n * 2 - Math.round(n * 2)) < 1e-9, "Use 0.5 km steps")
+    .optional(),
+  deliveryFee: moneyAmountAtMost(500, "Delivery fee cannot exceed $500").optional(),
+  deliveryFreeMinimum: moneyAmountAtMost(
+    10_000,
+    "Free delivery minimum cannot exceed $10,000",
+  ).optional(),
+  minimumOrderAmount: moneyAmountAtMost(
+    10_000,
+    "Minimum order cannot exceed $10,000",
+  ).optional(),
+  taxRate: taxRateSchema.optional(),
+  hours: z
+    .array(
+      z.object({
+        day: z.string().trim().min(1).max(40),
+        open: z.string().trim().min(1).max(16),
+        close: z.string().trim().min(1).max(16),
+      }),
+    )
+    .min(1)
+    .max(14)
+    .optional(),
+  holidayHours: z
+    .array(
+      z.object({
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
+        open: z.string().trim().max(16).default(""),
+        close: z.string().trim().max(16).default(""),
+        closed: z.boolean().optional(),
+      }),
+    )
+    .max(60)
+    .optional(),
   parking: z.string().trim().max(400).optional(),
   heroImage: z.string().trim().max(4000).optional(),
   gallery: z.array(z.string().trim().max(4000)).max(8).optional(),
@@ -390,7 +482,7 @@ const eventFieldsSchema = z.object({
   date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD"),
   startTime: z.string().min(4).max(16),
   endTime: z.string().min(4).max(16),
-  price: z.number().min(0).max(10000),
+  price: moneyAmountAtMost(10_000, "Ticket price cannot exceed $10,000"),
   seatsTotal: z.number().int().min(1).max(2000),
   image: z.string().trim().max(4000).optional(),
   hosts: z.array(z.string().trim().min(1).max(80)).max(8).optional(),

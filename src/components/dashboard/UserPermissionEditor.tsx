@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, RotateCcw } from "lucide-react";
 import {
   PERMISSION_GROUPS,
   PERMISSION_META,
@@ -9,10 +9,12 @@ import {
   hasPermission,
   permissionGroupTree,
   rolePermissions,
+  withPermissionImplications,
   type AccessInput,
   type Permission,
 } from "@/lib/auth/permissions";
 import { roleLabel } from "@/lib/auth/roles";
+import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 
 type Props = {
@@ -21,17 +23,46 @@ type Props = {
   actor: AccessInput;
   onChange: (enabled: Permission[]) => void;
   locked?: boolean;
+  /** user = Role/Added/Removed tags; template = building a role default set */
+  mode?: "user" | "template";
+  showReset?: boolean;
 };
 
-export function UserPermissionEditor({ role, enabled, actor, onChange, locked }: Props) {
-  const base = new Set(rolePermissions(role));
-  const on = new Set(enabled);
+export function UserPermissionEditor({
+  role,
+  enabled,
+  actor,
+  onChange,
+  locked,
+  mode = "user",
+  showReset = false,
+}: Props) {
+  const isTemplate = mode === "template";
+  const base = useMemo(() => new Set(rolePermissions(role)), [role]);
+  const on = useMemo(() => new Set(enabled), [enabled]);
   const [open, setOpen] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(PERMISSION_GROUPS.map((group, index) => [group, index === 0])),
   );
 
+  const overrideStats = useMemo(() => {
+    if (isTemplate || role === "owner") return { added: 0, removed: 0 };
+    let added = 0;
+    let removed = 0;
+    for (const permission of PERMISSIONS) {
+      const checked = on.has(permission);
+      const inRole = base.has(permission);
+      if (checked && !inRole) added += 1;
+      if (!checked && inRole) removed += 1;
+    }
+    return { added, removed };
+  }, [base, isTemplate, on, role]);
+
+  const emit = (next: Set<Permission>) => {
+    onChange(withPermissionImplications(PERMISSIONS.filter((item) => next.has(item))));
+  };
+
   const toggle = (permission: Permission) => {
-    if (locked || role === "owner") return;
+    if (locked || (!isTemplate && role === "owner")) return;
     if (!hasPermission(actor, permission)) return;
     const next = new Set(on);
     const { items, read, actions } = permissionGroupTree(PERMISSION_META[permission].group);
@@ -44,11 +75,11 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
       next.add(permission);
       if (read && items.includes(permission) && permission !== read) next.add(read);
     }
-    onChange(PERMISSIONS.filter((item) => next.has(item)));
+    emit(next);
   };
 
   const toggleGroup = (group: string) => {
-    if (locked || role === "owner") return;
+    if (locked || (!isTemplate && role === "owner")) return;
     const { items } = permissionGroupTree(group);
     const togglable = items.filter((permission) => hasPermission(actor, permission));
     if (togglable.length === 0) return;
@@ -58,32 +89,78 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
       if (allOn) next.delete(permission);
       else next.add(permission);
     }
-    onChange(PERMISSIONS.filter((item) => next.has(item)));
+    emit(next);
+  };
+
+  const resetDefaults = () => {
+    if (locked || role === "owner") return;
+    onChange(rolePermissions(role));
   };
 
   return (
     <div className="space-y-3">
-      <div>
-        <p className="text-[10px] uppercase tracking-[0.18em] text-gold">Permissions for this user</p>
-        <p className="mt-1 text-[12px] text-muted">
-          {roleLabel(role)} defaults are marked Role. Expand a section, then check extras like Reset
-          store or Reset password for this person only.
-        </p>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div className="min-w-0">
+          <p className="text-[10px] uppercase tracking-[0.18em] text-gold">
+            {isTemplate ? "Default permissions" : "Permissions for this user"}
+          </p>
+          <p className="mt-1 text-[12px] leading-5 text-muted">
+            {isTemplate
+              ? "Choose the default access this role grants. Checking an action also enables its read permission."
+              : `${roleLabel(role)} defaults show as Role. Add extras or remove defaults for this person only.`}
+          </p>
+        </div>
+        {!isTemplate && (overrideStats.added > 0 || overrideStats.removed > 0 || showReset) ? (
+          <div className="flex flex-wrap items-center gap-2">
+            {overrideStats.added > 0 ? (
+              <span className="rounded-sm border border-emerald-400/25 bg-emerald-400/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-emerald-200">
+                +{overrideStats.added} added
+              </span>
+            ) : null}
+            {overrideStats.removed > 0 ? (
+              <span className="rounded-sm border border-red-400/25 bg-red-400/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-red-200">
+                −{overrideStats.removed} removed
+              </span>
+            ) : null}
+            {showReset && !locked && role !== "owner" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="secondary"
+                className="min-h-9"
+                onClick={resetDefaults}
+                disabled={overrideStats.added === 0 && overrideStats.removed === 0}
+              >
+                <RotateCcw size={13} aria-hidden />
+                Reset
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
       </div>
-      <div className="border border-white/10">
+
+      <div className="overflow-hidden rounded-sm border border-white/10 bg-white/[0.015]">
         {PERMISSION_GROUPS.map((group) => {
           const { items, read, actions } = permissionGroupTree(group);
           const expanded = Boolean(open[group]);
+          const togglable = items.filter((permission) => hasPermission(actor, permission));
+          const togglableOn = togglable.filter((permission) => on.has(permission)).length;
           const checkedCount = items.filter((permission) => on.has(permission)).length;
-          const allOn = items.length > 0 && checkedCount === items.length;
-          const someOn = checkedCount > 0 && !allOn;
+          const allOn = togglable.length > 0 && togglableOn === togglable.length;
+          const someOn = togglableOn > 0 && !allOn;
           const canToggleGroup =
             !locked &&
-            role !== "owner" &&
-            items.some((permission) => hasPermission(actor, permission));
+            (isTemplate || role !== "owner") &&
+            togglable.length > 0;
+          const parentPartial =
+            Boolean(read) &&
+            on.has(read!) &&
+            actions.some((action) => on.has(action)) &&
+            !actions.every((action) => on.has(action));
+
           return (
             <div key={group} className="border-b border-white/10 last:border-b-0">
-              <div className="flex items-center gap-2 bg-white/[0.04] px-3 py-2">
+              <div className="flex items-center gap-2 bg-gradient-to-r from-white/[0.05] to-transparent px-3 py-2.5">
                 <button
                   type="button"
                   className="flex min-w-0 flex-1 items-center gap-2 text-left"
@@ -92,10 +169,13 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
                 >
                   <ChevronRight
                     size={14}
-                    className={cn("shrink-0 text-gold transition-transform", expanded && "rotate-90")}
+                    className={cn(
+                      "shrink-0 text-gold/80 transition-transform duration-200",
+                      expanded && "rotate-90",
+                    )}
                   />
                   <span className="text-[10px] uppercase tracking-[0.16em] text-gold">{group}</span>
-                  <span className="text-[10px] text-muted">
+                  <span className="rounded-sm bg-white/5 px-1.5 py-0.5 text-[10px] tabular-nums text-muted">
                     {checkedCount}/{items.length}
                   </span>
                 </button>
@@ -108,14 +188,19 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
                 />
               </div>
               {expanded ? (
-                <ul>
+                <ul className="bg-black/20">
                   {read ? (
                     <PermissionRow
                       permission={read}
                       checked={on.has(read)}
+                      indeterminate={parentPartial}
                       inRole={base.has(read) || role === "owner"}
-                      canToggle={!locked && role !== "owner" && hasPermission(actor, read)}
-                      hint="grants read access"
+                      canToggle={
+                        !locked &&
+                        (isTemplate || role !== "owner") &&
+                        hasPermission(actor, read)
+                      }
+                      isTemplate={isTemplate}
                       onToggle={() => toggle(read)}
                     />
                   ) : null}
@@ -125,8 +210,13 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
                       permission={permission}
                       checked={on.has(permission)}
                       inRole={base.has(permission) || role === "owner"}
-                      canToggle={!locked && role !== "owner" && hasPermission(actor, permission)}
+                      canToggle={
+                        !locked &&
+                        (isTemplate || role !== "owner") &&
+                        hasPermission(actor, permission)
+                      }
                       indent={Boolean(read)}
+                      isTemplate={isTemplate}
                       onToggle={() => toggle(permission)}
                     />
                   ))}
@@ -136,10 +226,12 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
           );
         })}
       </div>
-      {role === "owner" ? (
+      {!isTemplate && role === "owner" ? (
         <p className="text-xs text-muted">Owner accounts always keep full access.</p>
       ) : locked ? (
-        <p className="text-xs text-muted">You can view these permissions, but not change them on this account.</p>
+        <p className="text-xs text-muted">
+          You can view these permissions, but not change them on this account.
+        </p>
       ) : null}
     </div>
   );
@@ -148,32 +240,54 @@ export function UserPermissionEditor({ role, enabled, actor, onChange, locked }:
 function PermissionRow({
   permission,
   checked,
+  indeterminate,
   inRole,
   canToggle,
   indent,
-  hint,
+  isTemplate,
   onToggle,
 }: {
   permission: Permission;
   checked: boolean;
+  indeterminate?: boolean;
   inRole: boolean;
   canToggle: boolean;
   indent?: boolean;
-  hint?: string;
+  isTemplate?: boolean;
   onToggle: () => void;
 }) {
   const meta = PERMISSION_META[permission];
-  const tag = checked && !inRole ? "Added" : !checked && inRole ? "Removed" : inRole ? "Role" : null;
+  const tag = isTemplate
+    ? null
+    : checked && !inRole
+      ? "Added"
+      : !checked && inRole
+        ? "Removed"
+        : inRole
+          ? "Role"
+          : null;
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = Boolean(indeterminate) && checked;
+  }, [indeterminate, checked]);
+
   return (
     <li>
       <label
         className={cn(
-          "flex min-h-11 cursor-pointer items-start gap-3 border-t border-white/5 py-2.5 pr-3",
+          "flex min-h-11 cursor-pointer items-start gap-3 border-t border-white/5 py-2.5 pr-3 transition-colors",
           indent ? "pl-10" : "pl-3",
-          !canToggle && "cursor-default opacity-70",
+          checked ? "bg-gold/[0.03]" : "hover:bg-white/[0.02]",
+          !canToggle && "cursor-default opacity-60",
         )}
+        title={
+          !canToggle
+            ? "You don’t have this permission, so you can’t grant or remove it."
+            : undefined
+        }
       >
         <input
+          ref={ref}
           type="checkbox"
           className="mt-0.5 h-5 w-5 shrink-0 accent-(--gold)"
           checked={checked}
@@ -183,23 +297,22 @@ function PermissionRow({
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <p className={cn("text-sm", checked ? "text-cream" : "text-muted")}>{meta.label}</p>
-            {hint ? <span className="text-[11px] text-muted">({hint})</span> : null}
             {tag ? (
               <span
                 className={cn(
-                  "rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
+                  "rounded-sm border px-1.5 py-0.5 text-[10px] uppercase tracking-[0.12em]",
                   tag === "Added"
-                    ? "border-emerald-400/30 text-emerald-200"
+                    ? "border-emerald-400/30 bg-emerald-400/10 text-emerald-200"
                     : tag === "Removed"
-                      ? "border-(--danger)/30 text-(--danger)"
-                      : "border-white/15 text-muted",
+                      ? "border-red-400/30 bg-red-400/10 text-red-200"
+                      : "border-white/15 bg-white/5 text-muted",
                 )}
               >
                 {tag}
               </span>
             ) : null}
           </div>
-          <p className="mt-0.5 text-[11px] text-muted">{meta.description}</p>
+          <p className="mt-0.5 text-[11px] leading-4 text-muted">{meta.description}</p>
         </div>
       </label>
     </li>

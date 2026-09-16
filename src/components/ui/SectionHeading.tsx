@@ -10,13 +10,17 @@ export function SectionHeading({
   description,
   align = "left",
   className,
+  as = "h2",
 }: {
   eyebrow?: string;
   title: string;
   description?: string;
   align?: "left" | "center";
   className?: string;
+  /** Page-level headings should use h1. */
+  as?: "h1" | "h2";
 }) {
+  const Heading = as;
   return (
     <motion.div
       initial={{ opacity: 0, y: 24 }}
@@ -34,9 +38,9 @@ export function SectionHeading({
           {eyebrow}
         </p>
       )}
-      <h2 className="font-display text-2xl leading-tight text-[var(--cream)] sm:text-3xl md:text-5xl">
+      <Heading className="font-display text-2xl leading-tight text-[var(--cream)] sm:text-3xl md:text-5xl">
         {title}
-      </h2>
+      </Heading>
       {description && (
         <p className="mt-4 text-[var(--muted)] leading-relaxed">{description}</p>
       )}

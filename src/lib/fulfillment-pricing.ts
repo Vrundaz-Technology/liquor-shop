@@ -81,3 +81,51 @@ export function amountUntilFreeDelivery(subtotal: number, location?: Partial<Loc
   if (remaining <= 0) return null;
   return remaining;
 }
+
+export type PublicFulfillmentLocation = {
+  pickupAvailable?: boolean;
+  deliveryAvailable?: boolean;
+  deliveryRadiusKm?: number;
+  services?: string[];
+};
+
+/** Modes customers can choose on the live site (POS is staff-only). */
+export function customerFulfillmentModes(location?: PublicFulfillmentLocation | null) {
+  const modes: Array<"delivery" | "pickup"> = [];
+  if (location?.deliveryAvailable) modes.push("delivery");
+  if (location?.pickupAvailable) modes.push("pickup");
+  return modes;
+}
+
+export function publicFulfillmentSummary(location?: PublicFulfillmentLocation | null) {
+  const pickup = Boolean(location?.pickupAvailable);
+  const delivery = Boolean(location?.deliveryAvailable);
+  if (pickup && delivery) {
+    const radius = location?.deliveryRadiusKm;
+    return typeof radius === "number" && radius > 0
+      ? `Pickup · Delivery ${radius} km`
+      : "Pickup · Delivery";
+  }
+  if (pickup) return "Pickup available";
+  if (delivery) {
+    const radius = location?.deliveryRadiusKm;
+    return typeof radius === "number" && radius > 0
+      ? `Delivery ${radius} km`
+      : "Delivery available";
+  }
+  return "In-store shopping only";
+}
+
+/** Drop pickup/delivery marketing when that mode is off for this store. */
+export function publicStoreServices(
+  services: string[] | undefined,
+  deliveryAvailable: boolean | undefined,
+  pickupAvailable: boolean | undefined = true,
+) {
+  const list = services ?? [];
+  return list.filter((item) => {
+    if (!deliveryAvailable && /deliver/i.test(item)) return false;
+    if (!pickupAvailable && /\bpick[\s-]?up\b/i.test(item)) return false;
+    return true;
+  });
+}

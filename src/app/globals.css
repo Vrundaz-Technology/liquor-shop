@@ -44,6 +44,17 @@ html {
   scroll-behavior: smooth;
 }
 
+/* Native <select> popups (Windows/Chromium) inherit light menus unless forced dark. */
+select {
+  color-scheme: dark;
+}
+
+select option,
+select optgroup {
+  background-color: #121212;
+  color: #f3ead7;
+}
+
 @media (prefers-reduced-motion: reduce) {
   html {
     scroll-behavior: auto;

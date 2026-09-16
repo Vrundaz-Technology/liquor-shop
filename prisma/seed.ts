@@ -13,7 +13,13 @@ import { hashPassword } from "../src/lib/auth/password";
 import { DEMO_PASSWORD } from "../src/lib/auth/roles";
 import { ensureDeliverySchema } from "../src/lib/db/delivery";
 import { ensureLocationPricingSchema } from "../src/lib/db/location-pricing";
-import { ensureRoleDefinitionsSchema } from "../src/lib/db/roles-admin";
+import { ensureRoleDefinitionsSchema, ensureRolePresets } from "../src/lib/db/roles-admin";
+import {
+  ensureOrganizationSchema,
+  SAMS_ORG_ID,
+} from "../src/lib/db/organization";
+import { ensureLoyaltyProgram } from "../src/lib/db/loyalty";
+import { upsertPromotion } from "../src/lib/commerce/promotions";
 import { drivers } from "../src/data/drivers";
 import type { Order, Product, StoreLocation, UserProfile } from "../src/types";
 
@@ -59,6 +65,7 @@ function locationRow(loc: StoreLocation) {
     slug: loc.slug,
     name: loc.name,
     shortName: loc.shortName,
+    organizationId: SAMS_ORG_ID,
     address: loc.address,
     city: loc.city,
     state: loc.state,
@@ -85,12 +92,14 @@ function locationRow(loc: StoreLocation) {
 }
 
 function userRow(profile: UserProfile, passwordHash: string) {
+  const staffRole = ["owner", "admin", "staff"].includes(profile.role);
   return {
     email: profile.email,
     name: profile.name,
     role: profile.role,
     passwordHash,
     active: profile.active,
+    organizationId: staffRole ? SAMS_ORG_ID : null,
     preferredBranchId: profile.preferredBranchId,
     loyaltyPoints: profile.loyaltyPoints,
     loyaltyTier: profile.loyaltyTier,
@@ -146,6 +155,8 @@ async function seedLocations() {
           productId: item.productId,
           seedStock: item.stock,
           onHand: item.stock,
+          basePrice: item.basePrice ?? item.promoPrice ?? undefined,
+          salePrice: item.salePrice ?? undefined,
           promoPrice: item.promoPrice ?? null,
           featured: item.featured ?? false,
           hidden: item.hidden ?? false,
@@ -413,6 +424,9 @@ async function removeRetiredCatalog() {
 }
 
 async function main() {
+  console.log("Ensuring organization / multi-tenant schema…");
+  await ensureOrganizationSchema();
+
   console.log(`Seeding ${categories.length} categories…`);
   await seedCategories();
 
@@ -428,8 +442,9 @@ async function main() {
   console.log(`Seeding ${drivers.length} drivers…`);
   await seedDrivers();
 
-  console.log("Ensuring role_definitions table…");
+  console.log("Ensuring role_definitions + industry presets…");
   await ensureRoleDefinitionsSchema();
+  await ensureRolePresets();
 
   console.log(`Seeding ${events.length} events…`);
   await seedEvents();
@@ -446,11 +461,45 @@ async function main() {
   console.log(`Seeding ${demoUser.orders.length} demo orders…`);
   await seedOrders(demoUser.id, demoUser.orders);
 
+  console.log("Seeding loyalty + promotions…");
+  await ensureLoyaltyProgram(SAMS_ORG_ID);
+  await upsertPromotion({
+    id: "promo-sams10",
+    organizationId: SAMS_ORG_ID,
+    scope: "organization",
+    name: "Sam's 10% off",
+    code: "SAMS10",
+    type: "percent",
+    value: 0.1,
+    priority: 50,
+  });
+  await upsertPromotion({
+    id: "promo-gold15",
+    organizationId: SAMS_ORG_ID,
+    scope: "organization",
+    name: "Gold 15% off",
+    code: "GOLD15",
+    type: "percent",
+    value: 0.15,
+    priority: 60,
+  });
+  await upsertPromotion({
+    id: "promo-welcome20",
+    organizationId: SAMS_ORG_ID,
+    scope: "organization",
+    name: "Welcome 20% off",
+    code: "WELCOME20",
+    type: "percent",
+    value: 0.2,
+    minSubtotal: 50,
+    priority: 70,
+  });
+
   console.log("Seeding activity logs…");
   await seedActivity();
 
   console.log(
-    "Done. Categories, products, locations (+ pricing), inventory, drivers, events, reviews, demo users, orders, activity, and role_definitions are current.",
+    "Done. Organization, catalog, locations, inventory, drivers, events, reviews, users, orders, loyalty, promotions, and activity are current.",
   );
 }
 
