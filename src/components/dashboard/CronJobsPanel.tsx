@@ -16,6 +16,7 @@ import {
 import { useUserStore } from "@/store/user";
 import { hasPermission } from "@/lib/auth/permissions";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/Tooltip";
 import type { CronJobDefinition } from "@/lib/cron/catalog";
 
 type LastRun = {
@@ -458,9 +459,11 @@ export function CronJobsPanel() {
                           {run.processed} / {run.failed}
                         </td>
                         <td className={cn(tableCellClass, "max-w-[22rem] text-muted")}>
-                          <p className="truncate" title={run.message ?? undefined}>
+                          <Tooltip content={run.message || undefined} className="block min-w-0 w-full">
+                          <p className="truncate">
                             {run.message || "—"}
                           </p>
+                          </Tooltip>
                         </td>
                       </tr>
                     );

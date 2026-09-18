@@ -39,6 +39,7 @@ import { Select } from "@/components/ui/Select";
 import { NativeSelect } from "@/components/ui/NativeSelect";
 import { SmartImage } from "@/components/ui/SmartImage";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { AvailableOffersList } from "@/components/cart/AvailableOffersList";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import type { CategorySlug, Order, OrderFulfillment, Product } from "@/types";
@@ -1577,13 +1578,14 @@ function PosProductCard({
           </span>
         )}
         {inTicket ? (
+          <Tooltip content={`${ticketQty} in cart`} className="absolute right-1.5 top-1.5 sm:right-2 sm:top-2">
           <span
-            className="absolute right-1.5 top-1.5 flex h-6 min-w-6 items-center justify-center rounded-full bg-(--gold) px-1.5 text-[11px] font-semibold tabular-nums text-[#0a0a0a] shadow-[0_2px_8px_rgba(0,0,0,0.35)] sm:right-2 sm:top-2 sm:h-7 sm:min-w-7 sm:text-xs"
-            aria-label={`${ticketQty} in cart`}
-            title={`${ticketQty} in cart`}
+            className="flex h-6 min-w-6 items-center justify-center rounded-full bg-(--gold) px-1.5 text-[11px] font-semibold tabular-nums text-[#0a0a0a] shadow-[0_2px_8px_rgba(0,0,0,0.35)] sm:h-7 sm:min-w-7 sm:text-xs"
           >
             {ticketQty}
+            <span className="sr-only">{`${ticketQty} in cart`}</span>
           </span>
+          </Tooltip>
         ) : null}
       </div>
 

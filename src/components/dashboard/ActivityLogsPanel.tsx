@@ -29,6 +29,7 @@ import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { Pagination } from "@/components/ui/Pagination";
 import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
 import { Modal } from "@/components/ui/Modal";
@@ -936,7 +937,8 @@ export function ActivityLogsPanel() {
               return (
                 <tr key={log.id} className={tableRowClass}>
                   <td className={`${tableCellClass} align-top whitespace-nowrap text-xs text-muted`}>
-                    <time dateTime={log.createdAt} title={format(when, "PPpp")}>
+                    <Tooltip content={format(when, "PPpp")} className="block">
+                    <time dateTime={log.createdAt}>
                       <span className="block text-cream/90">{format(when, "MMM d, yyyy")}</span>
                       <span className="mt-0.5 block text-[10px] uppercase tracking-wider">
                         {format(when, "h:mm:ss a")}
@@ -945,6 +947,7 @@ export function ActivityLogsPanel() {
                         {formatDistanceToNow(when, { addSuffix: true })}
                       </span>
                     </time>
+                    </Tooltip>
                   </td>
                   <td className="min-w-[10rem] max-w-[16rem] px-4 py-3 align-top">
                     <p className="text-cream">{log.actorName}</p>
@@ -971,7 +974,7 @@ export function ActivityLogsPanel() {
                   <td className="min-w-[12rem] px-4 py-3 align-top text-xs text-muted">
                     <p className="text-cream/90">{entityLabel(log.entityType)}</p>
                     {log.entityId ? (
-                      <p className="mt-0.5 whitespace-nowrap font-mono text-[11px] leading-snug text-white/55" title={log.entityId}>
+                      <p className="mt-0.5 whitespace-nowrap font-mono text-[11px] leading-snug text-white/55">
                         {log.entityId}
                       </p>
                     ) : null}
@@ -1017,10 +1020,10 @@ export function ActivityLogsPanel() {
                     {loc?.shortName ?? "All stores"}
                   </span>
                 </div>
+                <Tooltip content={format(when, "PPpp")}>
                 <time
                   dateTime={log.createdAt}
                   className="shrink-0 text-right text-xs text-muted"
-                  title={format(when, "PPpp")}
                 >
                   <span className="block whitespace-nowrap text-cream/90">
                     {format(when, "MMM d")}
@@ -1029,6 +1032,7 @@ export function ActivityLogsPanel() {
                     {format(when, "h:mm a")}
                   </span>
                 </time>
+                </Tooltip>
               </div>
               <div className="mt-3 min-w-0">
                 <ChangesCell changes={changes} summary={log.summary} />
@@ -1044,7 +1048,7 @@ export function ActivityLogsPanel() {
                   ) : null}
                 </p>
                 {log.entityId ? (
-                  <p className="break-all font-mono text-[11px] text-white/50" title={log.entityId}>
+                  <p className="break-all font-mono text-[11px] text-white/50">
                     {log.entityId}
                   </p>
                 ) : null}

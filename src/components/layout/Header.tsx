@@ -28,6 +28,7 @@ import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { AccountMenu } from "@/components/layout/AccountMenu";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { StoreFinder } from "@/components/store/StoreFinder";
+import { Tooltip } from "@/components/ui/Tooltip";
 import type { Product } from "@/types";
 import type { getCategories } from "@/data/categories";
 
@@ -272,28 +273,31 @@ export function Header() {
                 {branch.shortName}
               </span>
             </button>
+            <Tooltip content="Search">
             <button
               onClick={() => {
                 setSearchOpen(true);
                 setAccountOpen(false);
               }}
               className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
-              aria-label="Search"
             >
               <Search size={18} />
+              <span className="sr-only">Search</span>
             </button>
+            </Tooltip>
+            <Tooltip content="Wishlist">
             <Link
               href="/wishlist"
               className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
-              aria-label="Wishlist"
             >
               <Heart size={18} />
+              <span className="sr-only">Wishlist</span>
             </Link>
+            </Tooltip>
             {!authReady && !isLoggedIn ? (
               <span
                 className="inline-flex h-9 w-9 shrink-0 animate-pulse rounded-sm bg-white/10 sm:h-10 sm:w-10"
                 aria-label="Checking account"
-                title="Checking account"
               />
             ) : isLoggedIn ? (
               <AccountMenu
@@ -312,17 +316,17 @@ export function Header() {
                 href="/login"
                 className="inline-flex min-h-9 items-center rounded-sm border border-white/10 bg-white/5 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] text-cream transition hover:border-(--gold)/40 hover:bg-white/10 sm:min-h-10"
                 aria-label="Sign in"
-                title="Sign in"
               >
                 Sign in
               </Link>
             )}
+            <Tooltip content={count > 0 ? `Cart, ${count} items` : "Cart"}>
             <Link
               href="/cart"
               className="relative inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
-              aria-label={`Cart, ${count} items`}
             >
               <ShoppingBag size={18} />
+              <span className="sr-only">{`Cart, ${count} items`}</span>
               {count > 0 && (
                 <span
                   key={cartBump || count}
@@ -332,6 +336,7 @@ export function Header() {
                 </span>
               )}
             </Link>
+            </Tooltip>
           </div>
         </div>
       </header>
@@ -419,33 +424,38 @@ export function Header() {
                   aria-label="Search products"
                 />
                 {query ? (
+                  <Tooltip content="Clear search">
                   <button
                     type="button"
                     onClick={() => setQuery("")}
                     className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--cream)]"
-                    aria-label="Clear search"
-                    title="Clear search"
                   >
                     <X size={16} strokeWidth={2.25} />
+                    <span className="sr-only">Clear search</span>
                   </button>
+                  </Tooltip>
                 ) : null}
+                <Tooltip content={listening ? "Listening…" : "Voice search"}>
                 <button
                   onClick={startVoice}
                   className={cn(
                     "inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-sm",
                     listening ? "animate-pulse text-[var(--gold)]" : "text-[var(--muted)]",
                   )}
-                  aria-label="Voice search"
                 >
                   <Mic size={18} />
+                  <span className="sr-only">Voice search</span>
                 </button>
+                </Tooltip>
+                <Tooltip content="Close search">
                 <button
                   onClick={() => setSearchOpen(false)}
-                  aria-label="Close search"
                   className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center"
                 >
                   <X size={18} />
+                  <span className="sr-only">Close search</span>
                 </button>
+                </Tooltip>
               </div>
               {results && (
                 <div className="glass mt-2 max-h-[min(60vh,calc(100dvh-9rem))] overflow-y-auto p-3 sm:p-4">

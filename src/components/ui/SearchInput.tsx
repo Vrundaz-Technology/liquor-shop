@@ -3,6 +3,7 @@
 import { Search, X } from "lucide-react";
 import { forwardRef, type InputHTMLAttributes, type KeyboardEvent } from "react";
 import { Input } from "@/components/ui/Input";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
 
 type SearchInputProps = {
@@ -89,16 +90,17 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
           />
         )}
         {value ? (
+          <Tooltip content="Clear search" className="absolute top-1/2 right-2 z-[1] -translate-y-1/2">
           <button
             type="button"
             onClick={clear}
             disabled={disabled}
-            className="absolute top-1/2 right-2 z-[1] inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-sm text-muted transition hover:bg-white/10 hover:text-cream focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold) disabled:pointer-events-none disabled:opacity-40"
-            aria-label="Clear search"
-            title="Clear search"
+            className="inline-flex h-7 w-7 items-center justify-center rounded-sm text-muted transition hover:bg-white/10 hover:text-cream focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold) disabled:pointer-events-none disabled:opacity-40"
           >
             <X size={14} strokeWidth={2.25} />
+            <span className="sr-only">Clear search</span>
           </button>
+          </Tooltip>
         ) : null}
       </div>
     );

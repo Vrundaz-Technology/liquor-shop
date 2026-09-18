@@ -274,6 +274,22 @@ export async function apiLoyaltyMember(opts?: { locationId?: string; history?: b
   }>(`/api/loyalty/member${qs ? `?${qs}` : ""}`);
 }
 
+export async function apiCreateTransfer(input: {
+  fromLocationId: string;
+  toLocationId: string;
+  notes?: string;
+  lines: { productId: string; quantity: number }[];
+}) {
+  return apiFetch<{
+    ok: true;
+    id: string;
+    inventory?: InventorySnapshot;
+  }>("/api/transfers", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
 export async function apiPlacePosOrder(input: {
   locationId: string;
   fulfillment: "pos" | "pickup" | "delivery";

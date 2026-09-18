@@ -28,6 +28,7 @@ import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import { Button } from "@/components/ui/Button";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { SearchInput } from "@/components/ui/SearchInput";
@@ -159,15 +160,16 @@ function IconAction({
   children: ReactNode;
 }) {
   return (
+    <Tooltip content={label}>
     <button
       type="button"
-      title={label}
-      aria-label={label}
       onClick={onClick}
       className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-sm border border-white/10 text-muted transition hover:border-(--gold)/35 hover:bg-white/5 hover:text-cream focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold)"
     >
       {children}
+      <span className="sr-only">{label}</span>
     </button>
+    </Tooltip>
   );
 }
 
@@ -703,16 +705,17 @@ export function InventoryPanel({
                         if (file) void importInventoryFile(file);
                       }}
                     />
+                    <Tooltip content="CSV or Excel with product_id/sku, on_hand, prices, hidden">
                     <Button
                       size="sm"
                       variant="secondary"
                       disabled={ioBusy}
                       onClick={() => importInputRef.current?.click()}
-                      title="CSV or Excel with product_id/sku, on_hand, prices, hidden"
                     >
                       <Upload size={14} />
                       {ioBusy ? "Working…" : "Import"}
                     </Button>
+                    </Tooltip>
                   </>
                 ) : null}
               </div>

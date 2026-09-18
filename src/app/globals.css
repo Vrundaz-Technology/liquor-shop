@@ -55,6 +55,12 @@ select optgroup {
   color: #f3ead7;
 }
 
+/* Abbreviations use the themed Tooltip — never the OS title popup or ? cursor. */
+abbr {
+  text-decoration: none;
+  cursor: inherit;
+}
+
 /* Browsers use cursor: default on <button>. Make every clickable control a pointer. */
 button:not(:disabled),
 [role="button"]:not([aria-disabled="true"]),

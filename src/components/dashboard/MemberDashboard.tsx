@@ -44,6 +44,7 @@ import { roleLabel } from "@/lib/auth/roles";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { NativeSelect } from "@/components/ui/NativeSelect";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 function panelLoading(label: string) {
   return (
@@ -525,10 +526,13 @@ export function MemberDashboard() {
                     const Icon = tab.icon;
                     return (
                       <li key={tab.id}>
+                        <Tooltip
+                          content={collapsed ? tab.label : undefined}
+                          side="right"
+                          className="flex w-full"
+                        >
                         <Link
                           href={dashboardPath(tab.id)}
-                          title={collapsed ? tab.label : undefined}
-                          aria-label={tab.label}
                           onClick={() => {
                             selectTab(tab.id);
                             opts?.onNavigate?.();
@@ -568,8 +572,11 @@ export function MemberDashboard() {
                                 {tab.label}
                               </span>
                             </span>
-                          ) : null}
+                          ) : (
+                            <span className="sr-only">{tab.label}</span>
+                          )}
                         </Link>
+                        </Tooltip>
                       </li>
                     );
                   })}
@@ -580,10 +587,9 @@ export function MemberDashboard() {
         </div>
 
         <div className={cn("shrink-0 border-t border-white/10", collapsed ? "p-2" : "p-3")}>
+          <Tooltip content={collapsed ? "Profile" : undefined} side="right" className="flex w-full">
           <Link
             href={dashboardPath("profile")}
-            title={collapsed ? "Profile" : undefined}
-            aria-label="Profile"
             aria-current={dashboardTab === "profile" ? "page" : undefined}
             onClick={() => {
               opts?.onNavigate?.();
@@ -606,8 +612,11 @@ export function MemberDashboard() {
                   {roleLabel(profile.role)}
                 </span>
               </span>
-            ) : null}
+            ) : (
+              <span className="sr-only">Profile</span>
+            )}
           </Link>
+          </Tooltip>
         </div>
       </nav>
     );
@@ -646,15 +655,16 @@ export function MemberDashboard() {
         >
           {sidebarCollapsed ? (
             <div className="flex items-center gap-1.5">
+              <Tooltip content="Expand sidebar" side="right">
               <button
                 type="button"
                 onClick={toggleSidebarCollapsed}
-                aria-label="Expand sidebar"
-                title="Expand sidebar"
                 className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-sm border border-white/10 bg-white/[0.02] text-muted transition hover:border-(--gold)/40 hover:bg-white/[0.04] hover:text-gold"
               >
                 <PanelLeftOpen size={16} />
+                <span className="sr-only">Expand sidebar</span>
               </button>
+              </Tooltip>
             </div>
           ) : (
             <div className="flex w-full items-center justify-between gap-2">
@@ -666,15 +676,16 @@ export function MemberDashboard() {
                   Command center
                 </p>
               </div>
+              <Tooltip content="Collapse sidebar">
               <button
                 type="button"
                 onClick={toggleSidebarCollapsed}
-                aria-label="Collapse sidebar"
-                title="Collapse sidebar"
                 className="flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-sm border border-white/10 bg-white/[0.02] text-muted transition hover:border-(--gold)/40 hover:bg-white/[0.04] hover:text-gold"
               >
                 <PanelLeftClose size={15} />
+                <span className="sr-only">Collapse sidebar</span>
               </button>
+              </Tooltip>
             </div>
           )}
         </div>

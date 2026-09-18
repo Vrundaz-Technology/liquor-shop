@@ -15,6 +15,7 @@ import {
 import { apiFetch } from "@/lib/api-client";
 import { dashboardPath } from "@/lib/dashboard/routes";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { confirmAction } from "@/store/dialog";
 import { useNotificationDevicePrefs } from "@/hooks/useNotificationDevicePrefs";
 import {
@@ -163,9 +164,12 @@ export function StaffNotificationBell({
 
   return (
     <div className="relative" ref={rootRef}>
+      <Tooltip
+        content={badgeLabel ? `Notifications, ${badgeLabel} unread` : "Notifications"}
+        disabled={open}
+      >
       <button
         type="button"
-        aria-label={badgeLabel ? `Notifications, ${badgeLabel} unread` : "Notifications"}
         aria-expanded={open}
         aria-haspopup="menu"
         onClick={() => {
@@ -187,12 +191,16 @@ export function StaffNotificationBell({
         )}
       >
         <Bell size={18} aria-hidden />
+        <span className="sr-only">
+          {badgeLabel ? `Notifications, ${badgeLabel} unread` : "Notifications"}
+        </span>
         {badgeLabel ? (
           <span className="absolute right-0.5 top-0.5 inline-flex h-4 min-w-4 items-center justify-center rounded-full bg-(--danger) px-1 text-[10px] font-medium leading-none text-white">
             {badgeLabel}
           </span>
         ) : null}
       </button>
+      </Tooltip>
 
       {open ? (
         <div

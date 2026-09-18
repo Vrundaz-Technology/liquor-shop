@@ -19,6 +19,7 @@ import { apiFetch } from "@/lib/api-client";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { NativeSelect } from "@/components/ui/NativeSelect";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { useNotificationDevicePrefs } from "@/hooks/useNotificationDevicePrefs";
 import {
   MAX_CUSTOM,
@@ -257,15 +258,16 @@ export function NotificationsPanel() {
             />
             <span className="text-sm text-cream">Disable notifications</span>
           </span>
+          <Tooltip content="Stops the unread badge and alert sound on this device. Your inbox stays available.">
           <span
             className="inline-flex h-7 w-7 items-center justify-center rounded-full border border-white/10 text-muted"
-            title="Stops the unread badge and alert sound on this device. Your inbox stays available."
           >
             <CircleHelp size={14} aria-hidden />
             <span className="sr-only">
               Stops the unread badge and alert sound on this device. Your inbox stays available.
             </span>
           </span>
+          </Tooltip>
         </label>
       </SettingsAccordion>
 

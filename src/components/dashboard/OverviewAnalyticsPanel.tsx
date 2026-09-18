@@ -16,6 +16,7 @@ import {
 import { dashboardPath } from "@/lib/dashboard/routes";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { Tooltip } from "@/components/ui/Tooltip";
 import {
   compareValues,
   SortableTh,
@@ -299,9 +300,13 @@ function AnalyticsBody({
   ) => (
     <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3 lg:grid-cols-4">
       {cards.map((card) => (
-        <div
+        <Tooltip
           key={card.label}
-          title={card.hint}
+          content={card.hint}
+          disabled={!card.hint}
+          className="block min-w-0 w-full"
+        >
+        <div
           className={cn(
             "min-w-0 rounded-sm border p-3 transition-colors sm:p-4",
             card.emphasis
@@ -321,6 +326,7 @@ function AnalyticsBody({
             {card.value}
           </p>
         </div>
+        </Tooltip>
       ))}
     </div>
   );

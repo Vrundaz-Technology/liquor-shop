@@ -1,4 +1,7 @@
+"use client";
+
 import type { ReactNode } from "react";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { cn } from "@/lib/utils";
 
 /** Short labels shown in the UI → full form for hover tooltips. */
@@ -37,14 +40,10 @@ export function AbbrTooltip({
   abbrClassName,
 }: Props) {
   const meaning = full ?? ABBR_FULL_NAMES[term];
-  const label = typeof children === "string" ? children : term;
 
   return (
     <span className={cn("inline-flex items-baseline gap-1", className)}>
-      <span
-        className="group/abbr relative inline-flex items-center"
-        aria-label={`${label}: ${meaning}`}
-      >
+      <Tooltip content={meaning}>
         <abbr
           className={cn(
             "cursor-default no-underline underline decoration-dotted decoration-current/40 underline-offset-2",
@@ -53,13 +52,7 @@ export function AbbrTooltip({
         >
           {children ?? term}
         </abbr>
-        <span
-          role="tooltip"
-          className="pointer-events-none absolute top-full left-0 z-30 mt-1.5 hidden whitespace-nowrap rounded-sm border border-gold/30 bg-[#121212] px-2 py-1 text-[10px] font-normal normal-case tracking-normal text-cream shadow-[0_8px_24px_rgba(0,0,0,0.45)] group-hover/abbr:block"
-        >
-          {meaning}
-        </span>
-      </span>
+      </Tooltip>
       {suffix ? <span>{suffix}</span> : null}
     </span>
   );

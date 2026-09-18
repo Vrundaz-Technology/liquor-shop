@@ -13,6 +13,7 @@ import { roleLabel } from "@/lib/auth/roles";
 import { dashboardPath } from "@/lib/dashboard/routes";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { StaffNotificationBell } from "@/components/layout/StaffNotificationBell";
 import { useUserStore } from "@/store/user";
 import type { UserProfile } from "@/types";
@@ -91,9 +92,9 @@ export function DashboardTopBar({ profile, compact = false }: Props) {
         <StaffNotificationBell variant="chrome" />
 
         <div className="relative" ref={userRef}>
+          <Tooltip content="Account menu" disabled={userOpen}>
           <button
             type="button"
-            aria-label="Account menu"
             aria-expanded={userOpen}
             aria-haspopup="menu"
             onClick={() => setUserOpen((open) => !open)}
@@ -105,6 +106,7 @@ export function DashboardTopBar({ profile, compact = false }: Props) {
             )}
           >
             <UserAvatar name={profile.name} src={profile.avatarUrl} size={compact ? 28 : 30} />
+            <span className="sr-only">Account menu</span>
             {!compact ? (
               <>
                 <span className="hidden min-w-0 text-left sm:block">
@@ -123,6 +125,7 @@ export function DashboardTopBar({ profile, compact = false }: Props) {
               </>
             ) : null}
           </button>
+          </Tooltip>
 
           {userOpen ? (
             <div

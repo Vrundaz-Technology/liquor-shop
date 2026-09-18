@@ -7,18 +7,25 @@ import {
   ArrowLeftRight,
   Check,
   ChevronDown,
+  Eye,
   LayoutGrid,
   Plus,
   Search,
   Table2,
   X,
 } from "lucide-react";
+import { format, formatDistanceToNow } from "date-fns";
 import { apiFetch } from "@/lib/api-client";
-import { getAllProducts } from "@/data/products";
+import { apiCreateTransfer } from "@/lib/api-mutations";
+import { getAllProducts, getProductById } from "@/data/products";
 import { useInventoryStore } from "@/store/inventory";
+import { availableStock } from "@/lib/commerce/order-status";
 import { Button } from "@/components/ui/Button";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { Modal } from "@/components/ui/Modal";
 import { NativeSelect } from "@/components/ui/NativeSelect";
+import { SmartImage } from "@/components/ui/SmartImage";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import {
   compareValues,
   SortableTh,
@@ -30,6 +37,8 @@ import {
 } from "@/components/ui/SortableTh";
 import { cn } from "@/lib/utils";
 import { usePersistedViewMode } from "@/hooks/usePersistedViewMode";
+import { Pagination } from "@/components/ui/Pagination";
+import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
 import type { StoreLocation } from "@/types";
 
 const TRANSFERS_VIEW_KEY = "sams.dashboard.view.transfers";
@@ -50,17 +59,81 @@ type TransferRow = {
   toLocationId: string;
   status: string;
   createdAt: string;
-  lines: { productId: string; quantity: number }[];
+  notes?: string;
+  createdByUserId?: string;
+  completedAt?: string;
+  lines: { id?: string; productId: string; quantity: number }[];
 };
+
+function stripQuotes(value: string) {
+  return value.replace(/^[\s"'“”]+|[\s"'“”]+$/g, "").trim();
+}
+
+function normalizeLabel(value: string) {
+  return value
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function stripPrefix(title: string, prefix: string) {
+  const needle = normalizeLabel(prefix);
+  if (!needle) return title;
+  const words = title.trim().split(/\s+/);
+  const take = needle.split(" ").length;
+  if (normalizeLabel(words.slice(0, take).join(" ")) !== needle) return title;
+  return words.slice(take).join(" ").replace(/^[\s—–-]+/, "").trim() || title;
+}
+
+function cleanCatalogName(brand: string, name: string) {
+  let title = name.trim();
+  const quoted = title.match(/^["“]([^"”]+)["”]\s*(.*)$/);
+  const quotedBrand = quoted?.[1] ? stripQuotes(quoted[1]) : "";
+  if (quoted) title = (quoted[2] || quoted[1]).trim();
+  const cleanBrand = stripQuotes(quotedBrand || brand);
+  title = stripPrefix(title, cleanBrand);
+  if (quotedBrand) title = stripPrefix(title, quotedBrand);
+  return { brand: cleanBrand, title };
+}
+
+function catalogLabel(productId: string) {
+  const product = getProductById(productId);
+  if (!product) return { brand: "", title: productId, image: "", sku: "", volumeMl: 0 };
+  const { brand, title } = cleanCatalogName(product.brand, product.name);
+  return {
+    brand,
+    title,
+    image: product.images[0] || "",
+    sku: product.sku || "",
+    volumeMl: product.volumeMl,
+  };
+}
+
+function formatStamp(iso?: string) {
+  if (!iso) return "—";
+  const when = new Date(iso);
+  if (Number.isNaN(when.getTime())) return iso;
+  return format(when, "MMM d, yyyy · h:mm a");
+}
 
 export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
   const qc = useQueryClient();
   const products = useMemo(() => getAllProducts(), []);
-  const getAvailable = useInventoryStore((s) => s.getAvailable);
+  const getOnHand = useInventoryStore((s) => s.getOnHand);
+  const getReserved = useInventoryStore((s) => s.getReserved);
+  const syncFromServer = useInventoryStore((s) => s.syncFromServer);
+  const inventoryRevision = useInventoryStore((s) => s.revision);
+  void inventoryRevision;
 
   const [modalOpen, setModalOpen] = useState(false);
+  const [viewing, setViewing] = useState<TransferRow | null>(null);
+  const [notice, setNotice] = useState("");
   const [historyView, setHistoryView] = usePersistedViewMode(TRANSFERS_VIEW_KEY, "cards");
   const { sortKey, sortDir, toggleSort } = useTableSort<TransferSortKey>("when", "desc", ["when"]);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
   const [fromLocationId, setFrom] = useState(locations[0]?.id ?? "");
   const [toLocationId, setTo] = useState(locations[1]?.id ?? locations[0]?.id ?? "");
   const [productId, setProductId] = useState("");
@@ -73,7 +146,9 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
 
   const selected = products.find((p) => p.id === productId);
   const available =
-    fromLocationId && productId ? getAvailable(fromLocationId, productId) : 0;
+    fromLocationId && productId
+      ? availableStock(getOnHand(fromLocationId, productId), getReserved(fromLocationId, productId))
+      : 0;
 
   const sameStore = Boolean(fromLocationId && toLocationId && fromLocationId === toLocationId);
   const needsTwoStores = locations.length < 2;
@@ -143,6 +218,9 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
     setTouched({ stores: false, product: false, quantity: false });
   };
 
+  const locationFor = (id: string) => locations.find((l) => l.id === id);
+  const nameFor = (id: string) => locationFor(id)?.shortName ?? id;
+
   const create = useMutation({
     mutationFn: async () => {
       if (needsTwoStores) {
@@ -156,22 +234,50 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
       if (quantity > available) {
         throw new Error(`Only ${available} available at the source store.`);
       }
-      await apiFetch("/api/transfers", {
-        method: "POST",
-        body: JSON.stringify({
-          fromLocationId,
-          toLocationId,
-          notes,
-          lines: [{ productId, quantity }],
-        }),
+      const result = await apiCreateTransfer({
+        fromLocationId,
+        toLocationId,
+        notes: notes.trim() || undefined,
+        lines: [{ productId, quantity }],
       });
+      if (!result.inventory?.stocks || Object.keys(result.inventory.stocks).length === 0) {
+        const snapshot = await apiFetch<{
+          stocks: Record<string, number>;
+          seats: Record<string, number>;
+          hidden?: Record<string, boolean>;
+          reserved?: Record<string, number>;
+        }>("/api/inventory");
+        return { ...result, inventory: snapshot };
+      }
+      return result;
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      const snap = result.inventory;
+      if (snap?.stocks && Object.keys(snap.stocks).length > 0) {
+        syncFromServer(snap.stocks, snap.seats, snap.hidden, snap.reserved);
+      }
       void qc.invalidateQueries({ queryKey: ["transfers"] });
+      void qc.invalidateQueries({ queryKey: ["staff-notifications"] });
+      void qc.invalidateQueries({ queryKey: ["inventory-meta"] });
+      void qc.invalidateQueries({ queryKey: ["inventory"] });
+      void qc.invalidateQueries({ queryKey: ["owner-analytics"] });
+      const fromName = nameFor(fromLocationId);
+      const toName = nameFor(toLocationId);
+      const item = catalogLabel(productId);
+      setNotice(
+        `Moved ${quantity} ${item.title || "bottle"} from ${fromName} to ${toName}. Stock is live on POS, shop, and inventory.`,
+      );
+      setPage(1);
       setModalOpen(false);
       resetForm();
     },
   });
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(""), 8000);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const openModal = () => {
     resetForm();
@@ -182,12 +288,6 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
     if (create.isPending) return;
     setModalOpen(false);
     setPickerOpen(false);
-  };
-
-  const nameFor = (id: string) => locations.find((l) => l.id === id)?.shortName ?? id;
-  const productName = (id: string) => {
-    const p = products.find((row) => row.id === id);
-    return p ? `${p.brand} — ${p.name}` : id;
   };
 
   const sortedTransfers = useMemo(() => {
@@ -211,6 +311,20 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
       }
     });
   }, [transfers, sortKey, sortDir, locations, products]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [sortKey, sortDir, pageSize]);
+
+  const total = sortedTransfers.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const from = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const to = Math.min(safePage * pageSize, total);
+  const pageTransfers = useMemo(
+    () => sortedTransfers.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize),
+    [pageSize, safePage, sortedTransfers],
+  );
 
   const swapStores = () => {
     if (needsTwoStores) return;
@@ -279,39 +393,62 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
         </p>
       ) : null}
 
+      {notice ? (
+        <p
+          role="status"
+          className="rounded-sm border border-(--gold)/30 bg-(--gold)/8 px-3 py-3 text-sm text-cream"
+        >
+          {notice}
+        </p>
+      ) : null}
+
       <section>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <h4 className="text-[10px] uppercase tracking-[0.16em] text-muted">Transfer history</h4>
+          <div className="min-w-0">
+            <h4 className="text-[10px] uppercase tracking-[0.16em] text-muted">Transfer history</h4>
+            {transfers.length > 0 ? (
+              <p className="mt-1 text-xs text-muted">
+                Showing {from}–{to} of {total} transfer{total === 1 ? "" : "s"}
+              </p>
+            ) : null}
+          </div>
           {transfers.length > 0 ? (
-            <div
-              className="inline-flex shrink-0 self-start rounded-sm border border-white/10 p-0.5 sm:self-auto"
-              role="group"
-              aria-label="History view"
-            >
-              <button
-                type="button"
-                onClick={() => setHistoryView("cards")}
-                className={cn(
-                  "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
-                  historyView === "cards" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
-                )}
-                aria-pressed={historyView === "cards"}
+            <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+              <PageSizeSelect
+                value={pageSize}
+                onChange={setPageSize}
+                options={[5, 10, 20, 50]}
+              />
+              <div
+                className="inline-flex shrink-0 rounded-sm border border-white/10 p-0.5"
+                role="group"
+                aria-label="History view"
               >
-                <LayoutGrid size={14} aria-hidden />
-                Cards
-              </button>
-              <button
-                type="button"
-                onClick={() => setHistoryView("table")}
-                className={cn(
-                  "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
-                  historyView === "table" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
-                )}
-                aria-pressed={historyView === "table"}
-              >
-                <Table2 size={14} aria-hidden />
-                Table
-              </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryView("cards")}
+                  className={cn(
+                    "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
+                    historyView === "cards" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
+                  )}
+                  aria-pressed={historyView === "cards"}
+                >
+                  <LayoutGrid size={14} aria-hidden />
+                  Cards
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setHistoryView("table")}
+                  className={cn(
+                    "inline-flex min-h-9 items-center gap-1.5 px-3 text-[11px] uppercase tracking-wider transition",
+                    historyView === "table" ? "bg-gold/15 text-gold" : "text-muted hover:text-cream",
+                  )}
+                  aria-pressed={historyView === "table"}
+                >
+                  <Table2 size={14} aria-hidden />
+                  Table
+                </button>
+              </div>
             </div>
           ) : null}
         </div>
@@ -369,62 +506,158 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
                     sortDir={sortDir}
                     onSort={toggleSort}
                   />
+                  <th className="px-4 py-3 font-medium whitespace-nowrap text-[10px] uppercase tracking-[0.14em] text-muted">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
-                {sortedTransfers.map((t) => (
+                {pageTransfers.map((t) => {
+                  const units = t.lines.reduce((sum, line) => sum + line.quantity, 0);
+                  return (
                   <tr key={t.id} className={tableRowClass}>
                     <td className={cn(tableCellClass, "whitespace-nowrap text-muted")}>
-                      {t.createdAt.slice(0, 19).replace("T", " ")}
+                      {formatStamp(t.createdAt)}
                     </td>
                     <td className={cn(tableCellClass, "text-cream")}>{nameFor(t.fromLocationId)}</td>
                     <td className={cn(tableCellClass, "text-cream")}>{nameFor(t.toLocationId)}</td>
                     <td className={cn(tableCellClass, "max-w-[18rem] text-cream/85")}>
-                      <ul className="space-y-0.5">
-                        {t.lines.map((line) => (
-                          <li key={`${t.id}-${line.productId}`} className="truncate">
-                            {productName(line.productId)} × {line.quantity}
-                          </li>
-                        ))}
-                      </ul>
+                      <p className="text-cream">
+                        {t.lines.length} SKU{t.lines.length === 1 ? "" : "s"} · {units} bottle
+                        {units === 1 ? "" : "s"}
+                      </p>
+                      <p className="mt-0.5 truncate text-xs text-muted">
+                        {t.lines
+                          .map((line) => catalogLabel(line.productId).title)
+                          .filter(Boolean)
+                          .join(", ") || "—"}
+                      </p>
                     </td>
                     <td className={tableCellClass}>
                       <span className="inline-flex rounded-sm border border-white/10 bg-white/[0.03] px-1.5 py-0.5 text-[11px] capitalize text-muted">
                         {t.status}
                       </span>
                     </td>
+                    <td className={tableCellClass}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setViewing(t)}
+                      >
+                        <Eye size={13} aria-hidden />
+                        View
+                      </Button>
+                    </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
         ) : (
-          <ul className="mt-3 space-y-2">
-            {sortedTransfers.map((t) => (
-              <li
-                key={t.id}
-                className="min-w-0 rounded-sm border border-white/10 bg-black/20 px-3 py-3 text-sm"
-              >
-                <p className="flex flex-wrap items-center gap-x-2 gap-y-1 text-cream">
-                  <span className="min-w-0 truncate">{nameFor(t.fromLocationId)}</span>
-                  <span className="text-gold">→</span>
-                  <span className="min-w-0 truncate">{nameFor(t.toLocationId)}</span>
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  {t.createdAt.slice(0, 19).replace("T", " ")} · {t.status}
-                </p>
-                <ul className="mt-2 space-y-1 text-xs text-cream/80">
-                  {t.lines.map((line) => (
-                    <li key={`${t.id}-${line.productId}`} className="min-w-0 truncate">
-                      {productName(line.productId)} × {line.quantity}
-                    </li>
-                  ))}
-                </ul>
+          <ul className="mt-3 grid grid-cols-1 gap-3 lg:grid-cols-2">
+            {pageTransfers.map((t) => {
+              const units = t.lines.reduce((sum, line) => sum + line.quantity, 0);
+              return (
+              <li key={t.id}>
+                <button
+                  type="button"
+                  onClick={() => setViewing(t)}
+                  className="flex h-full w-full min-w-0 flex-col rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.035] to-black/25 p-4 text-left transition hover:border-white/18 hover:bg-white/[0.02]"
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="flex min-w-0 flex-wrap items-center gap-x-1.5 text-[15px] font-medium text-cream">
+                      <span className="truncate">{nameFor(t.fromLocationId)}</span>
+                      <span className="text-gold">→</span>
+                      <span className="truncate">{nameFor(t.toLocationId)}</span>
+                    </p>
+                    <span className="shrink-0 rounded-sm border border-white/10 bg-white/[0.04] px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
+                      {t.status}
+                    </span>
+                  </div>
+                  <p className="mt-1.5 text-xs text-muted">{formatStamp(t.createdAt)}</p>
+
+                  <ul className="mt-4 flex-1 space-y-3">
+                    {t.lines.map((line) => {
+                      const item = catalogLabel(line.productId);
+                      return (
+                        <li key={`${t.id}-${line.productId}`} className="flex items-center gap-3">
+                          <span className="relative h-12 w-9 shrink-0 overflow-hidden rounded-sm border border-white/10 bg-black/40">
+                            {item.image ? (
+                              <SmartImage
+                                src={item.image}
+                                alt=""
+                                fill
+                                className="object-contain p-0.5"
+                                sizes="36px"
+                              />
+                            ) : (
+                              <span className="flex h-full items-center justify-center text-[10px] text-muted">
+                                —
+                              </span>
+                            )}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate text-sm text-cream">{item.title}</span>
+                            <span className="mt-0.5 block truncate text-xs text-muted">
+                              {[item.brand, item.volumeMl ? `${item.volumeMl} ml` : ""]
+                                .filter(Boolean)
+                                .join(" · ")}
+                            </span>
+                          </span>
+                          <span className="shrink-0 text-sm tabular-nums text-cream">
+                            × {line.quantity}
+                          </span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+
+                  <span className="mt-4 inline-flex items-center gap-1.5 self-start rounded-sm border border-white/10 px-2.5 py-1.5 text-xs text-cream/85">
+                    <Eye size={13} aria-hidden />
+                    View
+                    <span className="text-muted">
+                      · {units} bottle{units === 1 ? "" : "s"}
+                    </span>
+                  </span>
+                </button>
               </li>
-            ))}
+              );
+            })}
           </ul>
         )}
+        {transfers.length > 0 ? (
+          <Pagination page={safePage} totalPages={totalPages} onChange={setPage} className="mt-8" />
+        ) : null}
       </section>
+
+      <Modal
+        open={Boolean(viewing)}
+        onClose={() => setViewing(null)}
+        title="Transfer details"
+        subtitle={
+          viewing
+            ? `${nameFor(viewing.fromLocationId)} → ${nameFor(viewing.toLocationId)}`
+            : undefined
+        }
+        className="sm:max-w-2xl"
+        footer={
+          <div className="flex justify-end">
+            <Button type="button" variant="secondary" onClick={() => setViewing(null)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        {viewing ? (
+          <TransferDetail
+            transfer={viewing}
+            from={locationFor(viewing.fromLocationId)}
+            to={locationFor(viewing.toLocationId)}
+          />
+        ) : null}
+      </Modal>
 
       <Modal
         open={modalOpen}
@@ -500,12 +733,11 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
               </NativeSelect>
             </label>
 
+            <Tooltip content={needsTwoStores ? "Need two stores to swap" : "Swap stores"}>
             <button
               type="button"
               onClick={swapStores}
               disabled={needsTwoStores}
-              title={needsTwoStores ? "Need two stores to swap" : "Swap stores"}
-              aria-label="Swap from and to stores"
               className={cn(
                 "mx-auto inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm border transition sm:mb-0.5 sm:mx-0 sm:self-end",
                 needsTwoStores
@@ -514,7 +746,9 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
               )}
             >
               <ArrowLeftRight className="h-4 w-4 rotate-90 sm:rotate-0" />
+              <span className="sr-only">Swap from and to stores</span>
             </button>
+            </Tooltip>
 
             <label className="block text-[10px] uppercase tracking-[0.16em] text-muted">
               To store
@@ -596,20 +830,23 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
                     aria-label="Search products"
                   />
                   {query ? (
+                    <Tooltip content="Clear search">
                     <button
                       type="button"
                       onClick={() => setQuery("")}
                       className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-sm text-muted transition hover:bg-white/10 hover:text-cream"
-                      aria-label="Clear search"
-                      title="Clear search"
                     >
                       <X className="h-3.5 w-3.5" strokeWidth={2.25} />
+                      <span className="sr-only">Clear search</span>
                     </button>
+                    </Tooltip>
                   ) : null}
                 </div>
                 <ul className="max-h-52 overflow-y-auto overscroll-contain py-1">
                   {filtered.map((p) => {
-                    const onHand = fromLocationId ? getAvailable(fromLocationId, p.id) : 0;
+                    const onHand = fromLocationId
+                      ? availableStock(getOnHand(fromLocationId, p.id), getReserved(fromLocationId, p.id))
+                      : 0;
                     const active = p.id === productId;
                     return (
                       <li key={p.id}>
@@ -712,6 +949,133 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
           ) : null}
         </form>
       </Modal>
+    </div>
+  );
+}
+
+function TransferDetail({
+  transfer,
+  from,
+  to,
+}: {
+  transfer: TransferRow;
+  from?: StoreLocation;
+  to?: StoreLocation;
+}) {
+  const units = transfer.lines.reduce((sum, line) => sum + line.quantity, 0);
+  const when = new Date(transfer.createdAt);
+  const whenLabel = Number.isNaN(when.getTime())
+    ? transfer.createdAt
+    : formatDistanceToNow(when, { addSuffix: true });
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto_1fr] sm:items-center">
+        <StoreChip label="From" location={from} fallback={transfer.fromLocationId} />
+        <ArrowLeftRight className="mx-auto hidden h-4 w-4 text-gold sm:block" aria-hidden />
+        <StoreChip label="To" location={to} fallback={transfer.toLocationId} />
+      </div>
+
+      <dl className="grid gap-3 rounded-sm border border-white/10 bg-black/20 p-3 text-sm sm:grid-cols-2">
+        <div>
+          <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">When</dt>
+          <dd className="mt-1 text-cream">{formatStamp(transfer.createdAt)}</dd>
+          <dd className="mt-0.5 text-xs text-muted">{whenLabel}</dd>
+        </div>
+        <div>
+          <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">Status</dt>
+          <dd className="mt-1 capitalize text-cream">{transfer.status}</dd>
+          {transfer.completedAt ? (
+            <dd className="mt-0.5 text-xs text-muted">
+              Completed {formatStamp(transfer.completedAt)}
+            </dd>
+          ) : null}
+        </div>
+        <div className="sm:col-span-2">
+          <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">Transfer ID</dt>
+          <dd className="mt-1 break-all font-mono text-xs text-cream/80">{transfer.id}</dd>
+        </div>
+        {transfer.notes ? (
+          <div className="sm:col-span-2">
+            <dt className="text-[10px] uppercase tracking-[0.16em] text-muted">Notes</dt>
+            <dd className="mt-1 text-cream/90">{transfer.notes}</dd>
+          </div>
+        ) : null}
+      </dl>
+
+      <div>
+        <p className="text-[10px] uppercase tracking-[0.16em] text-muted">
+          Bottles · {transfer.lines.length} SKU{transfer.lines.length === 1 ? "" : "s"} · {units}{" "}
+          total
+        </p>
+        <ul className="mt-2 divide-y divide-white/5 rounded-sm border border-white/10">
+          {transfer.lines.map((line) => {
+            const item = catalogLabel(line.productId);
+            return (
+              <li
+                key={`${transfer.id}-${line.productId}`}
+                className="flex items-start gap-3 px-3 py-3"
+              >
+                <span className="relative h-14 w-11 shrink-0 overflow-hidden rounded-sm border border-white/10 bg-black/40">
+                  {item.image ? (
+                    <SmartImage
+                      src={item.image}
+                      alt=""
+                      fill
+                      className="object-contain p-1"
+                      sizes="44px"
+                    />
+                  ) : (
+                    <span className="flex h-full items-center justify-center text-[10px] text-muted">
+                      —
+                    </span>
+                  )}
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm text-cream">{item.title}</p>
+                  {item.brand ? (
+                    <p className="mt-0.5 truncate text-xs text-muted">{item.brand}</p>
+                  ) : null}
+                  <p className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-[11px] text-muted">
+                    {item.sku ? (
+                      <span>
+                        <AbbrTooltip term="SKU" /> {item.sku}
+                      </span>
+                    ) : null}
+                    {item.volumeMl ? <span>{item.volumeMl} ml</span> : null}
+                  </p>
+                </div>
+                <p className="shrink-0 text-right text-sm tabular-nums text-cream">
+                  × {line.quantity}
+                </p>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function StoreChip({
+  label,
+  location,
+  fallback,
+}: {
+  label: string;
+  location?: StoreLocation;
+  fallback: string;
+}) {
+  return (
+    <div className="min-w-0 rounded-sm border border-white/10 bg-black/20 px-3 py-3">
+      <p className="text-[10px] uppercase tracking-[0.16em] text-gold">{label}</p>
+      <p className="mt-1 truncate text-sm text-cream">{location?.shortName ?? fallback}</p>
+      {location ? (
+        <p className="mt-0.5 truncate text-xs text-muted">
+          {location.city}
+          {location.state ? `, ${location.state}` : ""}
+        </p>
+      ) : null}
     </div>
   );
 }

@@ -6,6 +6,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Bell, ChevronDown, LayoutDashboard, LogOut, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { roleLabel } from "@/lib/auth/roles";
 import type { UserProfile } from "@/types";
 
@@ -37,6 +38,7 @@ export function AccountMenu({
 
   return (
     <div className="relative" ref={menuRef}>
+      <Tooltip content="Account menu" disabled={open}>
       <button
         type="button"
         onClick={() => onOpenChange(!open)}
@@ -46,11 +48,11 @@ export function AccountMenu({
             ? "border-(--gold)/50 bg-white/5"
             : "border-white/10 hover:border-white/20 hover:bg-white/5",
         )}
-        aria-label="Account menu"
         aria-expanded={open}
         aria-haspopup="menu"
       >
         <UserAvatar name={profile.name} src={profile.avatarUrl} size={26} />
+        <span className="sr-only">Account menu</span>
         <ChevronDown
           size={14}
           className={cn(
@@ -59,6 +61,7 @@ export function AccountMenu({
           )}
         />
       </button>
+      </Tooltip>
       <AnimatePresence>
         {open ? (
           <motion.div

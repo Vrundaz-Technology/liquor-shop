@@ -26,12 +26,12 @@ const MUTED = "#9a9488";
 const PIE_COLORS = ["#c9a962", "#e4c878", "#8a7340", "#c4a07a", "#6b5344", "#9a9488"];
 
 const TOOLTIP_STYLE = {
-  background: "#12100c",
-  border: "1px solid rgba(255,255,255,0.12)",
+  background: "#121212",
+  border: "1px solid rgba(201, 169, 98, 0.30)",
   borderRadius: 2,
-  fontSize: 12,
+  fontSize: 11,
   color: CREAM,
-  boxShadow: "0 12px 32px rgba(0,0,0,0.45)",
+  boxShadow: "0 8px 24px rgba(0,0,0,0.45)",
 };
 
 function orderWhen(order: Order) {
@@ -189,6 +189,9 @@ export function AccountOverviewCharts({ orders }: Props) {
                     />
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
+                      itemStyle={{ color: CREAM, fontSize: 11 }}
+                      labelStyle={{ color: CREAM, fontSize: 11 }}
+                      cursor={{ stroke: "rgba(201, 169, 98, 0.35)" }}
                       formatter={(value, name) =>
                         name === "spend"
                           ? [formatPrice(Number(value ?? 0)), "Spend"]
@@ -233,6 +236,8 @@ export function AccountOverviewCharts({ orders }: Props) {
                     </Pie>
                     <Tooltip
                       contentStyle={TOOLTIP_STYLE}
+                      itemStyle={{ color: CREAM, fontSize: 11 }}
+                      labelStyle={{ color: CREAM, fontSize: 11 }}
                       formatter={(value, name) => [`${value} orders`, String(name)]}
                     />
                   </PieChart>
@@ -286,6 +291,9 @@ export function AccountOverviewCharts({ orders }: Props) {
                       />
                       <Tooltip
                         contentStyle={TOOLTIP_STYLE}
+                        itemStyle={{ color: CREAM, fontSize: 11 }}
+                        labelStyle={{ color: CREAM, fontSize: 11 }}
+                        cursor={{ fill: "rgba(201, 169, 98, 0.08)" }}
                         formatter={(value) => [formatPrice(Number(value ?? 0)), "Spend"]}
                       />
                       <Bar dataKey="spend" fill={GOLD} radius={[0, 2, 2, 0]} maxBarSize={22} />

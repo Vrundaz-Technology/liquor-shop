@@ -15,6 +15,7 @@ import { analyzeCartAvailability } from "@/lib/cart-availability";
 import { useInventoryStore } from "@/store/inventory";
 import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, publicFulfillmentSummary, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
+import { Tooltip } from "@/components/ui/Tooltip";
 import { Modal } from "@/components/ui/Modal";
 import { BranchAvailabilityPanel } from "@/components/cart/BranchAvailabilityPanel";
 import { CartRewardsPanel } from "@/components/cart/CartRewardsPanel";
@@ -373,18 +374,21 @@ export default function CartPage() {
                           −
                         </button>
                         <span className="min-w-8 px-2 text-center text-sm">{item.quantity}</span>
-                        <button
-                          className="min-h-11 px-3.5 py-2 text-muted touch-manipulation disabled:opacity-30"
-                          onClick={() => setQuantity(product.id, item.quantity + 1)}
-                          disabled={item.quantity >= stock}
-                          title={
+                        <Tooltip
+                          content={
                             item.quantity >= stock
                               ? "This store is at max — switch branch below to add more"
                               : undefined
                           }
                         >
+                        <button
+                          className="min-h-11 px-3.5 py-2 text-muted touch-manipulation disabled:opacity-30"
+                          onClick={() => setQuantity(product.id, item.quantity + 1)}
+                          disabled={item.quantity >= stock}
+                        >
                           +
                         </button>
+                        </Tooltip>
                       </div>
                       <button
                         className="min-h-11 px-2 py-2 text-xs text-muted touch-manipulation hover:text-cream"

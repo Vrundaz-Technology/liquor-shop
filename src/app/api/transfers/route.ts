@@ -40,11 +40,11 @@ export async function POST(request: Request) {
   }
 
   try {
-    const id = await createAndCompleteTransfer({
+    const result = await createAndCompleteTransfer({
       actor: auth.user,
       ...body.data,
     });
-    return NextResponse.json({ ok: true, id });
+    return NextResponse.json({ ok: true, ...result });
   } catch (error) {
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Transfer failed" },
