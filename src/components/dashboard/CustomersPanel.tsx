@@ -1,18 +1,19 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ArrowLeft,
   CircleHelp,
   Mail,
   MapPin,
+  Megaphone,
   Package,
   Phone,
   Save,
   Star,
-  Tag,
 } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
 import { formatPrice, cn } from "@/lib/utils";
@@ -21,6 +22,8 @@ import { Modal } from "@/components/ui/Modal";
 import { Select } from "@/components/ui/Select";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { SearchInput } from "@/components/ui/SearchInput";
+import { Pagination } from "@/components/ui/Pagination";
+import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
 import {
   SortableTh,
   compareValues,
@@ -31,8 +34,16 @@ import {
   tableWrapClass,
   useTableSort,
 } from "@/components/ui/SortableTh";
-import { dashboardPath } from "@/lib/dashboard/routes";
+import { dashboardPath, parseDashboardPath } from "@/lib/dashboard/routes";
 import { hasPermission } from "@/lib/auth/permissions";
+import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { NotifyChannelsEditor } from "@/components/dashboard/NotifyChannelsEditor";
+import {
+  seedNotifyEmails,
+  seedNotifyPhones,
+  validateNotifyDestinations,
+} from "@/lib/notifications/destinations";
+import type { NotifyEmailDestination, NotifyPhoneDestination } from "@/types";
 import { useUserStore } from "@/store/user";
 import { formatOrderPlaced } from "@/lib/commerce/order-tracking";
 import type {
@@ -64,6 +75,59 @@ function formatShortDate(iso: string | null | undefined) {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
+function orderOffer(order: {
+  couponCode: string | null;
+  promotionName?: string | null;
+  discountAmount: number;
+}) {
+  const code = order.couponCode?.trim() || "";
+  const name = order.promotionName?.trim() || "";
+  if (code && name && name.toLowerCase() !== code.toLowerCase()) {
+    return { title: code, subtitle: name };
+  }
+  if (code) return { title: code, subtitle: "" };
+  if (name) return { title: name, subtitle: "" };
+  if (order.discountAmount > 0) return { title: "Promotion", subtitle: "" };
+  return { title: "", subtitle: "" };
+}
+
+const AOV_HINT = "Average Order Value — lifetime spend divided by number of orders.";
+
+function notifyTone(status?: "sent" | "skipped" | "failed") {
+  if (status === "sent") return "border-emerald-400/40 bg-emerald-400/10 text-emerald-200";
+  if (status === "failed") return "border-(--danger)/35 bg-(--danger)/10 text-(--danger)";
+  if (status === "skipped") return "border-white/15 bg-white/5 text-muted";
+  return "";
+}
+
+function OrderNotifyMarks({
+  notify,
+}: {
+  notify?: { email?: "sent" | "skipped" | "failed"; sms?: "sent" | "skipped" | "failed" };
+}) {
+  if (!notify?.email && !notify?.sms) {
+    return <span className="text-muted">—</span>;
+  }
+  return (
+    <span className="flex flex-wrap gap-1">
+      {notify.email ? (
+        <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", notifyTone(notify.email))}>
+          Email {notify.email}
+        </span>
+      ) : null}
+      {notify.sms ? (
+        <span className={cn("inline-flex rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]", notifyTone(notify.sms))}>
+          SMS {notify.sms}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+function AovLabel({ className }: { className?: string }) {
+  return <AbbrTooltip term="AOV" full={AOV_HINT} abbrClassName={className} />;
 }
 
 const SEGMENT_STYLES: Record<CustomerSegment, { wrap: string; dot: string }> = {
@@ -170,11 +234,16 @@ function CrmScoringModal({
 }
 
 export function CustomersPanel() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const selectedId = parseDashboardPath(pathname).customerId;
   const [segment, setSegment] = useState("all");
   const [q, setQ] = useState("");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [notes, setNotes] = useState("");
   const [marketingConsent, setMarketingConsent] = useState(false);
+  const [channelPrefs, setChannelPrefs] = useState({ emails: true, sms: true, push: false });
+  const [notifyEmails, setNotifyEmails] = useState<NotifyEmailDestination[]>([]);
+  const [notifyPhones, setNotifyPhones] = useState<NotifyPhoneDestination[]>([]);
   const [formError, setFormError] = useState("");
   const [banner, setBanner] = useState("");
   const [guideOpen, setGuideOpen] = useState(false);
@@ -191,6 +260,7 @@ export function CustomersPanel() {
   const { data = [], isLoading } = useQuery({
     queryKey: ["crm-customers", segment, q],
     queryFn: () => fetchCustomers(segment, q),
+    staleTime: 15_000,
   });
 
   const sortedCustomers = useMemo(() => {
@@ -231,20 +301,32 @@ export function CustomersPanel() {
     queryKey: ["crm-customer-detail", selectedId],
     queryFn: () => fetchCustomerProfile(selectedId!),
     enabled: Boolean(selectedId),
+    staleTime: 15_000,
   });
 
   useEffect(() => {
     if (!detail) return;
     setNotes(detail.notes ?? "");
     setMarketingConsent(detail.marketingConsent);
+    setChannelPrefs({
+      emails: detail.marketingPrefs.emails,
+      sms: detail.marketingPrefs.sms,
+      push: detail.marketingPrefs.push,
+    });
+    setNotifyEmails(seedNotifyEmails(detail.email, detail.marketingPrefs.notifyEmails));
+    setNotifyPhones(seedNotifyPhones(detail.marketingPrefs.notifyPhones));
   }, [detail]);
 
   const openCustomer = (c: CrmCustomer) => {
-    setSelectedId(c.id);
     setNotes(c.notes ?? "");
     setMarketingConsent(c.marketingConsent);
     setFormError("");
+    router.push(dashboardPath("customers", { customerId: c.id }), { scroll: false });
   };
+
+  const closeCustomer = useCallback(() => {
+    router.push(dashboardPath("customers"), { scroll: false });
+  }, [router]);
 
   const save = useMutation({
     mutationFn: async () => {
@@ -252,12 +334,21 @@ export function CustomersPanel() {
       if (notes.length > 5000) {
         throw new Error("Notes must be 5000 characters or less.");
       }
+      const emails = notifyEmails.filter((row) => row.locked || row.email.trim());
+      const phones = notifyPhones.filter((row) => row.phone.trim());
+      const destinationError = validateNotifyDestinations(emails, phones);
+      if (destinationError) throw new Error(destinationError);
       await apiFetch("/api/customers", {
         method: "PATCH",
         body: JSON.stringify({
           customerId: selectedId,
           notes,
           marketingConsent,
+          orderEmailUpdates: channelPrefs.emails,
+          smsUpdates: channelPrefs.sms,
+          pushUpdates: channelPrefs.push,
+          notifyEmails: emails,
+          notifyPhones: phones,
         }),
       });
     },
@@ -295,12 +386,18 @@ export function CustomersPanel() {
         loading={detailLoading}
         notes={notes}
         marketingConsent={marketingConsent}
+        channelPrefs={channelPrefs}
+        notifyEmails={notifyEmails}
+        notifyPhones={notifyPhones}
         formError={formError}
         busy={save.isPending}
         canViewOrders={canViewOrders}
         onNotes={setNotes}
         onConsent={setMarketingConsent}
-        onBack={() => setSelectedId(null)}
+        onChannelPrefs={setChannelPrefs}
+        onNotifyEmails={setNotifyEmails}
+        onNotifyPhones={setNotifyPhones}
+        onBack={closeCustomer}
         onSave={() => save.mutate()}
       />
     );
@@ -416,7 +513,9 @@ export function CustomersPanel() {
                     <p className="mt-0.5 truncate text-cream">{formatPrice(c.totalSpent)}</p>
                   </div>
                   <div className="rounded-sm border border-white/5 px-2 py-1.5">
-                    <p className="text-muted">AOV</p>
+                    <p className="text-muted">
+                      <AovLabel />
+                    </p>
                     <p className="mt-0.5 truncate text-cream">{formatPrice(c.averageOrderValue)}</p>
                   </div>
                 </div>
@@ -448,7 +547,14 @@ export function CustomersPanel() {
                   <SortableTh label="Segment" column="segment" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Orders" column="orders" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Spent" column="spent" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-                  <SortableTh label="AOV" column="aov" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh
+                    label="AOV"
+                    column="aov"
+                    sortKey={sortKey}
+                    sortDir={sortDir}
+                    onSort={toggleSort}
+                    tooltip={AOV_HINT}
+                  />
                   <SortableTh label="Loyalty" column="loyalty" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Last order" column="lastOrder" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
                   <SortableTh label="Marketing" column="marketing" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
@@ -513,11 +619,17 @@ function CustomerRecord({
   loading,
   notes,
   marketingConsent,
+  channelPrefs,
+  notifyEmails,
+  notifyPhones,
   formError,
   busy,
   canViewOrders,
   onNotes,
   onConsent,
+  onChannelPrefs,
+  onNotifyEmails,
+  onNotifyPhones,
   onBack,
   onSave,
 }: {
@@ -525,11 +637,17 @@ function CustomerRecord({
   loading: boolean;
   notes: string;
   marketingConsent: boolean;
+  channelPrefs: { emails: boolean; sms: boolean; push: boolean };
+  notifyEmails: NotifyEmailDestination[];
+  notifyPhones: NotifyPhoneDestination[];
   formError: string;
   busy: boolean;
   canViewOrders: boolean;
   onNotes: (value: string) => void;
   onConsent: (value: boolean) => void;
+  onChannelPrefs: (value: { emails: boolean; sms: boolean; push: boolean }) => void;
+  onNotifyEmails: (value: NotifyEmailDestination[]) => void;
+  onNotifyPhones: (value: NotifyPhoneDestination[]) => void;
   onBack: () => void;
   onSave: () => void;
 }) {
@@ -537,22 +655,44 @@ function CustomerRecord({
     sortKey: orderSortKey,
     sortDir: orderSortDir,
     toggleSort: toggleOrderSort,
-  } = useTableSort<"id" | "date" | "type" | "status" | "total" | "discount">("date", "desc", [
+  } = useTableSort<"id" | "date" | "type" | "status" | "offer" | "total" | "discount" | "notify">(
     "date",
-    "total",
-    "discount",
-  ]);
-  const {
-    sortKey: discountSortKey,
-    sortDir: discountSortDir,
-    toggleSort: toggleDiscountSort,
-  } = useTableSort<"order" | "offer" | "amount" | "used">("used", "desc", ["amount", "used"]);
+    "desc",
+    ["date", "total", "discount"],
+  );
+
+  const [orderQuery, setOrderQuery] = useState("");
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(10);
 
   const orders = customer?.orders ?? [];
-  const discounts = customer?.discountsUsed ?? [];
+
+  const filteredOrders = useMemo(() => {
+    const q = orderQuery.trim().toLowerCase();
+    if (!q) return orders;
+    return orders.filter((order) => {
+      const offer = orderOffer(order);
+      const hay = [
+        order.id,
+        order.fulfillment,
+        order.status.replaceAll("_", " "),
+        offer.title,
+        offer.subtitle,
+        order.couponCode ?? "",
+        order.promotionName ?? "",
+        formatPrice(order.total),
+        formatPrice(order.discountAmount),
+        order.notify?.email ?? "",
+        order.notify?.sms ?? "",
+      ]
+        .join(" ")
+        .toLowerCase();
+      return hay.includes(q);
+    });
+  }, [orderQuery, orders]);
 
   const sortedOrders = useMemo(() => {
-    return [...orders].sort((a, b) => {
+    return [...filteredOrders].sort((a, b) => {
       switch (orderSortKey) {
         case "id":
           return compareValues(a.id, b.id, orderSortDir);
@@ -560,10 +700,22 @@ function CustomerRecord({
           return compareValues(a.fulfillment, b.fulfillment, orderSortDir);
         case "status":
           return compareValues(a.status, b.status, orderSortDir);
+        case "offer":
+          return compareValues(
+            orderOffer(a).title || orderOffer(a).subtitle,
+            orderOffer(b).title || orderOffer(b).subtitle,
+            orderSortDir,
+          );
         case "total":
           return compareValues(a.total, b.total, orderSortDir);
         case "discount":
           return compareValues(a.discountAmount, b.discountAmount, orderSortDir);
+        case "notify":
+          return compareValues(
+            `${a.notify?.email ?? "none"} ${a.notify?.sms ?? "none"}`,
+            `${b.notify?.email ?? "none"} ${b.notify?.sms ?? "none"}`,
+            orderSortDir,
+          );
         case "date":
         default: {
           const av = a.createdAt ? new Date(a.createdAt).getTime() : 0;
@@ -572,26 +724,26 @@ function CustomerRecord({
         }
       }
     });
-  }, [orderSortDir, orderSortKey, orders]);
+  }, [filteredOrders, orderSortDir, orderSortKey]);
 
-  const sortedDiscounts = useMemo(() => {
-    return [...discounts].sort((a, b) => {
-      switch (discountSortKey) {
-        case "order":
-          return compareValues(a.orderId, b.orderId, discountSortDir);
-        case "offer":
-          return compareValues(a.code || a.promotionName || "", b.code || b.promotionName || "", discountSortDir);
-        case "amount":
-          return compareValues(a.amount, b.amount, discountSortDir);
-        case "used":
-        default: {
-          const av = a.usedAt ? new Date(a.usedAt).getTime() : 0;
-          const bv = b.usedAt ? new Date(b.usedAt).getTime() : 0;
-          return compareValues(av, bv, discountSortDir);
-        }
-      }
-    });
-  }, [discountSortDir, discountSortKey, discounts]);
+  useEffect(() => {
+    setPage(1);
+    setOrderQuery("");
+  }, [customer?.id]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [orderSortKey, orderSortDir, pageSize, orderQuery]);
+
+  const total = sortedOrders.length;
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  const safePage = Math.min(page, totalPages);
+  const from = total === 0 ? 0 : (safePage - 1) * pageSize + 1;
+  const to = Math.min(safePage * pageSize, total);
+  const pageOrders = useMemo(
+    () => sortedOrders.slice((safePage - 1) * pageSize, (safePage - 1) * pageSize + pageSize),
+    [pageSize, safePage, sortedOrders],
+  );
 
   return (
     <div className="min-w-0 space-y-5">
@@ -635,22 +787,36 @@ function CustomerRecord({
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
             {[
-              { label: "Orders", value: String(customer.orderCount) },
-              { label: "Total spent", value: formatPrice(customer.totalSpent) },
-              { label: "AOV", value: formatPrice(customer.averageOrderValue) },
+              { key: "orders", label: "Orders", value: String(customer.orderCount) },
+              { key: "spent", label: "Total spent", value: formatPrice(customer.totalSpent) },
+              { key: "aov", label: "AOV", value: formatPrice(customer.averageOrderValue) },
               {
-                label: "Loyalty",
-                value: `${customer.loyaltyPoints.toLocaleString()} pts`,
+                key: "current",
+                label: "Current points",
+                value: customer.loyaltyPoints.toLocaleString(),
                 hint: customer.loyaltyTier,
               },
-              { label: "Last order", value: formatShortDate(customer.lastOrderAt) },
+              {
+                key: "used",
+                label: "Used points",
+                value: (customer.loyaltyPointsUsed ?? 0).toLocaleString(),
+                hint: "Redeemed",
+              },
+              { key: "last", label: "Last order", value: formatShortDate(customer.lastOrderAt) },
             ].map((card) => (
-              <div key={card.label} className="rounded-sm border border-white/10 bg-black/20 p-3">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-gold">{card.label}</p>
-                <p className="mt-1.5 font-price text-xl text-cream">{card.value}</p>
-                {card.hint ? <p className="mt-0.5 text-xs text-muted">{card.hint}</p> : null}
+              <div key={card.key} className="rounded-sm border border-white/10 bg-black/20 p-3">
+                <p className="text-[10px] uppercase tracking-[0.14em] text-gold">
+                  {card.key === "aov" ? <AovLabel className="text-gold" /> : card.label}
+                </p>
+                <p className="mt-1.5 font-price text-xl text-cream">
+                  {card.value}
+                  {card.key === "current" || card.key === "used" ? (
+                    <span className="ml-1 text-sm font-sans text-muted">pts</span>
+                  ) : null}
+                </p>
+                {"hint" in card && card.hint ? <p className="mt-0.5 text-xs text-muted">{card.hint}</p> : null}
               </div>
             ))}
           </div>
@@ -722,143 +888,99 @@ function CustomerRecord({
             </section>
           </div>
 
-          <section className="space-y-3">
-            <div>
-              <h4 className="flex items-center gap-2 font-display text-xl text-cream">
-                <Tag size={16} className="text-gold" />
-                Discounts used
-              </h4>
-              <p className="mt-0.5 text-xs text-muted">Coupons and promotions applied on their orders.</p>
-            </div>
-            {sortedDiscounts.length === 0 ? (
-              <p className="rounded-sm border border-dashed border-white/15 px-4 py-8 text-center text-sm text-muted">
-                No discounts used yet.
-              </p>
-            ) : (
-              <>
-                <MobileSortBar
-                  className="lg:hidden"
-                  columns={[
-                    { key: "order", label: "Order" },
-                    { key: "offer", label: "Offer" },
-                    { key: "amount", label: "Amount" },
-                    { key: "used", label: "Used" },
-                  ]}
-                  sortKey={discountSortKey}
-                  sortDir={discountSortDir}
-                  onSort={toggleDiscountSort}
-                />
-                <ul className="space-y-2 lg:hidden">
-                  {sortedDiscounts.map((row) => (
-                    <li
-                      key={`${row.orderId}-${row.code ?? row.promotionName}`}
-                      className="rounded-sm border border-white/10 bg-black/20 p-3"
-                    >
-                      <p className="text-sm text-cream">{row.code || row.promotionName || "Promotion"}</p>
-                      {row.code && row.promotionName ? (
-                        <p className="text-xs text-muted">{row.promotionName}</p>
-                      ) : null}
-                      <p className="mt-2 text-xs text-muted">
-                        {formatPrice(row.amount)} · {formatShortDate(row.usedAt)}
-                      </p>
-                      {canViewOrders ? (
-                        <Link
-                          href={dashboardPath("orders", { orderId: row.orderId })}
-                          className="mt-2 inline-flex min-h-11 items-center text-xs uppercase tracking-[0.14em] text-gold"
-                        >
-                          {row.orderId}
-                        </Link>
-                      ) : (
-                        <p className="mt-2 text-xs text-muted">{row.orderId}</p>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-                <div className={cn(tableWrapClass, "hidden lg:block")}>
-                <table className="w-full min-w-[40rem] text-left text-sm">
-                  <thead>
-                    <tr className={tableHeadRowClass}>
-                      <SortableTh label="Order" column="order" sortKey={discountSortKey} sortDir={discountSortDir} onSort={toggleDiscountSort} />
-                      <SortableTh label="Offer" column="offer" sortKey={discountSortKey} sortDir={discountSortDir} onSort={toggleDiscountSort} />
-                      <SortableTh label="Amount" column="amount" sortKey={discountSortKey} sortDir={discountSortDir} onSort={toggleDiscountSort} align="right" />
-                      <SortableTh label="Used" column="used" sortKey={discountSortKey} sortDir={discountSortDir} onSort={toggleDiscountSort} align="right" />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {sortedDiscounts.map((row) => (
-                      <tr key={`${row.orderId}-${row.code ?? row.promotionName}`} className={tableRowClass}>
-                        <td className={tableCellClass}>
-                          {canViewOrders ? (
-                            <Link
-                              href={dashboardPath("orders", { orderId: row.orderId })}
-                              className="text-gold hover:underline"
-                            >
-                              {row.orderId}
-                            </Link>
-                          ) : (
-                            row.orderId
-                          )}
-                        </td>
-                        <td className={tableCellClass}>
-                          {row.code || row.promotionName || "Promotion"}
-                          {row.code && row.promotionName ? (
-                            <p className="text-xs text-muted">{row.promotionName}</p>
-                          ) : null}
-                        </td>
-                        <td className={cn(tableCellClass, "text-right tabular-nums")}>
-                          {formatPrice(row.amount)}
-                        </td>
-                        <td className={cn(tableCellClass, "text-right text-muted")}>
-                          {formatShortDate(row.usedAt)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+          <section className="rounded-sm border border-white/10 bg-black/20 p-4 sm:p-5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <h4 className="flex items-center gap-2 font-display text-xl text-cream">
+                  <Package size={16} className="text-gold" />
+                  Order history
+                </h4>
+                <p className="mt-1 text-xs text-muted">
+                  {orders.length === 0
+                    ? "Orders, offers, and totals in one place."
+                    : total === 0
+                      ? "No matching orders"
+                      : `Showing ${from}–${to} of ${total}`}
+                </p>
               </div>
-              </>
-            )}
-          </section>
-
-          <section className="space-y-3">
-            <div>
-              <h4 className="flex items-center gap-2 font-display text-xl text-cream">
-                <Package size={16} className="text-gold" />
-                Order history
-              </h4>
+              {orders.length > 0 ? (
+                <PageSizeSelect
+                  className="shrink-0 self-start sm:mt-1"
+                  value={pageSize}
+                  onChange={setPageSize}
+                  options={[5, 10, 20, 50]}
+                  aria-label="Orders per page"
+                />
+              ) : null}
             </div>
-            {sortedOrders.length === 0 ? (
-              <p className="rounded-sm border border-dashed border-white/15 px-4 py-8 text-center text-sm text-muted">
+
+            {orders.length > 0 ? (
+              <SearchInput
+                className="mt-4"
+                inputClassName="h-11"
+                value={orderQuery}
+                onChange={setOrderQuery}
+                placeholder="Search orders…"
+                aria-label="Search order history"
+              />
+            ) : null}
+
+            {orders.length === 0 ? (
+              <p className="mt-4 rounded-sm border border-dashed border-white/15 px-4 py-8 text-center text-sm text-muted">
                 No orders for this customer yet.
               </p>
+            ) : total === 0 ? (
+              <p className="mt-4 rounded-sm border border-dashed border-white/15 px-4 py-8 text-center text-sm text-muted">
+                No orders match “{orderQuery.trim()}”.
+              </p>
             ) : (
               <>
                 <MobileSortBar
-                  className="lg:hidden"
+                  className="mt-4 lg:hidden"
                   columns={[
                     { key: "id", label: "Order" },
                     { key: "date", label: "Placed" },
                     { key: "type", label: "Type" },
                     { key: "status", label: "Status" },
+                    { key: "notify", label: "Notify" },
+                    { key: "offer", label: "Offer" },
+                    { key: "discount", label: "Discount" },
                     { key: "total", label: "Total" },
                   ]}
                   sortKey={orderSortKey}
                   sortDir={orderSortDir}
                   onSort={toggleOrderSort}
                 />
-                <ul className="space-y-2 lg:hidden">
-                  {sortedOrders.map((order) => {
+                <ul className="mt-3 space-y-2 lg:hidden">
+                  {pageOrders.map((order) => {
                     const placed = formatOrderPlaced({
                       date: order.date,
                       createdAt: order.createdAt ?? undefined,
                     });
+                    const offer = orderOffer(order);
                     return (
                       <li key={order.id} className="rounded-sm border border-white/10 bg-black/20 p-3">
                         <p className="truncate text-sm font-medium text-cream">{order.id}</p>
                         <p className="mt-1 text-xs capitalize text-muted">
                           {placed.label} · {order.fulfillment} · {order.status.replaceAll("_", " ")}
                         </p>
-                        <p className="mt-2 text-sm tabular-nums text-cream">{formatPrice(order.total)}</p>
+                        <div className="mt-2">
+                          <OrderNotifyMarks notify={order.notify} />
+                        </div>
+                        {offer.title ? (
+                          <p className="mt-2 text-sm text-cream">
+                            {offer.title}
+                            {offer.subtitle ? (
+                              <span className="text-muted"> · {offer.subtitle}</span>
+                            ) : null}
+                          </p>
+                        ) : null}
+                        <p className="mt-2 text-sm tabular-nums text-cream">
+                          {formatPrice(order.total)}
+                          {order.discountAmount > 0 ? (
+                            <span className="text-muted"> · −{formatPrice(order.discountAmount)}</span>
+                          ) : null}
+                        </p>
                         {canViewOrders ? (
                           <Link
                             href={dashboardPath("orders", { orderId: order.id })}
@@ -871,24 +993,27 @@ function CustomerRecord({
                     );
                   })}
                 </ul>
-                <div className={cn(tableWrapClass, "hidden lg:block")}>
-                <table className="w-full min-w-[48rem] text-left text-sm">
+                <div className={cn("mt-4 hidden lg:block", tableWrapClass)}>
+                <table className="w-full min-w-[58rem] text-left text-sm">
                   <thead>
                     <tr className={tableHeadRowClass}>
                       <SortableTh label="Order" column="id" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
                       <SortableTh label="Placed" column="date" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
                       <SortableTh label="Type" column="type" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
                       <SortableTh label="Status" column="status" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
+                      <SortableTh label="Notify" column="notify" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
+                      <SortableTh label="Offer" column="offer" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} />
                       <SortableTh label="Discount" column="discount" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} align="right" />
                       <SortableTh label="Total" column="total" sortKey={orderSortKey} sortDir={orderSortDir} onSort={toggleOrderSort} align="right" />
                     </tr>
                   </thead>
                   <tbody>
-                    {sortedOrders.map((order) => {
+                    {pageOrders.map((order) => {
                       const placed = formatOrderPlaced({
                         date: order.date,
                         createdAt: order.createdAt ?? undefined,
                       });
+                      const offer = orderOffer(order);
                       return (
                         <tr key={order.id} className={tableRowClass}>
                           <td className={tableCellClass}>
@@ -902,9 +1027,6 @@ function CustomerRecord({
                             ) : (
                               order.id
                             )}
-                            {order.couponCode ? (
-                              <p className="text-xs text-muted">Code {order.couponCode}</p>
-                            ) : null}
                           </td>
                           <td className={cn(tableCellClass, "whitespace-nowrap text-muted")}>
                             {placed.label}
@@ -913,8 +1035,25 @@ function CustomerRecord({
                           <td className={cn(tableCellClass, "capitalize")}>
                             {order.status.replaceAll("_", " ")}
                           </td>
+                          <td className={tableCellClass}>
+                            <OrderNotifyMarks notify={order.notify} />
+                          </td>
+                          <td className={tableCellClass}>
+                            {offer.title ? (
+                              <>
+                                <p className="text-cream">{offer.title}</p>
+                                {offer.subtitle ? (
+                                  <p className="text-xs text-muted">{offer.subtitle}</p>
+                                ) : null}
+                              </>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )}
+                          </td>
                           <td className={cn(tableCellClass, "text-right tabular-nums")}>
-                            {formatPrice(order.discountAmount)}
+                            {order.discountAmount > 0 ? formatPrice(order.discountAmount) : (
+                              <span className="text-muted">—</span>
+                            )}
                           </td>
                           <td className={cn(tableCellClass, "text-right tabular-nums")}>
                             {formatPrice(order.total)}
@@ -925,6 +1064,7 @@ function CustomerRecord({
                   </tbody>
                 </table>
               </div>
+              <Pagination page={safePage} totalPages={totalPages} onChange={setPage} className="mt-6" />
               </>
             )}
           </section>
@@ -942,30 +1082,111 @@ function CustomerRecord({
               />
             </label>
             <p className="mt-1 text-right text-[11px] text-muted">{notes.length}/5000</p>
-            <label className="mt-3 flex min-h-11 items-center gap-3 text-sm text-cream">
-              <input
-                type="checkbox"
-                className="h-5 w-5 accent-(--gold)"
-                checked={marketingConsent}
-                onChange={(e) => onConsent(e.target.checked)}
-              />
-              Marketing consent (email / offers)
-            </label>
-            <div className="mt-3 grid gap-2 text-xs text-muted sm:grid-cols-3">
-              <p>Emails: {customer.marketingPrefs.emails ? "On" : "Off"}</p>
-              <p>SMS: {customer.marketingPrefs.sms ? "On" : "Off"}</p>
-              <p>Push: {customer.marketingPrefs.push ? "On" : "Off"}</p>
+
+            <div className="mt-5 border-t border-white/10 pt-5">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-gold">Preferences</p>
+              <p className="mt-1 text-xs text-muted">
+                Channel switches match the customer’s Account page. Recipients below are where
+                messages actually go.
+              </p>
+              <div className="mt-3">
+                <PrefCard
+                  icon={Megaphone}
+                  title="Marketing consent"
+                  description="Allowed to receive promotional offers and new arrivals."
+                  checked={marketingConsent}
+                  onChange={onConsent}
+                />
+              </div>
+              <div className="mt-4">
+                <NotifyChannelsEditor
+                  channels={channelPrefs}
+                  emails={notifyEmails}
+                  phones={notifyPhones}
+                  receiptPhone={customer.phone}
+                  onChannels={onChannelPrefs}
+                  onEmails={onNotifyEmails}
+                  onPhones={onNotifyPhones}
+                />
+              </div>
             </div>
             {formError ? <p className="mt-3 text-sm text-(--danger)">{formError}</p> : null}
             <div className="mt-4 flex justify-end">
               <Button type="button" loading={busy} disabled={notes.length > 5000} onClick={onSave}>
                 {!busy ? <Save size={16} /> : null}
-                {busy ? "Saving…" : "Save notes"}
+                {busy ? "Saving…" : "Save changes"}
               </Button>
             </div>
           </section>
         </>
       )}
     </div>
+  );
+}
+
+function PrefCard({
+  icon: Icon,
+  title,
+  description,
+  destination,
+  checked,
+  onChange,
+}: {
+  icon: typeof Mail;
+  title: string;
+  description: string;
+  destination?: string | null;
+  checked: boolean;
+  onChange: (next: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => onChange(!checked)}
+      className={cn(
+        "flex min-h-[6.25rem] w-full items-start justify-between gap-3 rounded-sm border px-3.5 py-3 text-left transition focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold)",
+        checked
+          ? "border-(--gold)/35 bg-(--gold)/[0.07]"
+          : "border-white/10 bg-white/[0.02] hover:border-white/20",
+      )}
+    >
+      <span className="min-w-0">
+        <span className="flex items-center gap-2">
+          <Icon size={14} className={checked ? "text-gold" : "text-muted"} aria-hidden />
+          <span className="text-sm font-medium text-cream">{title}</span>
+        </span>
+        {destination ? (
+          <span className="mt-1.5 block truncate text-xs text-cream">{destination}</span>
+        ) : destination === null || destination === "" ? (
+          <span className="mt-1.5 block text-xs text-muted">No number on file</span>
+        ) : null}
+        <span className="mt-1 block text-xs leading-relaxed text-muted">{description}</span>
+      </span>
+      <span className="mt-0.5 flex shrink-0 flex-col items-end gap-1.5">
+        <span
+          className={cn(
+            "relative h-5 w-9 rounded-full transition-colors duration-200",
+            checked ? "bg-(--gold)" : "bg-white/20",
+          )}
+        >
+          <span
+            className={cn(
+              "absolute top-0.5 left-0.5 h-4 w-4 rounded-full shadow-sm transition-all duration-200 ease-out",
+              checked ? "translate-x-4 bg-[#1a1408]" : "bg-cream",
+            )}
+          />
+        </span>
+        <span
+          className={cn(
+            "text-[10px] uppercase tracking-[0.14em]",
+            checked ? "text-gold" : "text-muted",
+          )}
+        >
+          {checked ? "On" : "Off"}
+        </span>
+      </span>
+    </button>
   );
 }

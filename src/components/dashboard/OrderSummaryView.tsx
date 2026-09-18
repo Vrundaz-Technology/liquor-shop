@@ -15,6 +15,7 @@ import {
 import { Button } from "@/components/ui/Button";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { OrderChargeLines, OrderRewardsCard } from "@/components/orders/OrderCharges";
+import { OrderNotificationsCard } from "@/components/dashboard/OrderNotificationsCard";
 import { getLocationById } from "@/data/locations";
 import { getProductById } from "@/data/products";
 import { cn, formatPrice } from "@/lib/utils";
@@ -287,6 +288,8 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
               })}
             </ol>
           </section>
+
+          <OrderNotificationsCard orderId={order.id} canResend={Boolean(actions)} />
 
           <OrderRewardsCard order={order} />
 

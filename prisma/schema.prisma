@@ -481,6 +481,7 @@ model Order {
   ledger         InventoryLedger[]
   loyaltyEntries LoyaltyLedger[]
   payments       OrderPayment[]
+  notifications  OrderNotification[]
 
   @@index([userId])
   @@index([locationId])
@@ -496,6 +497,30 @@ model Order {
   @@index([shipdayOrderId])
   @@index([deliveryChannel])
   @@map("orders")
+}
+
+/** Customer/staff outbound attempts for an order (email, SMS, push, in-app). */
+model OrderNotification {
+  id             String   @id
+  orderId        String   @map("order_id")
+  organizationId String?  @map("organization_id")
+  kind           String
+  audience       String
+  channel        String
+  destination    String?
+  ok             Boolean  @default(false)
+  skipped        Boolean  @default(false)
+  reason         String?
+  triggerSource  String   @default("auto") @map("trigger_source")
+  actorUserId    String?  @map("actor_user_id")
+  title          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+
+  @@index([orderId, createdAt])
+  @@index([organizationId, createdAt])
+  @@map("order_notifications")
 }
 
 model OrderPayment {

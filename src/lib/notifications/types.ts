@@ -33,6 +33,7 @@ export type NotificationResult = {
   ok: boolean;
   skipped?: boolean;
   reason?: string;
+  destination?: string | null;
 };
 
 export interface Notifier {

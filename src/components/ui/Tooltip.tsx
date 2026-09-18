@@ -70,14 +70,14 @@ export function Tooltip({
   const triggerRef = useRef<HTMLSpanElement>(null);
   const tipRef = useRef<HTMLSpanElement>(null);
   const timerRef = useRef<number | null>(null);
+  const activeRef = useRef(false);
+  const pointerIntentRef = useRef(false);
   const tooltipId = useId();
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<Pos | null>(null);
   const [mounted, setMounted] = useState(false);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const canShow = !disabled && content != null && content !== false && content !== "";
 
   const clearTimer = () => {
     if (timerRef.current != null) {
@@ -87,15 +87,47 @@ export function Tooltip({
   };
 
   const hide = useCallback(() => {
+    activeRef.current = false;
     clearTimer();
     setOpen(false);
   }, []);
 
   const show = useCallback(() => {
-    if (disabled || content == null || content === false || content === "") return;
+    if (!canShow) return;
+    activeRef.current = true;
     clearTimer();
-    timerRef.current = window.setTimeout(() => setOpen(true), delayMs);
-  }, [content, delayMs, disabled]);
+    timerRef.current = window.setTimeout(() => {
+      if (!activeRef.current) return;
+      setOpen(true);
+    }, delayMs);
+  }, [canShow, delayMs]);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!canShow) hide();
+  }, [canShow, hide]);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") hide();
+    };
+    const onPointer = (event: PointerEvent) => {
+      if (triggerRef.current?.contains(event.target as Node)) return;
+      hide();
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer, true);
+    window.addEventListener("blur", hide);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer, true);
+      window.removeEventListener("blur", hide);
+    };
+  }, [open, hide]);
 
   const updatePos = useCallback(() => {
     const trigger = triggerRef.current;
@@ -110,34 +142,45 @@ export function Tooltip({
     }
     updatePos();
     const frame = window.requestAnimationFrame(updatePos);
-    const onMove = () => updatePos();
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", hide, true);
+    window.addEventListener("resize", hide);
     return () => {
       window.cancelAnimationFrame(frame);
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", hide, true);
+      window.removeEventListener("resize", hide);
     };
-  }, [open, updatePos, content]);
+  }, [open, updatePos, hide, content]);
 
   useEffect(() => () => clearTimer(), []);
-
-  if (disabled || content == null || content === false || content === "") {
-    return <>{children}</>;
-  }
 
   return (
     <span
       ref={triggerRef}
       className={cn("inline-flex max-w-full", className)}
-      onMouseEnter={show}
-      onMouseLeave={hide}
-      onFocusCapture={show}
-      onBlurCapture={hide}
+      onPointerEnter={(event) => {
+        if (event.pointerType === "touch") return;
+        pointerIntentRef.current = false;
+        show();
+      }}
+      onPointerLeave={hide}
+      onPointerDown={() => {
+        pointerIntentRef.current = true;
+        hide();
+      }}
+      onFocusCapture={() => {
+        if (pointerIntentRef.current) return;
+        show();
+      }}
+      onBlurCapture={(event) => {
+        pointerIntentRef.current = false;
+        const next = event.relatedTarget as Node | null;
+        if (next && triggerRef.current?.contains(next)) return;
+        hide();
+      }}
       aria-describedby={open ? tooltipId : undefined}
     >
       {children}
-      {mounted && open
+      {mounted && open && canShow
         ? createPortal(
             <span
               ref={tipRef}

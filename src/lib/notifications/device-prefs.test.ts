@@ -30,4 +30,10 @@ describe("dashboard notifications route", () => {
   it("parses /dashboard/notifications", () => {
     expect(parseDashboardPath("/dashboard/notifications").section).toBe("notifications");
   });
+
+  it("parses a customer record path", () => {
+    const route = parseDashboardPath("/dashboard/customers/cust-123");
+    expect(route.section).toBe("customers");
+    expect(route.customerId).toBe("cust-123");
+  });
 });

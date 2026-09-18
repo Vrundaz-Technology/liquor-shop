@@ -14,6 +14,7 @@ export const ABBR_FULL_NAMES = {
   Qty: "Quantity",
   COGS: "Cost of Goods Sold",
   POS: "Point of Sale",
+  AOV: "Average Order Value",
   USD: "United States Dollar",
   ml: "Milliliters",
 } as const;

@@ -1,4 +1,5 @@
 import { StubNotifier } from "@/lib/notifications/providers/stub";
+import { activeNotifyEmails, activeNotifyPhones } from "@/lib/notifications/destinations";
 import { shouldSendChannel } from "@/lib/notifications/preferences";
 import {
   abandonedCartPayload,
@@ -30,28 +31,97 @@ export function getNotifier() {
   return notifier;
 }
 
+async function sendOne(
+  channel: NotificationChannel,
+  payload: NotificationPayload,
+): Promise<NotificationResult> {
+  try {
+    return await notifier.send(channel, payload);
+  } catch (error) {
+    console.error(`[notify] ${channel} failed`, error);
+    return {
+      channel,
+      ok: false,
+      reason: error instanceof Error ? error.message : "send failed",
+    };
+  }
+}
+
 export async function dispatchNotification(
   payload: NotificationPayload,
   prefs?: UserPreferences | null,
-  opts?: { marketingConsent?: boolean; channels?: NotificationChannel[] },
+  opts?: {
+    marketingConsent?: boolean;
+    channels?: NotificationChannel[];
+    force?: boolean;
+    trigger?: "auto" | "manual_resend";
+    actorUserId?: string | null;
+  },
 ): Promise<NotificationResult[]> {
   const channels = opts?.channels ?? CHANNELS;
-  const results: NotificationResult[] = [];
+  const emails = activeNotifyEmails(prefs, payload.email);
+  const phones = activeNotifyPhones(prefs, payload.phone);
 
-  for (const channel of channels) {
-    if (!shouldSendChannel(channel, payload.kind, prefs, opts)) {
-      results.push({ channel, ok: false, skipped: true, reason: "preference" });
-      continue;
-    }
+  const batches = await Promise.all(
+    channels.map(async (channel): Promise<NotificationResult[]> => {
+      if (!opts?.force && !shouldSendChannel(channel, payload.kind, prefs, opts)) {
+        return [
+          {
+            channel,
+            ok: false,
+            skipped: true,
+            reason: "preference",
+            destination: channel === "sms" ? payload.phone : payload.email,
+          },
+        ];
+      }
+      if (channel === "email") {
+        if (!emails.length) {
+          return [{ channel, ok: false, skipped: true, reason: "No email destination" }];
+        }
+        return Promise.all(
+          emails.map(async (email) => ({
+            ...(await sendOne(channel, { ...payload, email })),
+            destination: email,
+          })),
+        );
+      }
+      if (channel === "sms") {
+        if (!phones.length) {
+          return [{ channel, ok: false, skipped: true, reason: "No sms destination" }];
+        }
+        return Promise.all(
+          phones.map(async (phone) => ({
+            ...(await sendOne(channel, { ...payload, phone })),
+            destination: phone,
+          })),
+        );
+      }
+      return [
+        {
+          ...(await sendOne(channel, payload)),
+          destination: payload.userId,
+        },
+      ];
+    }),
+  );
+  const results = batches.flat();
+
+  const orderId =
+    payload.data && typeof payload.data.orderId === "string" ? payload.data.orderId : null;
+  if (orderId) {
     try {
-      results.push(await notifier.send(channel, payload));
-    } catch (error) {
-      console.error(`[notify] ${channel} failed`, error);
-      results.push({
-        channel,
-        ok: false,
-        reason: error instanceof Error ? error.message : "send failed",
+      const { recordCustomerOrderNotices } = await import("@/lib/db/order-notifications");
+      await recordCustomerOrderNotices({
+        orderId,
+        kind: payload.kind,
+        title: payload.title,
+        results,
+        trigger: opts?.trigger,
+        actorUserId: opts?.actorUserId,
       });
+    } catch (error) {
+      console.error("[notify] persist failed", error);
     }
   }
 
@@ -96,7 +166,9 @@ export async function notifyOrderConfirmed(input: {
 }) {
   const payload = orderNotificationPayload("order.confirmed", input);
   if (!payload) return [];
-  return dispatchNotification(payload, input.prefs);
+  return dispatchNotification(payload, input.prefs, {
+    channels: ["email", "sms"],
+  });
 }
 
 export async function notifyPromo(input: {

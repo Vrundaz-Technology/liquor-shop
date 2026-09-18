@@ -1783,37 +1783,36 @@ export async function placeOrder(input: {
     })();
   }
 
-  if (input.activityAction !== "pos.sale" && result.order.fulfillment !== "pos") {
-    void (async () => {
-      try {
-        const { notifyOrderConfirmed, notifyLoyalty } = await import("@/lib/notifications");
-        const { loadNotifyRecipient } = await import("@/lib/notifications/recipients");
-        const { getLocationById } = await import("@/data/locations");
-        const recipient = await loadNotifyRecipient(result.userId);
-        const store = getLocationById(result.order.locationId);
-        await notifyOrderConfirmed({
-          orderId: result.order.id,
-          tracking: result.order.tracking,
-          storeName: store?.shortName,
-          userId: result.userId,
-          email: recipient?.email ?? input.email,
-          phone: input.phone ?? input.delivery?.phone,
-          prefs: recipient?.prefs,
-        });
-        if (loyalty.points > 0) {
-          await notifyLoyalty({
-            userId: result.userId,
-            email: recipient?.email ?? input.email,
-            phone: input.phone ?? input.delivery?.phone,
-            points: loyalty.points,
-            tier: "tier" in loyalty ? String(loyalty.tier) : undefined,
-            prefs: recipient?.prefs,
-          });
-        }
-      } catch (error) {
-        console.error("[placeOrder] notify failed", error);
-      }
-    })();
+  try {
+    const { notifyOrderConfirmed, notifyLoyalty } = await import("@/lib/notifications");
+    const { loadNotifyRecipient } = await import("@/lib/notifications/recipients");
+    const { getLocationById } = await import("@/data/locations");
+    const recipient = await loadNotifyRecipient(result.userId);
+    const store = getLocationById(result.order.locationId);
+    const rawEmail = (recipient?.email ?? input.email)?.trim() || null;
+    const email = rawEmail && !rawEmail.toLowerCase().endsWith("@pos.local") ? rawEmail : null;
+    const phone = input.phone?.trim() || input.delivery?.phone?.trim() || null;
+    await notifyOrderConfirmed({
+      orderId: result.order.id,
+      tracking: result.order.tracking,
+      storeName: store?.shortName,
+      userId: result.userId,
+      email,
+      phone,
+      prefs: recipient?.prefs,
+    });
+    if (loyalty.points > 0) {
+      void notifyLoyalty({
+        userId: result.userId,
+        email,
+        phone,
+        points: loyalty.points,
+        tier: "tier" in loyalty ? String(loyalty.tier) : undefined,
+        prefs: recipient?.prefs,
+      });
+    }
+  } catch (error) {
+    console.error("[placeOrder] notify failed", error);
   }
 
   return {
@@ -2096,6 +2095,29 @@ export async function cancelOrder(
     } catch (error) {
       console.error("[cancelOrder] loyalty reverse failed", error);
     }
+    void (async () => {
+      try {
+        const { notifyOrderStatus } = await import("@/lib/notifications");
+        const { loadNotifyRecipient } = await import("@/lib/notifications/recipients");
+        const recipient = await loadNotifyRecipient(cancelled.userId);
+        const phoneRows = await prisma.$queryRawUnsafe<{ delivery_phone: string | null }[]>(
+          `SELECT delivery_phone FROM orders WHERE id = ? LIMIT 1`,
+          cancelled.order.id,
+        );
+        await notifyOrderStatus({
+          fulfillment: cancelled.order.fulfillment,
+          status: "cancelled",
+          orderId: cancelled.order.id,
+          tracking: cancelled.order.tracking,
+          userId: cancelled.userId,
+          email: recipient?.email,
+          phone: phoneRows[0]?.delivery_phone,
+          prefs: recipient?.prefs,
+        });
+      } catch (error) {
+        console.error("[cancelOrder] notify failed", error);
+      }
+    })();
   }
 
   return cancelled?.order ?? null;

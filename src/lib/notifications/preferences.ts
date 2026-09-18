@@ -37,6 +37,7 @@ export function shouldSendChannel(
   }
 
   if (channel === "sms") {
+    if (kind === "order.confirmed") return p.smsUpdates !== false;
     if (!p.smsUpdates) return false;
     return TRANSACTIONAL_ORDER.has(kind) || kind === "loyalty.reward" || kind === "cart.abandoned";
   }

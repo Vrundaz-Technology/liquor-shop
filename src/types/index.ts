@@ -98,6 +98,7 @@ export type ActivityAction =
   | "order.cancelled"
   | "order.refunded"
   | "order.status"
+  | "order.notify_resend"
   | "inventory.set"
   | "inventory.adjust"
   | "inventory.restock"
@@ -498,6 +499,22 @@ export type NewBottleInput = {
 
 export type BottlePatch = Partial<Omit<NewBottleInput, "initialStock" | "stockLocationIds">>;
 
+export type NotifyEmailDestination = {
+  id: string;
+  email: string;
+  label: string;
+  active: boolean;
+  locked?: boolean;
+};
+
+export type NotifyPhoneDestination = {
+  id: string;
+  phone: string;
+  countryCode: "+1";
+  label: string;
+  active: boolean;
+};
+
 export type UserPreferences = {
   defaultFulfillment?: "delivery" | "pickup";
   marketingEmails?: boolean;
@@ -509,6 +526,8 @@ export type UserPreferences = {
   priceAlerts?: boolean;
   abandonedCartReminders?: boolean;
   favoriteCategory?: string | null;
+  notifyEmails?: NotifyEmailDestination[];
+  notifyPhones?: NotifyPhoneDestination[];
 };
 
 export type UserProfile = {

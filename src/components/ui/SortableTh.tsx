@@ -1,8 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Tooltip } from "@/components/ui/Tooltip";
 
 export type SortDir = "asc" | "desc";
 
@@ -48,6 +49,7 @@ export function SortableTh<K extends string>({
   onSort,
   align = "left",
   className,
+  tooltip,
 }: {
   label: string;
   column: K;
@@ -56,6 +58,7 @@ export function SortableTh<K extends string>({
   onSort: (key: K) => void;
   align?: "left" | "right";
   className?: string;
+  tooltip?: ReactNode;
 }) {
   const active = sortKey === column;
   return (
@@ -75,7 +78,13 @@ export function SortableTh<K extends string>({
           active ? "text-gold" : "hover:text-cream",
         )}
       >
-        {label}
+        {tooltip ? (
+          <Tooltip content={tooltip}>
+            <span>{label}</span>
+          </Tooltip>
+        ) : (
+          label
+        )}
         {active ? (
           sortDir === "asc" ? (
             <ArrowUp size={11} strokeWidth={2.25} className="shrink-0 text-gold" />

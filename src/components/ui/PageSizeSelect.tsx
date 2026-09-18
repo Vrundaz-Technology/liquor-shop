@@ -11,6 +11,7 @@ type Props = {
   onChange: (size: number) => void;
   options?: readonly number[];
   className?: string;
+  "aria-label"?: string;
 };
 
 export function PageSizeSelect({
@@ -18,6 +19,7 @@ export function PageSizeSelect({
   onChange,
   options = PAGE_SIZE_OPTIONS,
   className,
+  "aria-label": ariaLabel = "Rows per page",
 }: Props) {
   return (
     <label
@@ -30,7 +32,7 @@ export function PageSizeSelect({
       <NativeSelect
         value={value}
         onChange={(e) => onChange(Number(e.target.value))}
-        aria-label="Bottles per page"
+        aria-label={ariaLabel}
         className="min-w-[4.5rem] px-2.5 py-2"
         wrapperClassName="inline-block"
       >

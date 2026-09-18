@@ -938,8 +938,8 @@ export default function AccountPage() {
                   />
                 </div>
               </div>
-              <div className="mt-4 space-y-3">
-                <label className="flex items-center gap-2 text-sm text-cream">
+              <div className="mt-4 space-y-1">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.orderEmailUpdates !== false}
@@ -949,17 +949,17 @@ export default function AccountPage() {
                   />
                   Email me order status updates
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
-                    checked={prefs.smsUpdates ?? false}
+                    checked={prefs.smsUpdates !== false}
                     onChange={(e) =>
                       setPrefs((p) => ({ ...p, smsUpdates: e.target.checked }))
                     }
                   />
                   Text me order status updates
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.pushUpdates ?? false}
@@ -969,7 +969,7 @@ export default function AccountPage() {
                   />
                   Push notifications (when enabled on this device)
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.marketingEmails ?? false}
@@ -979,7 +979,7 @@ export default function AccountPage() {
                   />
                   Promotional offers and new arrivals
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.loyaltyAlerts !== false}
@@ -989,7 +989,7 @@ export default function AccountPage() {
                   />
                   Loyalty rewards updates
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.backInStockAlerts !== false}
@@ -999,7 +999,7 @@ export default function AccountPage() {
                   />
                   Back-in-stock alerts
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.priceAlerts !== false}
@@ -1009,7 +1009,7 @@ export default function AccountPage() {
                   />
                   Price and promotion alerts
                 </label>
-                <label className="flex items-center gap-2 text-sm text-cream">
+                <label className="flex min-h-11 items-center gap-2 text-sm text-cream">
                   <input
                     type="checkbox"
                     checked={prefs.abandonedCartReminders !== false}

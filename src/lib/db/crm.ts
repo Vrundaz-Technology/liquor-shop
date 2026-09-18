@@ -2,7 +2,10 @@ import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { ensureOrganizationSchema, actorOrganizationId, SAMS_ORG_ID } from "@/lib/db/organization";
 import { moneyNumber } from "@/lib/db/money";
 import { getCategories } from "@/data/categories";
-import type { UserPreferences, UserProfile } from "@/types";
+import { parseUserPreferences } from "@/lib/db/user-preferences";
+import { summarizeOrderNotifications } from "@/lib/db/order-notifications";
+import type { OrderNotifySummary } from "@/lib/notifications/order-log";
+import type { NotifyEmailDestination, NotifyPhoneDestination, UserPreferences, UserProfile } from "@/types";
 
 export type CustomerSegment = "VIP" | "Frequent" | "Inactive" | "New" | "Regular";
 
@@ -63,19 +66,13 @@ export type CrmFavorite = {
   count: number;
 };
 
-export type CrmDiscountUse = {
-  orderId: string;
-  code: string | null;
-  promotionName: string | null;
-  amount: number;
-  usedAt: string | null;
-};
-
 export type CrmMarketingPrefs = {
   consent: boolean;
   emails: boolean;
   sms: boolean;
   push: boolean;
+  notifyEmails: NotifyEmailDestination[];
+  notifyPhones: NotifyPhoneDestination[];
 };
 
 export type CrmCustomer = {
@@ -107,17 +104,19 @@ export type CrmCustomerOrder = {
   itemCount: number;
   paymentStatus: string;
   couponCode: string | null;
+  promotionName: string | null;
   discountAmount: number;
   refundedAmount: number;
+  notify?: OrderNotifySummary;
 };
 
 export type CrmCustomerDetail = CrmCustomer & {
   addresses: CrmAddress[];
   favoriteProducts: CrmFavorite[];
   favoriteCategories: CrmFavorite[];
-  discountsUsed: CrmDiscountUse[];
   marketingPrefs: CrmMarketingPrefs;
   orders: CrmCustomerOrder[];
+  loyaltyPointsUsed: number;
 };
 
 function computeSegment(row: {
@@ -172,13 +171,7 @@ function parseAddresses(raw: unknown): CrmAddress[] {
 }
 
 function parsePreferences(raw: unknown): UserPreferences {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-  const row = raw as Record<string, unknown>;
-  return {
-    marketingEmails: typeof row.marketingEmails === "boolean" ? row.marketingEmails : undefined,
-    smsUpdates: typeof row.smsUpdates === "boolean" ? row.smsUpdates : undefined,
-    pushUpdates: typeof row.pushUpdates === "boolean" ? row.pushUpdates : undefined,
-  };
+  return parseUserPreferences(raw);
 }
 
 function categoryName(slug: string) {
@@ -394,9 +387,9 @@ export async function listCustomerOrders(
       userId,
       organizationId: orgId,
     },
-    include: { items: true },
+    include: { items: true, promotion: { select: { name: true } } },
     orderBy: { createdAt: "desc" },
-    take: Math.min(limit, 50),
+    take: Math.min(limit, 200),
   });
 
   return rows.map((row) => ({
@@ -410,6 +403,7 @@ export async function listCustomerOrders(
     itemCount: row.items.reduce((sum, i) => i.quantity + sum, 0),
     paymentStatus: row.paymentStatus,
     couponCode: row.couponCode ?? null,
+    promotionName: row.promotion?.name?.trim() || null,
     discountAmount: moneyNumber(row.discountAmount ?? 0),
     refundedAmount: moneyNumber((row as { refundedAmount?: unknown }).refundedAmount),
   }));
@@ -470,7 +464,17 @@ export async function getCustomerProfile(
 
   const customer = mapCustomer(row);
   const prefs = parsePreferences(row.preferences);
-  const orders = await listCustomerOrders(actor, customerId, 25);
+  const orders = await listCustomerOrders(actor, customerId, 200);
+  let notifyByOrder: Record<string, OrderNotifySummary> = {};
+  try {
+    notifyByOrder = await summarizeOrderNotifications(orders.map((order) => order.id));
+  } catch {
+    notifyByOrder = {};
+  }
+  const ordersWithNotify = orders.map((order) => ({
+    ...order,
+    notify: notifyByOrder[order.id],
+  }));
 
   const favoriteRows = await prisma.$queryRawUnsafe<
     { product_id: string; name: string | null; category_slug: string | null; qty: number | bigint }[]
@@ -506,74 +510,85 @@ export async function getCustomerProfile(
     .slice(0, 5)
     .map(([id, count]) => ({ id, name: categoryName(id), count }));
 
-  const discountRows = await prisma.$queryRawUnsafe<
-    {
-      id: string;
-      coupon_code: string | null;
-      discount_amount: unknown;
-      created_at: Date | string | null;
-      promotion_name: string | null;
-    }[]
-  >(
-    `SELECT o.id, o.coupon_code, o.discount_amount, o.created_at, pr.name AS promotion_name
-     FROM orders o
-     LEFT JOIN promotions pr ON pr.id = o.promotion_id
-     WHERE o.user_id = ?
-       AND o.organization_id = ?
-       AND GREATEST(0, o.total - COALESCE(o.refunded_amount, 0)) > 0
-       AND (
-         COALESCE(o.discount_amount, 0) > 0
-         OR (o.coupon_code IS NOT NULL AND TRIM(o.coupon_code) <> '')
-         OR o.promotion_id IS NOT NULL
-       )
-     ORDER BY o.created_at DESC
-     LIMIT 20`,
-    row.user_id,
-    orgId,
-  );
+  let loyaltyPointsUsed = 0;
+  try {
+    const usedRows = await prisma.$queryRawUnsafe<{ used: number | bigint }[]>(
+      `SELECT COALESCE(SUM(ABS(ll.delta)), 0) AS used
+       FROM loyalty_ledger ll
+       INNER JOIN loyalty_programs p ON p.id = ll.program_id
+       WHERE ll.user_id = ?
+         AND p.organization_id = ?
+         AND ll.reason = 'redeem'`,
+      row.user_id,
+      orgId,
+    );
+    loyaltyPointsUsed = Number(usedRows[0]?.used ?? 0);
+  } catch {
+    loyaltyPointsUsed = 0;
+  }
 
   return {
     ...customer,
     addresses: parseAddresses(row.addresses),
     favoriteProducts,
     favoriteCategories,
-    discountsUsed: discountRows.map((item) => ({
-      orderId: item.id,
-      code: item.coupon_code,
-      promotionName: item.promotion_name,
-      amount: moneyNumber(item.discount_amount ?? 0),
-      usedAt: toIso(item.created_at),
-    })),
+    loyaltyPointsUsed,
     marketingPrefs: {
       consent: customer.marketingConsent,
-      emails: prefs.marketingEmails ?? customer.marketingConsent,
-      sms: prefs.smsUpdates ?? false,
+      emails: prefs.orderEmailUpdates !== false,
+      sms: prefs.smsUpdates !== false,
       push: prefs.pushUpdates ?? false,
+      notifyEmails: prefs.notifyEmails ?? [],
+      notifyPhones: prefs.notifyPhones ?? [],
     },
-    orders,
+    orders: ordersWithNotify,
   };
 }
 
 export async function getCustomerCrmSnapshot(
   actor: UserProfile,
   customerId: string,
-): Promise<{ notes: string; marketingConsent: boolean } | null> {
+): Promise<{
+  notes: string;
+  marketingConsent: boolean;
+  marketingEmails: boolean;
+  orderEmailUpdates: boolean;
+  smsUpdates: boolean;
+  pushUpdates: boolean;
+  notifyEmails: NotifyEmailDestination[];
+  notifyPhones: NotifyPhoneDestination[];
+} | null> {
   if (!isDbConfigured()) return null;
   await ensureOrganizationSchema();
   const orgId = actorOrganizationId(actor) ?? SAMS_ORG_ID;
   const rows = await prisma.$queryRawUnsafe<
-    { notes: string | null; marketing_consent: boolean | number }[]
+    {
+      notes: string | null;
+      marketing_consent: boolean | number;
+      preferences: unknown;
+    }[]
   >(
-    `SELECT notes, marketing_consent FROM organization_customers
-     WHERE id = ? AND organization_id = ? LIMIT 1`,
+    `SELECT oc.notes, oc.marketing_consent, u.preferences
+     FROM organization_customers oc
+     INNER JOIN users u ON u.id = oc.user_id
+     WHERE oc.id = ? AND oc.organization_id = ?
+     LIMIT 1`,
     customerId,
     orgId,
   );
   const row = rows[0];
   if (!row) return null;
+  const prefs = parsePreferences(row.preferences);
+  const marketingConsent = Boolean(row.marketing_consent);
   return {
     notes: row.notes ?? "",
-    marketingConsent: Boolean(row.marketing_consent),
+    marketingConsent,
+    marketingEmails: prefs.marketingEmails ?? marketingConsent,
+    orderEmailUpdates: prefs.orderEmailUpdates !== false,
+    smsUpdates: prefs.smsUpdates !== false,
+    pushUpdates: prefs.pushUpdates ?? false,
+    notifyEmails: prefs.notifyEmails ?? [],
+    notifyPhones: prefs.notifyPhones ?? [],
   };
 }
 
@@ -582,6 +597,13 @@ export async function updateCustomerNotes(
   customerId: string,
   notes: string,
   marketingConsent?: boolean,
+  channels?: {
+    emails?: boolean;
+    sms?: boolean;
+    push?: boolean;
+    notifyEmails?: NotifyEmailDestination[];
+    notifyPhones?: NotifyPhoneDestination[];
+  },
 ) {
   await ensureOrganizationSchema();
   const orgId = actorOrganizationId(actor) ?? SAMS_ORG_ID;
@@ -593,5 +615,32 @@ export async function updateCustomerNotes(
     marketingConsent ?? null,
     customerId,
     orgId,
+  );
+
+  if (!channels) return;
+  const linked = await prisma.$queryRawUnsafe<{ user_id: string; preferences: unknown }[]>(
+    `SELECT oc.user_id, u.preferences
+     FROM organization_customers oc
+     INNER JOIN users u ON u.id = oc.user_id
+     WHERE oc.id = ? AND oc.organization_id = ?
+     LIMIT 1`,
+    customerId,
+    orgId,
+  );
+  const user = linked[0];
+  if (!user) return;
+  const current =
+    user.preferences && typeof user.preferences === "object" && !Array.isArray(user.preferences)
+      ? { ...(user.preferences as Record<string, unknown>) }
+      : {};
+  if (channels.emails !== undefined) current.orderEmailUpdates = channels.emails;
+  if (channels.sms !== undefined) current.smsUpdates = channels.sms;
+  if (channels.push !== undefined) current.pushUpdates = channels.push;
+  if (channels.notifyEmails !== undefined) current.notifyEmails = channels.notifyEmails;
+  if (channels.notifyPhones !== undefined) current.notifyPhones = channels.notifyPhones;
+  await prisma.$executeRawUnsafe(
+    `UPDATE users SET preferences = ? WHERE id = ?`,
+    JSON.stringify(current),
+    user.user_id,
   );
 }

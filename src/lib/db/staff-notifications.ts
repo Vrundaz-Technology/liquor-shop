@@ -204,6 +204,21 @@ export async function emitStaffNotification(input: {
         userId,
       );
     }
+
+    if (input.entityType === "order" && input.entityId) {
+      const { recordOrderNotification } = await import("@/lib/db/order-notifications");
+      await recordOrderNotification({
+        orderId: input.entityId,
+        organizationId,
+        kind: input.type,
+        audience: "staff",
+        channel: "in_app",
+        destination: `${recipients.length} recipient${recipients.length === 1 ? "" : "s"}`,
+        ok: true,
+        title: input.title,
+      });
+    }
+
     return id;
   } catch (error) {
     console.error("[emitStaffNotification]", error);

@@ -117,6 +117,25 @@ const avatarUrlSchema = z
     { message: "Invalid profile photo." },
   );
 
+export const notifyEmailDestinationSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  email: z.string().trim().email().max(160),
+  label: z.string().trim().max(40),
+  active: z.boolean(),
+  locked: z.boolean().optional(),
+});
+
+export const notifyPhoneDestinationSchema = z.object({
+  id: z.string().trim().min(1).max(64),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^\(\d{3}\) \d{3}-\d{4}$/, "Enter a valid phone like (212) 555-0100"),
+  countryCode: z.literal("+1"),
+  label: z.string().trim().max(40),
+  active: z.boolean(),
+});
+
 export const mePatchSchema = z.union([
   z.object({
     patch: z
@@ -142,6 +161,8 @@ export const mePatchSchema = z.union([
             priceAlerts: z.boolean().optional(),
             abandonedCartReminders: z.boolean().optional(),
             favoriteCategory: z.string().trim().max(40).nullable().optional(),
+            notifyEmails: z.array(notifyEmailDestinationSchema).max(8).optional(),
+            notifyPhones: z.array(notifyPhoneDestinationSchema).max(8).optional(),
           })
           .optional(),
         password: z.string().min(8).max(200).optional(),

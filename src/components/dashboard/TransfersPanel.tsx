@@ -205,6 +205,7 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
       const json = await apiFetch<{ ok: true; transfers: TransferRow[] }>("/api/transfers");
       return json.transfers;
     },
+    staleTime: 15_000,
   });
 
   const resetForm = () => {

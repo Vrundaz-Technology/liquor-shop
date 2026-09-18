@@ -9,6 +9,10 @@ import {
 import { recordActivity } from "@/lib/db/activity";
 import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { z } from "zod";
+import {
+  notifyEmailDestinationSchema,
+  notifyPhoneDestinationSchema,
+} from "@/lib/db/validators";
 
 export async function GET(request: Request) {
   const auth = await requirePermission("customers.view");
@@ -36,6 +40,12 @@ const patchSchema = z.object({
   customerId: z.string().min(1),
   notes: z.string().max(5000, "Notes must be 5000 characters or less").optional(),
   marketingConsent: z.boolean().optional(),
+  marketingEmails: z.boolean().optional(),
+  orderEmailUpdates: z.boolean().optional(),
+  smsUpdates: z.boolean().optional(),
+  pushUpdates: z.boolean().optional(),
+  notifyEmails: z.array(notifyEmailDestinationSchema).max(8).optional(),
+  notifyPhones: z.array(notifyPhoneDestinationSchema).max(8).optional(),
 });
 
 export async function PATCH(request: Request) {
@@ -54,13 +64,22 @@ export async function PATCH(request: Request) {
     body.data.marketingConsent !== undefined
       ? body.data.marketingConsent
       : (previous?.marketingConsent ?? false);
+  const nextOrderEmails =
+    body.data.orderEmailUpdates !== undefined
+      ? body.data.orderEmailUpdates
+      : (previous?.orderEmailUpdates ?? true);
+  const nextSms =
+    body.data.smsUpdates !== undefined ? body.data.smsUpdates : (previous?.smsUpdates ?? true);
+  const nextPush =
+    body.data.pushUpdates !== undefined ? body.data.pushUpdates : (previous?.pushUpdates ?? false);
 
-  await updateCustomerNotes(
-    auth.user,
-    body.data.customerId,
-    nextNotes,
-    body.data.marketingConsent,
-  );
+  await updateCustomerNotes(auth.user, body.data.customerId, nextNotes, body.data.marketingConsent, {
+    emails: body.data.orderEmailUpdates,
+    sms: body.data.smsUpdates,
+    push: body.data.pushUpdates,
+    notifyEmails: body.data.notifyEmails,
+    notifyPhones: body.data.notifyPhones,
+  });
 
   const changes = onlyChanged([
     {
@@ -72,6 +91,21 @@ export async function PATCH(request: Request) {
       field: "marketingConsent",
       from: previous?.marketingConsent ? "Opted in" : "Opted out",
       to: nextConsent ? "Opted in" : "Opted out",
+    },
+    {
+      field: "orderEmails",
+      from: previous?.orderEmailUpdates ? "On" : "Off",
+      to: nextOrderEmails ? "On" : "Off",
+    },
+    {
+      field: "sms",
+      from: previous?.smsUpdates ? "On" : "Off",
+      to: nextSms ? "On" : "Off",
+    },
+    {
+      field: "push",
+      from: previous?.pushUpdates ? "On" : "Off",
+      to: nextPush ? "On" : "Off",
     },
   ]);
 

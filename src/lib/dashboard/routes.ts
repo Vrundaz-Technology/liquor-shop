@@ -183,10 +183,19 @@ export function isDashboardSection(value: string | null | undefined): value is D
 
 export function dashboardPath(
   section: DashboardSection,
-  opts?: { orderId?: string; drivers?: boolean; settings?: boolean; categories?: boolean },
+  opts?: {
+    orderId?: string;
+    customerId?: string;
+    drivers?: boolean;
+    settings?: boolean;
+    categories?: boolean;
+  },
 ): string {
   if (section === "orders" && opts?.orderId) {
     return `/dashboard/orders/${encodeURIComponent(opts.orderId)}`;
+  }
+  if (section === "customers" && opts?.customerId) {
+    return `/dashboard/customers/${encodeURIComponent(opts.customerId)}`;
   }
   if (section === "deliveries" && opts?.settings) {
     return "/dashboard/deliveries/settings";
@@ -203,6 +212,7 @@ export function dashboardPath(
 export type ParsedDashboardRoute = {
   section: DashboardSection;
   orderId: string | null;
+  customerId: string | null;
   deliveriesSection: "deliveries" | "drivers" | "settings";
   inventoryView: "stock" | "categories";
 };
@@ -216,6 +226,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section: "overview",
       orderId: null,
+      customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
     };
@@ -225,6 +236,17 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section: "orders",
       orderId: rest[0] ? decodeURIComponent(rest[0]) : null,
+      customerId: null,
+      deliveriesSection: "deliveries",
+      inventoryView: "stock",
+    };
+  }
+
+  if (segment === "customers") {
+    return {
+      section: "customers",
+      orderId: null,
+      customerId: rest[0] ? decodeURIComponent(rest[0]) : null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
     };
@@ -234,6 +256,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section: "deliveries",
       orderId: null,
+      customerId: null,
       deliveriesSection:
         rest[0] === "drivers" ? "drivers" : rest[0] === "settings" ? "settings" : "deliveries",
       inventoryView: "stock",
@@ -244,6 +267,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section: "inventory",
       orderId: null,
+      customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: rest[0] === "categories" ? "categories" : "stock",
     };
@@ -254,6 +278,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     return {
       section,
       orderId: null,
+      customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
     };
@@ -262,6 +287,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
   return {
     section: "overview",
     orderId: null,
+    customerId: null,
     deliveriesSection: "deliveries",
     inventoryView: "stock",
   };
