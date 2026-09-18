@@ -51,6 +51,13 @@ export function isDbConnected() {
   return dbConnected;
 }
 
+/** Bootstrap failed or timed out — catalog may stay on seed data. */
+export function markRuntimeUnavailable() {
+  dbConnected = false;
+  loaded = true;
+  bumpCatalog();
+}
+
 export function hydrateRuntimeData(payload: {
   products: Product[];
   locations: StoreLocation[];

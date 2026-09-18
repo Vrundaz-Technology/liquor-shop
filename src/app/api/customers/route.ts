@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { requirePermission } from "@/lib/auth/require";
-import { listOrganizationCustomers, listCustomerOrders, updateCustomerNotes, getCustomerCrmSnapshot } from "@/lib/db/crm";
+import {
+  getCustomerCrmSnapshot,
+  getCustomerProfile,
+  listOrganizationCustomers,
+  updateCustomerNotes,
+} from "@/lib/db/crm";
 import { recordActivity } from "@/lib/db/activity";
 import { activityChanges, onlyChanged } from "@/lib/activity/changes";
 import { z } from "zod";
@@ -12,8 +17,11 @@ export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const customerId = searchParams.get("customerId");
   if (customerId) {
-    const orders = await listCustomerOrders(auth.user, customerId, Number(searchParams.get("limit") ?? 25));
-    return NextResponse.json({ ok: true, orders });
+    const customer = await getCustomerProfile(auth.user, customerId);
+    if (!customer) {
+      return NextResponse.json({ error: "Customer not found." }, { status: 404 });
+    }
+    return NextResponse.json({ ok: true, customer, orders: customer.orders });
   }
 
   const customers = await listOrganizationCustomers(auth.user, {

@@ -238,7 +238,7 @@ export function CronJobsPanel() {
                   className="rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/20 px-3 py-3"
                 >
                   <p className="text-[10px] uppercase tracking-[0.14em] text-muted">{card.label}</p>
-                  <p className="mt-1.5 font-display text-xl tabular-nums text-cream">{card.value}</p>
+                  <p className="mt-1.5 font-price text-xl text-cream">{card.value}</p>
                 </div>
               ))}
             </div>

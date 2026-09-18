@@ -297,3 +297,39 @@ export function trackingEtaLabel(order: Order): string | null {
 
   return deliveryEtaForStore(store, deliveryAddressForEta(order.delivery));
 }
+
+export function orderPlacedAt(order: Pick<Order, "date" | "createdAt">): Date | null {
+  if (order.createdAt) {
+    const fromCreated = new Date(order.createdAt);
+    if (!Number.isNaN(fromCreated.getTime())) return fromCreated;
+  }
+  const raw = order.date?.trim() ?? "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) {
+    const fromDate = new Date(`${raw}T12:00:00`);
+    return Number.isNaN(fromDate.getTime()) ? null : fromDate;
+  }
+  if (!raw) return null;
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+export function formatOrderPlaced(order: Pick<Order, "date" | "createdAt">) {
+  const when = orderPlacedAt(order);
+  if (!when) {
+    return { label: order.date || "—", dateLabel: order.date || "—", timeLabel: null as string | null };
+  }
+  const dateLabel = when.toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  const hasTime = Boolean(order.createdAt) || !/^\d{4}-\d{2}-\d{2}$/.test(order.date.trim());
+  const timeLabel = hasTime
+    ? when.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : null;
+  return {
+    label: timeLabel ? `${dateLabel} · ${timeLabel}` : dateLabel,
+    dateLabel,
+    timeLabel,
+  };
+}

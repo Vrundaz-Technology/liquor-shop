@@ -1,21 +1,34 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ArrowLeft,
   BadgePercent,
   CalendarDays,
+  ChevronRight,
   DollarSign,
   ShoppingBag,
   Tag,
   Ticket,
   Users,
 } from "lucide-react";
+import { ORDER_STATUS_LABELS } from "@/lib/commerce/order-labels";
+import type { OrderStatus } from "@/types";
 import { apiFetch } from "@/lib/api-client";
 import { NativeSelect } from "@/components/ui/NativeSelect";
+import { Button } from "@/components/ui/Button";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
+import { getLocationById } from "@/data/locations";
+import { getProductById } from "@/data/products";
+import { dashboardPath } from "@/lib/dashboard/routes";
+import { hasPermission } from "@/lib/auth/permissions";
+import { useUserStore } from "@/store/user";
+import { formatOrderPlaced } from "@/lib/commerce/order-tracking";
 import {
   compareValues,
+  MobileSortBar,
   SortableTh,
   tableCellClass,
   tableHeadRowClass,
@@ -54,6 +67,47 @@ type PerformanceResponse = {
     discountGiven: number;
   };
   offers: OfferRow[];
+};
+
+type UsageOrder = {
+  id: string;
+  date: string;
+  createdAt: string | null;
+  status: string;
+  fulfillment: string;
+  locationId: string;
+  storeName: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  couponCode: string | null;
+  subtotal: number;
+  discountAmount: number;
+  total: number;
+  items: { productId: string; productName?: string; quantity: number; price: number }[];
+};
+
+type UsageCustomer = {
+  id: string;
+  name: string;
+  email: string;
+  orders: number;
+  totalSpent: number;
+  discountGiven: number;
+  lastUsedAt: string | null;
+};
+
+type UsageResponse = {
+  ok: true;
+  offer: OfferRow;
+  orders: UsageOrder[];
+  customers: UsageCustomer[];
+};
+
+const FULFILLMENT_LABEL: Record<string, string> = {
+  delivery: "Delivery",
+  pickup: "Pickup",
+  pos: "In-store",
 };
 
 function promoTypeLabel(type: string, hasCode: boolean) {
@@ -158,12 +212,33 @@ function offerKindLabel(offer: OfferRow) {
   return "Promotion";
 }
 
+function orderStatusLabel(status: string) {
+  return ORDER_STATUS_LABELS[status as OrderStatus] ?? status.replaceAll("_", " ");
+}
+
+function formatLineItems(items: UsageOrder["items"]) {
+  if (items.length === 0) return "No line items";
+  return items
+    .map((item) => {
+      const name =
+        item.productName || getProductById(item.productId)?.name || item.productId;
+      return `${item.quantity}× ${name}`;
+    })
+    .join(", ");
+}
+
+function storeLabel(order: Pick<UsageOrder, "storeName" | "locationId">) {
+  return order.storeName || getLocationById(order.locationId)?.shortName || order.locationId;
+}
+
 export function PromotionsPerformancePanel() {
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const [promoId, setPromoId] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortOption>("spent");
+  const [selectedPromoId, setSelectedPromoId] = useState<string | null>(null);
+  const canViewOrders = hasPermission(useUserStore((s) => s.profile), "orders.view");
   const { sortKey, sortDir, toggleSort } = useTableSort<
     "name" | "type" | "status" | "customers" | "orders" | "spent" | "discount" | "avg" | "lastUsed"
   >("spent", "desc", ["customers", "orders", "spent", "discount", "avg", "lastUsed"]);
@@ -199,6 +274,25 @@ export function PromotionsPerformancePanel() {
     },
   });
 
+  const usageParams = useMemo(() => {
+    const params = new URLSearchParams();
+    if (!selectedPromoId) return "";
+    params.set("promoId", selectedPromoId);
+    if (dateRange.fromDate) params.set("fromDate", dateRange.fromDate);
+    if (dateRange.toDate) params.set("toDate", dateRange.toDate);
+    return params.toString();
+  }, [selectedPromoId, dateRange.fromDate, dateRange.toDate]);
+
+  const {
+    data: usage,
+    isLoading: usageLoading,
+    isError: usageError,
+  } = useQuery({
+    queryKey: ["promotions-performance-usage", usageParams],
+    queryFn: () => apiFetch<UsageResponse>(`/api/promotions/performance/usage?${usageParams}`),
+    enabled: Boolean(selectedPromoId),
+  });
+
   const summary = data?.summary ?? {
     customers: 0,
     orders: 0,
@@ -206,6 +300,7 @@ export function PromotionsPerformancePanel() {
     discountGiven: 0,
   };
   const offers = data?.offers ?? [];
+  const selectedFromList = offers.find((offer) => offer.promoId === selectedPromoId) ?? null;
 
   // Offer dropdown options from current result set + keep selected if filtered away
   const offerOptions = useMemo(() => {
@@ -296,6 +391,21 @@ export function PromotionsPerformancePanel() {
       icon: Tag,
     },
   ];
+
+  if (selectedPromoId) {
+    return (
+      <OfferUsageDetail
+        datePreset={datePreset}
+        onDatePresetChange={setDatePreset}
+        onBack={() => setSelectedPromoId(null)}
+        fallbackOffer={selectedFromList}
+        usage={usage}
+        loading={usageLoading}
+        error={usageError}
+        canViewOrders={canViewOrders}
+      />
+    );
+  }
 
   return (
     <div className="space-y-5">
@@ -435,7 +545,7 @@ export function PromotionsPerformancePanel() {
                 <p className="text-[10px] uppercase tracking-[0.16em] text-gold/90">{card.label}</p>
                 <Icon size={14} className="shrink-0 text-muted" aria-hidden />
               </div>
-              <p className="mt-2 font-display text-2xl tabular-nums text-cream">{card.value}</p>
+              <p className="mt-2 font-price text-2xl text-cream">{card.value}</p>
               <p className="mt-1.5 text-xs text-muted">{card.hint}</p>
             </div>
           );
@@ -454,7 +564,54 @@ export function PromotionsPerformancePanel() {
           </p>
         </div>
       ) : (
-        <div className={tableWrapClass}>
+        <>
+          <MobileSortBar
+            className="lg:hidden"
+            columns={[
+              { key: "name", label: "Offer" },
+              { key: "orders", label: "Orders" },
+              { key: "spent", label: "Spent" },
+              { key: "discount", label: "Discount" },
+              { key: "lastUsed", label: "Last used" },
+            ]}
+            sortKey={sortKey}
+            sortDir={sortDir}
+            onSort={toggleSort}
+          />
+          <ul className="space-y-2 lg:hidden">
+            {sortedOffers.map((offer) => (
+              <li key={offer.promoId}>
+                <button
+                  type="button"
+                  className="w-full rounded-sm border border-white/10 bg-black/20 p-3 text-left"
+                  onClick={() => setSelectedPromoId(offer.promoId)}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <p className="truncate font-medium text-cream">{offer.name}</p>
+                      <p className="mt-0.5 text-xs text-muted">{offerKindLabel(offer)}</p>
+                    </div>
+                    <StatusBadge offer={offer} />
+                  </div>
+                  <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs">
+                    <div>
+                      <p className="text-muted">Orders</p>
+                      <p className="mt-0.5 text-cream">{offer.orders}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted">Spent</p>
+                      <p className="mt-0.5 truncate text-cream">{formatPrice(offer.totalSpent)}</p>
+                    </div>
+                    <div>
+                      <p className="text-muted">Discount</p>
+                      <p className="mt-0.5 truncate text-cream">{formatPrice(offer.discountGiven)}</p>
+                    </div>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+          <div className={cn(tableWrapClass, "hidden lg:block")}>
           <table className="w-full min-w-[56rem] text-left text-sm">
             <thead>
               <tr className={tableHeadRowClass}>
@@ -531,7 +688,20 @@ export function PromotionsPerformancePanel() {
             </thead>
             <tbody>
               {sortedOffers.map((offer) => (
-                <tr key={offer.promoId} className={tableRowClass}>
+                <tr
+                  key={offer.promoId}
+                  className={cn(tableRowClass, "cursor-pointer")}
+                  tabIndex={0}
+                  role="button"
+                  aria-label={`Open usage for ${offer.name}`}
+                  onClick={() => setSelectedPromoId(offer.promoId)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedPromoId(offer.promoId);
+                    }
+                  }}
+                >
                   <td className={cn(tableCellClass, "min-w-[12rem]")}>
                     <div className="flex items-start gap-2">
                       <Ticket size={14} className="mt-0.5 shrink-0 text-gold/80" aria-hidden />
@@ -566,6 +736,7 @@ export function PromotionsPerformancePanel() {
                         <CalendarDays size={12} className="shrink-0 opacity-60" aria-hidden />
                       ) : null}
                       {formatShortDate(offer.lastUsedAt)}
+                      <ChevronRight size={14} className="shrink-0 text-gold/70" aria-hidden />
                     </span>
                   </td>
                 </tr>
@@ -573,6 +744,459 @@ export function PromotionsPerformancePanel() {
             </tbody>
           </table>
         </div>
+        </>
+      )}
+      {offers.length > 0 ? (
+        <p className="text-xs text-muted">Click an offer to see who used it and on which orders.</p>
+      ) : null}
+    </div>
+  );
+}
+
+function OfferUsageDetail({
+  datePreset,
+  onDatePresetChange,
+  onBack,
+  fallbackOffer,
+  usage,
+  loading,
+  error,
+  canViewOrders,
+}: {
+  datePreset: DatePreset;
+  onDatePresetChange: (preset: DatePreset) => void;
+  onBack: () => void;
+  fallbackOffer: OfferRow | null;
+  usage?: UsageResponse;
+  loading: boolean;
+  error: boolean;
+  canViewOrders: boolean;
+}) {
+  const offer = usage?.offer ?? fallbackOffer;
+  const orders = usage?.orders ?? [];
+  const customers = usage?.customers ?? [];
+  const {
+    sortKey: orderSortKey,
+    sortDir: orderSortDir,
+    toggleSort: toggleOrderSort,
+  } = useTableSort<
+    "id" | "date" | "customer" | "channel" | "store" | "discount" | "paid" | "status"
+  >("date", "desc", ["date", "discount", "paid"]);
+  const {
+    sortKey: customerSortKey,
+    sortDir: customerSortDir,
+    toggleSort: toggleCustomerSort,
+  } = useTableSort<"name" | "orders" | "spent" | "discount" | "lastUsed">(
+    "spent",
+    "desc",
+    ["orders", "spent", "discount", "lastUsed"],
+  );
+
+  const sortedOrders = useMemo(() => {
+    return [...orders].sort((a, b) => {
+      switch (orderSortKey) {
+        case "id":
+          return compareValues(a.id, b.id, orderSortDir);
+        case "customer":
+          return compareValues(a.customerName, b.customerName, orderSortDir);
+        case "channel":
+          return compareValues(a.fulfillment, b.fulfillment, orderSortDir);
+        case "store":
+          return compareValues(storeLabel(a), storeLabel(b), orderSortDir);
+        case "discount":
+          return compareValues(a.discountAmount, b.discountAmount, orderSortDir);
+        case "paid":
+          return compareValues(a.total, b.total, orderSortDir);
+        case "status":
+          return compareValues(orderStatusLabel(a.status), orderStatusLabel(b.status), orderSortDir);
+        case "date":
+        default: {
+          const av = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const bv = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return compareValues(av, bv, orderSortDir);
+        }
+      }
+    });
+  }, [orderSortDir, orderSortKey, orders]);
+
+  const sortedCustomers = useMemo(() => {
+    return [...customers].sort((a, b) => {
+      switch (customerSortKey) {
+        case "name":
+          return compareValues(a.name, b.name, customerSortDir);
+        case "orders":
+          return compareValues(a.orders, b.orders, customerSortDir);
+        case "discount":
+          return compareValues(a.discountGiven, b.discountGiven, customerSortDir);
+        case "lastUsed": {
+          const av = a.lastUsedAt ? new Date(a.lastUsedAt).getTime() : 0;
+          const bv = b.lastUsedAt ? new Date(b.lastUsedAt).getTime() : 0;
+          return compareValues(av, bv, customerSortDir);
+        }
+        case "spent":
+        default:
+          return compareValues(a.totalSpent, b.totalSpent, customerSortDir);
+      }
+    });
+  }, [customerSortDir, customerSortKey, customers]);
+
+  return (
+    <div className="space-y-5">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <Button type="button" variant="ghost" size="sm" onClick={onBack} className="w-fit gap-2 px-0">
+          <ArrowLeft size={14} aria-hidden />
+          Back to performance
+        </Button>
+        <div className="min-w-[9.5rem] sm:w-auto">
+          <NativeSelect
+            value={datePreset}
+            onChange={(e) => onDatePresetChange(e.target.value as DatePreset)}
+            className="h-11 py-0"
+            aria-label="Date range"
+          >
+            {(Object.keys(DATE_PRESET_LABELS) as DatePreset[]).map((key) => (
+              <option key={key} value={key}>
+                {DATE_PRESET_LABELS[key]}
+              </option>
+            ))}
+          </NativeSelect>
+        </div>
+      </div>
+
+      {offer ? (
+        <div className="rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.05] to-black/20 p-4 sm:p-5">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-gold/90">Offer usage</p>
+              <h3 className="mt-1 font-display text-2xl text-cream">{offer.name}</h3>
+              <p className="mt-1 text-sm text-muted">
+                {promoTypeLabel(offer.type, Boolean(offer.code))}
+                {offer.code ? ` · ${offer.code}` : ""}
+              </p>
+            </div>
+            <StatusBadge offer={offer} />
+          </div>
+        </div>
+      ) : null}
+
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {[
+          {
+            label: "Customers",
+            value: String(offer?.customers ?? 0),
+            hint: "People who used this offer",
+            icon: Users,
+          },
+          {
+            label: "Orders",
+            value: String(offer?.orders ?? 0),
+            hint: "Orders this offer was applied to",
+            icon: ShoppingBag,
+          },
+          {
+            label: "Total spent",
+            value: formatPrice(offer?.totalSpent ?? 0),
+            hint: "Paid on those orders",
+            icon: DollarSign,
+          },
+          {
+            label: "Discount given",
+            value: formatPrice(offer?.discountGiven ?? 0),
+            hint: "Value handed back",
+            icon: Tag,
+          },
+        ].map((card) => {
+          const Icon = card.icon;
+          return (
+            <div
+              key={card.label}
+              className="rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.05] to-black/20 p-4"
+            >
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[10px] uppercase tracking-[0.16em] text-gold/90">{card.label}</p>
+                <Icon size={14} className="shrink-0 text-muted" aria-hidden />
+              </div>
+              <p className="mt-2 font-price text-2xl text-cream">{card.value}</p>
+              <p className="mt-1.5 text-xs text-muted">{card.hint}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-muted">Loading who used this offer…</p>
+      ) : error ? (
+        <div className="rounded-sm border border-dashed border-white/15 px-4 py-10 text-center">
+          <p className="text-sm text-muted">Could not load usage for this offer.</p>
+        </div>
+      ) : (
+        <>
+          <section className="space-y-3">
+            <div>
+              <h4 className="font-display text-xl text-cream">Orders</h4>
+              <p className="mt-0.5 text-xs text-muted">
+                Who used this offer, on which order, and what they bought.
+              </p>
+            </div>
+            {orders.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-white/15 px-4 py-10 text-center">
+                <ShoppingBag className="mx-auto h-8 w-8 text-muted" aria-hidden />
+                <p className="mt-3 text-sm text-muted">
+                  Nobody used this offer in {DATE_PRESET_LABELS[datePreset].toLowerCase()}.
+                </p>
+              </div>
+            ) : (
+              <>
+                <ul className="space-y-2 lg:hidden">
+                  {sortedOrders.map((order) => {
+                    const placed = formatOrderPlaced({
+                      date: order.date,
+                      createdAt: order.createdAt ?? undefined,
+                    });
+                    return (
+                      <li key={order.id} className="rounded-sm border border-white/10 bg-black/20 p-3">
+                        <p className="truncate text-sm font-medium text-cream">{order.id}</p>
+                        <p className="mt-0.5 text-xs text-muted">{order.customerName}</p>
+                        <p className="mt-1 text-xs text-muted">
+                          {placed.label} · {FULFILLMENT_LABEL[order.fulfillment] ?? order.fulfillment}
+                        </p>
+                        <p className="mt-2 text-sm tabular-nums text-cream">{formatPrice(order.total)}</p>
+                        {canViewOrders ? (
+                          <Link
+                            href={dashboardPath("orders", { orderId: order.id })}
+                            className="mt-2 inline-flex min-h-11 items-center text-xs uppercase tracking-[0.14em] text-gold"
+                          >
+                            Open order
+                          </Link>
+                        ) : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <div className={cn(tableWrapClass, "hidden lg:block")}>
+                <table className="w-full min-w-[64rem] text-left text-sm">
+                  <thead>
+                    <tr className={tableHeadRowClass}>
+                      <SortableTh
+                        label="Order"
+                        column="id"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                      <SortableTh
+                        label="Placed"
+                        column="date"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                      <SortableTh
+                        label="Customer"
+                        column="customer"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                      <SortableTh
+                        label="Channel"
+                        column="channel"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                      <SortableTh
+                        label="Store"
+                        column="store"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                      <th className="px-4 py-3 font-medium">Items</th>
+                      <SortableTh
+                        label="Discount"
+                        column="discount"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Paid"
+                        column="paid"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Status"
+                        column="status"
+                        sortKey={orderSortKey}
+                        sortDir={orderSortDir}
+                        onSort={toggleOrderSort}
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedOrders.map((order) => {
+                      const placed = formatOrderPlaced({
+                        date: order.date,
+                        createdAt: order.createdAt ?? undefined,
+                      });
+                      const orderId = (
+                        <span className="font-medium text-cream">{order.id}</span>
+                      );
+                      return (
+                        <tr key={order.id} className={tableRowClass}>
+                          <td className={cn(tableCellClass, "min-w-[10rem]")}>
+                            <div>
+                              {canViewOrders ? (
+                                <Link
+                                  href={dashboardPath("orders", { orderId: order.id })}
+                                  className="font-medium text-gold hover:underline"
+                                >
+                                  {order.id}
+                                </Link>
+                              ) : (
+                                orderId
+                              )}
+                              {order.couponCode ? (
+                                <p className="mt-0.5 text-xs text-muted">Code {order.couponCode}</p>
+                              ) : null}
+                            </div>
+                          </td>
+                          <td className={cn(tableCellClass, "whitespace-nowrap text-muted")}>
+                            {placed.label}
+                          </td>
+                          <td className={cn(tableCellClass, "min-w-[11rem]")}>
+                            <p className="text-cream">{order.customerName}</p>
+                            <p className="mt-0.5 text-xs text-muted">{order.customerEmail}</p>
+                          </td>
+                          <td className={tableCellClass}>
+                            {FULFILLMENT_LABEL[order.fulfillment] ?? order.fulfillment}
+                          </td>
+                          <td className={tableCellClass}>{storeLabel(order)}</td>
+                          <td className={cn(tableCellClass, "max-w-[18rem]")}>
+                            <p className="text-xs leading-relaxed text-muted">
+                              {formatLineItems(order.items)}
+                            </p>
+                          </td>
+                          <td className={cn(tableCellClass, "text-right tabular-nums")}>
+                            {formatPrice(order.discountAmount)}
+                          </td>
+                          <td className={cn(tableCellClass, "text-right tabular-nums")}>
+                            {formatPrice(order.total)}
+                          </td>
+                          <td className={tableCellClass}>{orderStatusLabel(order.status)}</td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              </>
+            )}
+          </section>
+
+          <section className="space-y-3">
+            <div>
+              <h4 className="font-display text-xl text-cream">Customers</h4>
+              <p className="mt-0.5 text-xs text-muted">
+                Distinct customers who redeemed this offer, with their spend.
+              </p>
+            </div>
+            {customers.length === 0 ? (
+              <div className="rounded-sm border border-dashed border-white/15 px-4 py-8 text-center">
+                <Users className="mx-auto h-7 w-7 text-muted" aria-hidden />
+                <p className="mt-3 text-sm text-muted">No customers in this range.</p>
+              </div>
+            ) : (
+              <>
+                <ul className="space-y-2 lg:hidden">
+                  {sortedCustomers.map((customer) => (
+                    <li key={customer.id} className="rounded-sm border border-white/10 bg-black/20 p-3">
+                      <p className="truncate text-sm font-medium text-cream">{customer.name}</p>
+                      <p className="truncate text-xs text-muted">{customer.email}</p>
+                      <p className="mt-2 text-xs text-muted">
+                        {customer.orders} orders · {formatPrice(customer.totalSpent)} spent
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+                <div className={cn(tableWrapClass, "hidden lg:block")}>
+                <table className="w-full min-w-[40rem] text-left text-sm">
+                  <thead>
+                    <tr className={tableHeadRowClass}>
+                      <SortableTh
+                        label="Customer"
+                        column="name"
+                        sortKey={customerSortKey}
+                        sortDir={customerSortDir}
+                        onSort={toggleCustomerSort}
+                      />
+                      <SortableTh
+                        label="Orders"
+                        column="orders"
+                        sortKey={customerSortKey}
+                        sortDir={customerSortDir}
+                        onSort={toggleCustomerSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Spent"
+                        column="spent"
+                        sortKey={customerSortKey}
+                        sortDir={customerSortDir}
+                        onSort={toggleCustomerSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Discount"
+                        column="discount"
+                        sortKey={customerSortKey}
+                        sortDir={customerSortDir}
+                        onSort={toggleCustomerSort}
+                        align="right"
+                      />
+                      <SortableTh
+                        label="Last used"
+                        column="lastUsed"
+                        sortKey={customerSortKey}
+                        sortDir={customerSortDir}
+                        onSort={toggleCustomerSort}
+                        align="right"
+                      />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortedCustomers.map((customer) => (
+                      <tr key={customer.id} className={tableRowClass}>
+                        <td className={tableCellClass}>
+                          <p className="text-cream">{customer.name}</p>
+                          <p className="mt-0.5 text-xs text-muted">{customer.email}</p>
+                        </td>
+                        <td className={cn(tableCellClass, "text-right tabular-nums")}>
+                          {customer.orders}
+                        </td>
+                        <td className={cn(tableCellClass, "text-right tabular-nums")}>
+                          {formatPrice(customer.totalSpent)}
+                        </td>
+                        <td className={cn(tableCellClass, "text-right tabular-nums")}>
+                          {formatPrice(customer.discountGiven)}
+                        </td>
+                        <td className={cn(tableCellClass, "text-right text-muted")}>
+                          {formatShortDate(customer.lastUsedAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              </>
+            )}
+          </section>
+        </>
       )}
     </div>
   );

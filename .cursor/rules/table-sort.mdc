@@ -1,0 +1,13 @@
+---
+description: Every new table view must include sortable columns by default
+alwaysApply: true
+---
+
+# Table views include sort
+
+When you create or add a table view (dashboard, account, or cards/table toggle), wire column sort in that same change. Do not ship a header-only table.
+
+- Use `useTableSort`, `SortableTh`, and `compareValues` from `@/components/ui/SortableTh`.
+- Make every data column sortable. Leave Actions / menus as a plain `<th>`.
+- Pick a sensible default sort (dates and money: desc first).
+- Sort the rendered rows with `useMemo` so grid/mobile fallbacks can reuse the same order.

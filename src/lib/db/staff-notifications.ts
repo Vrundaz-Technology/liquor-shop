@@ -3,6 +3,7 @@ import { SAMS_ORG_ID, actorOrganizationId } from "@/lib/db/organization";
 import { hasPermission, type Permission } from "@/lib/auth/permissions";
 import { canAccessLocation, hasAllLocationAccess } from "@/lib/auth/location-access";
 import { isStaffRole } from "@/lib/auth/roles";
+import { addColumnIfMissing, createIndexIfMissing } from "@/lib/db/schema-guard";
 import type { UserProfile } from "@/types";
 
 export type StaffNotificationType =
@@ -62,6 +63,16 @@ export async function ensureStaffNotificationSchema() {
       INDEX staff_notif_recip_user (user_id, read_at, created_at)
     ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
+  await addColumnIfMissing(
+    "staff_notification_recipients",
+    "cleared_at",
+    "DATETIME(3) NULL",
+  );
+  await createIndexIfMissing(
+    "staff_notification_recipients",
+    "staff_notif_recip_cleared",
+    "user_id, cleared_at, read_at",
+  );
   ready = true;
 }
 
@@ -206,7 +217,7 @@ export async function listStaffNotificationsForUser(
 ): Promise<StaffNotificationItem[]> {
   if (!isDbConfigured()) return [];
   await ensureStaffNotificationSchema();
-  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 50);
+  const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100);
   const unreadSql = opts.unreadOnly ? " AND r.read_at IS NULL" : "";
 
   const rows = await prisma.$queryRawUnsafe<
@@ -228,7 +239,7 @@ export async function listStaffNotificationsForUser(
             n.location_id, n.severity, n.created_at, r.read_at
      FROM staff_notification_recipients r
      INNER JOIN staff_notifications n ON n.id = r.notification_id
-     WHERE r.user_id = ?${unreadSql}
+     WHERE r.user_id = ? AND r.cleared_at IS NULL${unreadSql}
      ORDER BY n.created_at DESC
      LIMIT ?`,
     actor.id,
@@ -263,7 +274,7 @@ export async function countUnreadStaffNotifications(actor: UserProfile): Promise
   const rows = await prisma.$queryRawUnsafe<{ c: number | bigint }[]>(
     `SELECT COUNT(*) AS c
      FROM staff_notification_recipients
-     WHERE user_id = ? AND read_at IS NULL`,
+     WHERE user_id = ? AND read_at IS NULL AND cleared_at IS NULL`,
     actor.id,
   );
   return Number(rows[0]?.c ?? 0);
@@ -280,7 +291,7 @@ export async function markStaffNotificationsRead(
     const result = await prisma.$executeRawUnsafe(
       `UPDATE staff_notification_recipients
        SET read_at = NOW(3)
-       WHERE user_id = ? AND read_at IS NULL`,
+       WHERE user_id = ? AND read_at IS NULL AND cleared_at IS NULL`,
       actor.id,
     );
     return Number(result);
@@ -292,7 +303,39 @@ export async function markStaffNotificationsRead(
   const result = await prisma.$executeRawUnsafe(
     `UPDATE staff_notification_recipients
      SET read_at = NOW(3)
-     WHERE user_id = ? AND read_at IS NULL AND notification_id IN (${placeholders})`,
+     WHERE user_id = ? AND read_at IS NULL AND cleared_at IS NULL AND notification_id IN (${placeholders})`,
+    actor.id,
+    ...ids,
+  );
+  return Number(result);
+}
+
+export async function clearStaffNotifications(
+  actor: UserProfile,
+  input: { ids?: string[]; all?: boolean },
+): Promise<number> {
+  if (!isDbConfigured()) return 0;
+  await ensureStaffNotificationSchema();
+
+  if (input.all) {
+    const result = await prisma.$executeRawUnsafe(
+      `UPDATE staff_notification_recipients
+       SET cleared_at = NOW(3),
+           read_at = COALESCE(read_at, NOW(3))
+       WHERE user_id = ? AND cleared_at IS NULL`,
+      actor.id,
+    );
+    return Number(result);
+  }
+
+  const ids = (input.ids ?? []).filter(Boolean).slice(0, 100);
+  if (!ids.length) return 0;
+  const placeholders = ids.map(() => "?").join(",");
+  const result = await prisma.$executeRawUnsafe(
+    `UPDATE staff_notification_recipients
+     SET cleared_at = NOW(3),
+         read_at = COALESCE(read_at, NOW(3))
+     WHERE user_id = ? AND cleared_at IS NULL AND notification_id IN (${placeholders})`,
     actor.id,
     ...ids,
   );

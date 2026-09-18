@@ -1,10 +1,5 @@
 import { z } from "zod";
-import {
-  moneyAmountAtMost,
-  nullableMoneySchema,
-  positiveMoneySchema,
-  taxRateSchema,
-} from "@/lib/validation/money";
+import { moneyAmountAtMost, nullableMoneySchema, positiveMoneySchema, taxRateSchema } from "@/lib/validation/money";
 import { PERMISSIONS, isPermission } from "@/lib/auth/permissions";
 
 export const categorySlugSchema = z
@@ -312,7 +307,7 @@ export const cancelOrderSchema = z.object({
 
 export const patchOrderSchema = z.object({
   orderId: z.string().min(1),
-  action: z.enum(["cancel", "status"]).optional().default("cancel"),
+  action: z.enum(["cancel", "status", "refund"]).optional().default("cancel"),
   status: z
     .enum([
       "new",
@@ -329,6 +324,10 @@ export const patchOrderSchema = z.object({
       "shipped",
     ])
     .optional(),
+  amount: positiveMoneySchema.optional(),
+  reason: z.string().trim().max(240).optional(),
+  restock: z.boolean().optional(),
+  idempotencyKey: z.string().trim().min(8).max(80).optional(),
   /** @deprecated Ignored — cancel requires a signed-in session. */
   userId: z.string().min(1).optional(),
 });

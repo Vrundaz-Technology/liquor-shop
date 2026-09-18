@@ -131,7 +131,22 @@ function fieldLabel(key: string) {
     label: "label",
     allowedLocations: "store access",
     balance: "balance",
-    product: "product",
+    payment: "payment",
+    paymentMethod: "payment",
+    coupon: "coupon",
+    couponCode: "coupon",
+    discount: "discount",
+    customer: "customer",
+    customerName: "customer",
+    customerPhone: "phone",
+    walkIn: "customer",
+    cashierName: "cashier",
+    refund: "refund",
+    payment_status: "payment status",
+    restocked: "restock",
+    remaining: "remaining",
+    amount: "amount",
+    reason: "reason",
   };
   return map[key] ?? key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").toLowerCase();
 }
@@ -168,7 +183,10 @@ export function parseActivityChanges(input: {
         to: hasTo ? formatValue(row.to ?? row.after ?? row.next) : null,
       });
     }
-    if (out.length) return out;
+    if (out.length) {
+      appendNotableExtras(out, meta);
+      return out;
+    }
   }
 
   if (meta && ("from" in meta || "to" in meta) && !("previous" in meta && "status" in meta)) {
@@ -272,7 +290,6 @@ export function parseActivityChanges(input: {
     }
   }
 
-  // Generic leftover scalar keys (avoid dumping huge arrays)
   if (meta && out.length === 0) {
     const skip = new Set([
       "changes",
@@ -289,17 +306,60 @@ export function parseActivityChanges(input: {
       "fulfillment",
       "total",
       "notesLength",
+      "cashierId",
     ]);
     for (const [key, value] of Object.entries(meta)) {
       if (skip.has(key)) continue;
       if (value == null) continue;
       if (typeof value === "object") continue;
       out.push({ field: fieldLabel(key), from: null, to: formatValue(value) });
-      if (out.length >= 4) break;
+      if (out.length >= 8) break;
     }
   }
 
+  appendNotableExtras(out, meta);
+
   return out;
+}
+
+function appendNotableExtras(
+  out: ActivityChangeView[],
+  meta?: Record<string, unknown>,
+) {
+  if (!meta) return;
+  const seen = new Set(out.map((row) => row.field.toLowerCase().replace(/\s+/g, "")));
+  const push = (field: string, value: unknown) => {
+    if (value == null || value === "") return;
+    const label = fieldLabel(field);
+    const key = label.toLowerCase().replace(/\s+/g, "");
+    if (seen.has(key)) return;
+    seen.add(key);
+    out.push({ field: label, from: null, to: formatValue(value) });
+  };
+
+  if (meta.walkIn === true) push("customer", "Walk-in");
+  else push("customer", meta.customerName);
+
+  push("paymentMethod", meta.paymentMethod);
+  push("coupon", meta.coupon ?? meta.couponCode);
+  if (typeof meta.discount === "number" && meta.discount > 0) {
+    push("discount", `$${Number(meta.discount).toFixed(2)}`);
+  }
+  push("cashierName", meta.cashierName);
+  push("customerPhone", meta.customerPhone);
+  if (typeof meta.loyaltyPointsUsed === "number" && meta.loyaltyPointsUsed > 0) {
+    push("points", `${meta.loyaltyPointsUsed} redeemed`);
+  }
+  if (typeof meta.loyaltyPointsEarned === "number" && meta.loyaltyPointsEarned > 0) {
+    push("loyalty earned", meta.loyaltyPointsEarned);
+  }
+  if (typeof meta.restocked === "boolean") {
+    push("restocked", meta.restocked ? "Yes" : "No");
+  }
+  if (typeof meta.remaining === "number") {
+    push("remaining", `$${Number(meta.remaining).toFixed(2)}`);
+  }
+  push("reason", meta.reason);
 }
 
 export function formatChangesPlain(changes: ActivityChangeView[]) {

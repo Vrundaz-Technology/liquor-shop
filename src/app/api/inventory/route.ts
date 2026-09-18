@@ -13,7 +13,9 @@ import { canAccessLocation, hasAllLocationAccess } from "@/lib/auth/location-acc
 
 export async function GET() {
   try {
-    const inventory = await fetchInventoryState();
+    const allowed = await requirePermission("inventory.view");
+    if (allowed.error) return allowed.error;
+    const inventory = await fetchInventoryState({ includeCost: true });
     return NextResponse.json(inventory);
   } catch (error) {
     console.error("[GET /api/inventory]", error);
@@ -174,7 +176,7 @@ export async function PATCH(request: Request) {
     }
 
     await resetInventory(body.locationId, actorUserId);
-    const inventory = await fetchInventoryState();
+    const inventory = await fetchInventoryState({ includeCost: true });
     return NextResponse.json({ ok: true, inventory });
   } catch (error) {
     console.error("[PATCH /api/inventory]", error);

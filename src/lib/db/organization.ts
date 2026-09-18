@@ -150,6 +150,7 @@ async function ensureMoneyDecimalColumns() {
   await modifyColumnToDecimalIfNeeded("orders", "tax_amount", money12(false, "0.00"), 12, 2);
   await modifyColumnToDecimalIfNeeded("orders", "discount_amount", money12(false, "0.00"), 12, 2);
   await modifyColumnToDecimalIfNeeded("orders", "delivery_fee", money12(false, "0.00"), 12, 2);
+  await modifyColumnToDecimalIfNeeded("orders", "refunded_amount", money12(false, "0.00"), 12, 2);
 
   await modifyColumnToDecimalIfNeeded("order_items", "price", "DECIMAL(12,2) NOT NULL", 12, 2);
 
@@ -369,6 +370,17 @@ async function ensureForeignKeys() {
     "organization_customers",
     "organization_customers_user_id_idx",
     "`user_id`",
+  );
+  await createIndexIfMissing("orders", "orders_created_at_idx", "`created_at`");
+  await createIndexIfMissing(
+    "orders",
+    "orders_organization_id_created_at_idx",
+    "`organization_id`, `created_at`",
+  );
+  await createIndexIfMissing(
+    "organization_customers",
+    "organization_customers_org_spent_idx",
+    "`organization_id`, `total_spent`",
   );
 }
 
@@ -613,6 +625,9 @@ export async function ensureOrganizationSchema() {
   await ensureReferentialIntegrity();
   await ensureMoneyDecimalColumns();
   await ensureForeignKeys();
+
+  const { ensurePaymentSchema } = await import("@/lib/db/payments");
+  await ensurePaymentSchema();
 
   orgReady = true;
 }

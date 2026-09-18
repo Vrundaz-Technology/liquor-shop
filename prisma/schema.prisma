@@ -399,6 +399,7 @@ model User {
   orgCustomers       OrganizationCustomer[]
   loyaltyLedger      LoyaltyLedger[]
   createdTransfers   InventoryTransfer[]    @relation("TransferCreatedBy")
+  recordedPayments   OrderPayment[]         @relation("PaymentActor")
 
   @@index([role])
   @@index([active])
@@ -429,6 +430,7 @@ model OrganizationCustomer {
   @@index([organizationId])
   @@index([userId])
   @@index([segmentCache])
+  @@index([organizationId, totalSpent])
   @@map("organization_customers")
 }
 
@@ -439,6 +441,9 @@ model Order {
   date            String
   status          String
   paymentStatus   String   @default("paid") @map("payment_status")
+  paymentMethod   String?  @map("payment_method")
+  paymentProvider String?  @map("payment_provider")
+  refundedAmount  Decimal  @default(0.00) @map("refunded_amount") @db.Decimal(12, 2)
   total           Decimal  @db.Decimal(12, 2)
   subtotal        Decimal  @default(0.00) @db.Decimal(12, 2)
   taxAmount       Decimal  @default(0.00) @map("tax_amount") @db.Decimal(12, 2)
@@ -475,10 +480,13 @@ model Order {
   items          OrderItem[]
   ledger         InventoryLedger[]
   loyaltyEntries LoyaltyLedger[]
+  payments       OrderPayment[]
 
   @@index([userId])
   @@index([locationId])
   @@index([organizationId])
+  @@index([createdAt])
+  @@index([organizationId, createdAt])
   @@index([date])
   @@index([status])
   @@index([fulfillment])
@@ -488,6 +496,32 @@ model Order {
   @@index([shipdayOrderId])
   @@index([deliveryChannel])
   @@map("orders")
+}
+
+model OrderPayment {
+  id             String   @id
+  orderId        String   @map("order_id")
+  organizationId String?  @map("organization_id")
+  locationId     String   @map("location_id")
+  provider       String
+  kind           String
+  status         String
+  amount         Decimal  @db.Decimal(12, 2)
+  method         String?
+  providerRef    String?  @map("provider_ref")
+  idempotencyKey String   @unique @map("idempotency_key")
+  reason         String?
+  actorUserId    String?  @map("actor_user_id")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade, onUpdate: Cascade)
+  actor User? @relation("PaymentActor", fields: [actorUserId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  @@index([orderId])
+  @@index([organizationId, createdAt])
+  @@index([kind, status, createdAt])
+  @@index([actorUserId])
+  @@map("order_payments")
 }
 
 model OrderItem {

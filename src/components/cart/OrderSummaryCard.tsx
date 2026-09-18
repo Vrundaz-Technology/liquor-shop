@@ -46,19 +46,20 @@ export function OrderSummaryCard({
             </span>
           </span>
         </p>
-        <p className="mt-2 flex items-center gap-2 text-xs text-muted">
-          {fulfillment === "delivery" ? (
-            <Truck size={12} className="text-gold" aria-hidden />
-          ) : (
-            <MapPin size={12} className="text-gold" aria-hidden />
-          )}
-          {fulfillment === "delivery" ? "Delivery" : "Pickup"}
+        <p className="mt-2 flex flex-wrap items-start gap-x-2 gap-y-1 text-xs leading-relaxed text-muted">
+          <span className="inline-flex items-center gap-2">
+            {fulfillment === "delivery" ? (
+              <Truck size={12} className="shrink-0 text-gold" aria-hidden />
+            ) : (
+              <MapPin size={12} className="shrink-0 text-gold" aria-hidden />
+            )}
+            {fulfillment === "delivery" ? "Delivery" : "Pickup"}
+          </span>
           {etaLabel ? (
-            <>
-              <span aria-hidden>·</span>
-              <Clock size={12} aria-hidden />
-              {etaLabel}
-            </>
+            <span className="inline-flex min-w-0 items-start gap-1.5">
+              <Clock size={12} className="mt-0.5 shrink-0" aria-hidden />
+              <span className="min-w-0 break-words">{etaLabel}</span>
+            </span>
           ) : null}
         </p>
         {addressSummary ? (

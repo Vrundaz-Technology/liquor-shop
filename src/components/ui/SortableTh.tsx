@@ -70,7 +70,7 @@ export function SortableTh<K extends string>({
         type="button"
         onClick={() => onSort(column)}
         className={cn(
-          "inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-[inherit] transition-colors",
+          "inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap uppercase tracking-[inherit] transition-colors",
           align === "right" && "ml-auto",
           active ? "text-gold" : "hover:text-cream",
         )}

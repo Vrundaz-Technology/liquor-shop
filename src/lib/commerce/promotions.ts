@@ -15,6 +15,8 @@ export type PromotionRules = {
   buyQty?: number;
   getQty?: number;
   firstOrderOnly?: boolean;
+  /** How many times one customer (account) may redeem this offer. Omit = unlimited. */
+  maxUsesPerUser?: number;
   /** 0 = Sunday … 6 = Saturday */
   daysOfWeek?: number[];
   /** Local wall-clock "HH:mm" (store timezone approximated as server local). */
@@ -81,6 +83,9 @@ export function parsePromotionRules(raw: unknown): PromotionRules {
   if (typeof row.buyQty === "number" && row.buyQty > 0) rules.buyQty = Math.floor(row.buyQty);
   if (typeof row.getQty === "number" && row.getQty > 0) rules.getQty = Math.floor(row.getQty);
   if (typeof row.firstOrderOnly === "boolean") rules.firstOrderOnly = row.firstOrderOnly;
+  if (typeof row.maxUsesPerUser === "number" && Number.isInteger(row.maxUsesPerUser) && row.maxUsesPerUser > 0) {
+    rules.maxUsesPerUser = Math.min(99, row.maxUsesPerUser);
+  }
   if (Array.isArray(row.daysOfWeek)) {
     rules.daysOfWeek = row.daysOfWeek
       .map((d) => Number(d))
@@ -256,9 +261,49 @@ export async function listPromotions(filters: {
   }
 
   return prisma.$queryRawUnsafe<PromotionRow[]>(
-    `SELECT * FROM promotions WHERE ${where.join(" AND ")} ORDER BY priority DESC, created_at DESC`,
+    `SELECT * FROM promotions WHERE ${where.join(" AND ")} ORDER BY priority DESC, created_at DESC LIMIT 500`,
     ...params,
   );
+}
+
+export class PromotionUsageLimitError extends Error {
+  constructor(
+    public promoName: string,
+    public maxUses: number,
+  ) {
+    super(
+      `You can use ${promoName} only ${maxUses} time${maxUses === 1 ? "" : "s"} per customer.`,
+    );
+    this.name = "PromotionUsageLimitError";
+  }
+}
+
+type QueryClient = {
+  $queryRawUnsafe: (query: string, ...values: unknown[]) => Promise<unknown>;
+};
+
+export async function countUserPromotionUses(
+  userId: string,
+  promo: { id: string; code?: string | null },
+  db: QueryClient = prisma,
+): Promise<number> {
+  if (!userId || !isDbConfigured()) return 0;
+  const code = promo.code?.trim().toUpperCase() ?? "";
+  const rows = (await db.$queryRawUnsafe(
+    `SELECT COUNT(*) AS c
+     FROM orders
+     WHERE user_id = ?
+       AND status <> 'cancelled'
+       AND (
+         promotion_id = ?
+         OR (? <> '' AND UPPER(COALESCE(coupon_code, '')) = ?)
+       )`,
+    userId,
+    promo.id,
+    code,
+    code,
+  )) as { c: bigint | number }[];
+  return Number(rows[0]?.c ?? 0);
 }
 
 export async function resolvePromotionDiscount(input: {
@@ -268,7 +313,9 @@ export async function resolvePromotionDiscount(input: {
   locationId?: string | null;
   items?: PromoLineItem[];
   isFirstOrder?: boolean;
+  userId?: string | null;
   now?: Date;
+  db?: QueryClient;
 }): Promise<AppliedPromotion | null> {
   if (!isDbConfigured()) {
     const code = input.code?.trim().toUpperCase();
@@ -296,7 +343,7 @@ export async function resolvePromotionDiscount(input: {
   const now = input.now ?? new Date();
   const code = input.code?.trim().toUpperCase() || null;
 
-  const candidates = rows
+  let candidates = rows
     .filter((row) => isActiveNow(row, now))
     .filter((row) => {
       if (code) return row.code?.toUpperCase() === code;
@@ -305,10 +352,10 @@ export async function resolvePromotionDiscount(input: {
     .filter((row) => {
       const rules = parsePromotionRules(row.rules);
       if (rules.firstOrderOnly) {
-        if (input.isFirstOrder === false) return false;
-        // Without known order history, only honor first-order when customer entered the code
-        if (input.isFirstOrder == null && !code) return false;
+        if (input.isFirstOrder !== true) return false;
       }
+      // Anonymous auto-apply cannot track per-user caps.
+      if (!input.userId && !code && rules.maxUsesPerUser) return false;
       const min = row.min_subtotal == null ? null : moneyNumber(row.min_subtotal);
       if (min != null) {
         const basis = eligibleSubtotal(input.items, rules, input.subtotal);
@@ -326,6 +373,27 @@ export async function resolvePromotionDiscount(input: {
       return discount > 0;
     })
     .sort(compareCandidates);
+
+  if (input.userId) {
+    const db = input.db ?? prisma;
+    const remaining: PromotionRow[] = [];
+    for (const row of candidates) {
+      const maxUses = parsePromotionRules(row.rules).maxUsesPerUser;
+      if (!maxUses) {
+        remaining.push(row);
+        continue;
+      }
+      const used = await countUserPromotionUses(input.userId, row, db);
+      if (used < maxUses) {
+        remaining.push(row);
+        continue;
+      }
+      if (code) {
+        throw new PromotionUsageLimitError(row.name, maxUses);
+      }
+    }
+    candidates = remaining;
+  }
 
   if (!candidates.length) return null;
 
@@ -409,6 +477,174 @@ export function getCouponDiscount(code: string | null | undefined, subtotal: num
   const rate = COUPONS[code.toUpperCase()];
   if (!rate) return 0;
   return Math.round(subtotal * rate * 100) / 100;
+}
+
+export type CustomerCouponOffer = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  label: string;
+  discount: number;
+  freeDelivery: boolean;
+  minSubtotal: number | null;
+  eligible: boolean;
+  reason: string | null;
+  endsAt: string | null;
+};
+
+function moneyLabel(amount: number) {
+  return `$${amount.toFixed(2)}`;
+}
+
+function offerLabel(row: Pick<PromotionRow, "type" | "value" | "name">, rules: PromotionRules) {
+  const value = moneyNumber(row.value);
+  if (row.type === "percent") return `${Math.round(value * 100)}% off`;
+  if (row.type === "fixed") return `${moneyLabel(value)} off`;
+  if (row.type === "free_delivery") return "Free delivery";
+  if (row.type === "bogo") {
+    return `Buy ${rules.buyQty ?? 2} get ${rules.getQty ?? 1} free`;
+  }
+  return row.name;
+}
+
+function targetingHint(rules: PromotionRules) {
+  const bits: string[] = [];
+  if (rules.categories?.length) bits.push(rules.categories.join(", "));
+  if (rules.brands?.length) bits.push(rules.brands.join(", "));
+  return bits.length ? bits.join(" · ") : null;
+}
+
+export function parsePromoLineItems(raw: unknown): PromoLineItem[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const items: PromoLineItem[] = [];
+  for (const row of raw) {
+    if (!row || typeof row !== "object") continue;
+    const r = row as Record<string, unknown>;
+    if (typeof r.productId !== "string") continue;
+    const quantity = Number(r.quantity);
+    const price = Number(r.price);
+    if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
+      continue;
+    }
+    items.push({
+      productId: r.productId,
+      quantity,
+      price,
+      category: typeof r.category === "string" ? r.category : undefined,
+      brand: typeof r.brand === "string" ? r.brand : undefined,
+    });
+  }
+  return items.length ? items : undefined;
+}
+
+export async function listCustomerCoupons(input: {
+  organizationId?: string | null;
+  locationId?: string | null;
+  subtotal: number;
+  items?: PromoLineItem[];
+  isFirstOrder?: boolean;
+  userId?: string | null;
+  now?: Date;
+}): Promise<CustomerCouponOffer[]> {
+  const now = input.now ?? new Date();
+  const offers: CustomerCouponOffer[] = [];
+
+  if (isDbConfigured()) {
+    const rows = await listPromotions({
+      organizationId: input.organizationId ?? SAMS_ORG_ID,
+      locationId: input.locationId,
+      includePlatform: true,
+    });
+    for (const row of rows) {
+      const code = row.code?.trim().toUpperCase();
+      if (!code || !isActiveNow(row, now)) continue;
+      const rules = parsePromotionRules(row.rules);
+      const min = row.min_subtotal == null ? null : moneyNumber(row.min_subtotal);
+      const computed = computeDiscountForRow(row, input);
+      const hasTarget =
+        Boolean(rules.categories?.length) ||
+        Boolean(rules.brands?.length) ||
+        Boolean(rules.productIds?.length);
+      const basis = hasTarget ? computed.eligible : input.subtotal;
+      let eligible = true;
+      let reason: string | null = null;
+      let usesLeft: number | null = null;
+
+      if (rules.firstOrderOnly && input.isFirstOrder === false) {
+        eligible = false;
+        reason = "First order only";
+      }
+      if (eligible && rules.maxUsesPerUser && input.userId) {
+        const used = await countUserPromotionUses(input.userId, row);
+        if (used >= rules.maxUsesPerUser) {
+          eligible = false;
+          reason = `Limit reached (${rules.maxUsesPerUser} per customer)`;
+        } else {
+          usesLeft = rules.maxUsesPerUser - used;
+        }
+      }
+      if (eligible && min != null && basis < min) {
+        eligible = false;
+        reason = `Add ${moneyLabel(Math.round((min - basis) * 100) / 100)} more`;
+      } else if (eligible && hasTarget && computed.eligible <= 0) {
+        eligible = false;
+        reason = targetingHint(rules) ? `Applies to ${targetingHint(rules)}` : "Not for items in this bag";
+      } else if (eligible && row.type !== "free_delivery" && computed.discount <= 0) {
+        eligible = false;
+        reason = "Add items to use this offer";
+      }
+
+      if (eligible && computed.discount > 0) {
+        reason = `Save ${moneyLabel(computed.discount)}`;
+      } else if (eligible && computed.freeDelivery) {
+        reason = "Waives delivery fee";
+      }
+      if (eligible && usesLeft != null) {
+        const cap = usesLeft === 1 ? "1 use left" : `${usesLeft} uses left`;
+        reason = reason ? `${reason} · ${cap}` : cap;
+      }
+
+      offers.push({
+        id: row.id,
+        code,
+        name: row.name,
+        type: row.type,
+        label: offerLabel(row, rules),
+        discount: computed.discount,
+        freeDelivery: computed.freeDelivery,
+        minSubtotal: min,
+        eligible,
+        reason,
+        endsAt: row.ends_at ? new Date(row.ends_at).toISOString() : null,
+      });
+    }
+  }
+
+  const seen = new Set(offers.map((o) => o.code));
+  for (const [code, rate] of Object.entries(COUPONS)) {
+    if (seen.has(code)) continue;
+    const discount = Math.round(input.subtotal * rate * 100) / 100;
+    offers.push({
+      id: `legacy-${code}`,
+      code,
+      name: code,
+      type: "percent",
+      label: `${Math.round(rate * 100)}% off`,
+      discount,
+      freeDelivery: false,
+      minSubtotal: null,
+      eligible: discount > 0,
+      reason: discount > 0 ? `Save ${moneyLabel(discount)}` : "Add items to use this offer",
+      endsAt: null,
+    });
+  }
+
+  return offers.sort((a, b) => {
+    if (a.eligible !== b.eligible) return a.eligible ? -1 : 1;
+    if (b.discount !== a.discount) return b.discount - a.discount;
+    return a.code.localeCompare(b.code);
+  });
 }
 
 export async function upsertPromotion(data: {

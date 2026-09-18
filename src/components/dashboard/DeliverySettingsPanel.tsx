@@ -7,7 +7,8 @@ import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { PanelLoading } from "@/components/dashboard/DashboardLoading";
 import { apiFetchDeliverySettings, apiPatchDeliverySettings } from "@/lib/api-mutations";
 import { ALCOHOL_HANDOFF_NOTE, type DispatchPolicy } from "@/lib/commerce/dispatch";
-import { isDbConnected, upsertRuntimeLocation } from "@/lib/runtime-data";
+import { upsertRuntimeLocation } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { getAllLocations } from "@/data/locations";
 import { cn } from "@/lib/utils";
 
@@ -348,7 +349,7 @@ export function DeliverySettingsPanel() {
   const [loading, setLoading] = useState(true);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const dbReady = isDbConnected();
+  const { ready: dbReady } = useServerConnection();
 
   const load = useCallback(async () => {
     if (!dbReady) {

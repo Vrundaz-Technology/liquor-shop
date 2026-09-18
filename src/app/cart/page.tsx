@@ -13,11 +13,11 @@ import { getPriceForLocation } from "@/data/locations";
 import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { analyzeCartAvailability } from "@/lib/cart-availability";
 import { useInventoryStore } from "@/store/inventory";
-import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, publicFulfillmentSummary } from "@/lib/utils";
+import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, publicFulfillmentSummary, cn } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
 import { BranchAvailabilityPanel } from "@/components/cart/BranchAvailabilityPanel";
+import { CartRewardsPanel } from "@/components/cart/CartRewardsPanel";
 import { FulfillmentModeToggle } from "@/components/cart/FulfillmentModeToggle";
 import { OrderSummaryCard } from "@/components/cart/OrderSummaryCard";
 import { OtherBranchStock } from "@/components/inventory/OtherBranchStock";
@@ -71,10 +71,7 @@ export default function CartPage() {
   const branch = locations.find((l) => l.id === branchId) ?? locations[0];
   const isLoggedIn = useUserStore((s) => s.isLoggedIn);
   const profile = useUserStore((s) => s.profile);
-  const [code, setCode] = useState(coupon ?? "");
   const [confirmClear, setConfirmClear] = useState(false);
-  const [couponMessage, setCouponMessage] = useState("");
-  const [couponBusy, setCouponBusy] = useState(false);
   const inventoryRevision = useInventoryStore((s) => s.revision);
   const getAvailable = useInventoryStore((s) => s.getAvailable);
 
@@ -164,12 +161,11 @@ export default function CartPage() {
   useEffect(() => {
     if (couponQuery.isError && coupon) {
       applyCoupon(null);
-      setCouponMessage("That code is not valid for this cart.");
     }
   }, [couponQuery.isError, coupon, applyCoupon]);
 
   const loyaltyQuery = useQuery({
-    queryKey: ["loyalty-member-cart", branchId],
+    queryKey: ["loyalty-member", branchId],
     enabled: isLoggedIn && isDbConnected(),
     staleTime: 60_000,
     queryFn: () => apiLoyaltyMember({ locationId: branchId }),
@@ -244,21 +240,6 @@ export default function CartPage() {
     }
   }, [loyaltyPointsRedeem, maxRedeemPoints, setLoyaltyPointsRedeem]);
 
-  const rewardHints = useMemo(() => {
-    const raw = loyaltyQuery.data?.program?.rewards;
-    if (!Array.isArray(raw)) return [] as { points: number; label: string }[];
-    return raw
-      .map((r) => {
-        if (!r || typeof r !== "object") return null;
-        const row = r as { points?: unknown; label?: unknown };
-        const points = typeof row.points === "number" ? row.points : 0;
-        const label = typeof row.label === "string" ? row.label : "";
-        if (!points || !label) return null;
-        return { points, label };
-      })
-      .filter(Boolean) as { points: number; label: string }[];
-  }, [loyaltyQuery.data?.program?.rewards]);
-
   useEffect(() => {
     if (!branch) return;
     if (fulfillment === "delivery" && !branch.deliveryAvailable && branch.pickupAvailable) {
@@ -277,51 +258,8 @@ export default function CartPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoggedIn, profile.id]);
 
-  const applyCode = async () => {
-    const trimmed = code.trim();
-    if (!trimmed) {
-      applyCoupon(null);
-      setCouponMessage("Coupon cleared.");
-      return;
-    }
-    setCouponBusy(true);
-    setCouponMessage("");
-    try {
-      applyCoupon(trimmed);
-      if (isDbConnected() && subtotal > 0) {
-        const result = await apiValidateCoupon({
-          code: trimmed,
-          locationId: branchId,
-          subtotal,
-          items: promoItems,
-        });
-        setCode(result.code ?? trimmed);
-        if (result.freeDelivery && result.discount <= 0) {
-          setCouponMessage(`${result.name ?? trimmed} applied — free delivery.`);
-        } else {
-          setCouponMessage(
-            `${result.name ?? trimmed} applied (−${formatPrice(result.discount)}).`,
-          );
-        }
-      } else {
-        const discountAmt = getCouponDiscount(trimmed, subtotal);
-        if (!discountAmt) {
-          applyCoupon(null);
-          setCouponMessage("That code is not valid.");
-        } else {
-          setCode(trimmed.toUpperCase());
-          setCouponMessage(`Coupon applied (−${formatPrice(discountAmt)}).`);
-        }
-      }
-    } catch (err) {
-      applyCoupon(null);
-      setCouponMessage(err instanceof Error ? err.message : "That code is not valid.");
-    } finally {
-      setCouponBusy(false);
-    }
-  };
   return (
-    <div className="mx-auto max-w-7xl px-3 py-10 sm:px-4 sm:py-14 md:px-8 md:py-16">
+    <div className={cn("mx-auto max-w-7xl px-3 py-10 sm:px-4 sm:py-14 md:px-8 md:py-16", lines.length ? "pb-24 lg:pb-16" : "")}>
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <h1 className="font-display text-3xl text-cream sm:text-4xl md:text-5xl">Your Cart</h1>
         {lines.length > 0 ? (
@@ -341,7 +279,7 @@ export default function CartPage() {
               key={loc.id}
               type="button"
               onClick={() => switchShoppingStore(loc.id)}
-              className={`border px-3 py-2 text-sm transition ${
+              className={`min-h-11 border px-3 py-2 text-sm transition ${
                 branchId === loc.id
                   ? "border-(--gold)/50 bg-(--gold)/10 text-cream"
                   : "border-white/10 text-muted hover:border-white/25"
@@ -537,113 +475,15 @@ export default function CartPage() {
               onChange={setFulfillment}
             />
           </div>
-          <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-            <Input
-              placeholder="Coupon code"
-              value={code}
-              onChange={(e) => {
-                setCode(e.target.value);
-                if (couponMessage) setCouponMessage("");
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void applyCode();
-                }
-              }}
+          <div className="mt-4">
+            <CartRewardsPanel
+              locationId={branchId}
+              subtotal={subtotal}
+              promoItems={promoItems}
+              couponDiscount={couponDiscount}
+              loginNext="/cart"
             />
-            <Button
-              variant="secondary"
-              className="w-full shrink-0 sm:w-auto"
-              loading={couponBusy}
-              onClick={() => void applyCode()}
-            >
-              Apply
-            </Button>
           </div>
-          {couponMessage ? (
-            <p
-              className={`mt-2 text-[10px] ${
-                couponMessage.toLowerCase().includes("not valid")
-                  ? "text-red-300"
-                  : "text-gold"
-              }`}
-            >
-              {couponMessage}
-            </p>
-          ) : (
-            <p className="mt-2 text-[10px] text-muted">
-              Enter a store promotion code from your email or receipt.
-            </p>
-          )}
-
-          {isLoggedIn ? (
-            <div className="mt-4 rounded-sm border border-white/10 bg-white/[0.03] p-3">
-              <div className="flex items-center justify-between gap-2">
-                <p className="text-[10px] uppercase tracking-[0.14em] text-muted">
-                  Redeem loyalty
-                </p>
-                <p className="text-xs tabular-nums text-gold">
-                  {balance.toLocaleString()} pts
-                </p>
-              </div>
-              <label className="mt-2 block text-xs text-muted">
-                Points to redeem
-                <Input
-                  className="mt-1"
-                  inputMode="numeric"
-                  value={loyaltyPointsRedeem ? String(loyaltyPointsRedeem) : ""}
-                  placeholder="0"
-                  onChange={(e) => {
-                    const n = Number(e.target.value.replace(/[^\d]/g, "") || 0);
-                    setLoyaltyPointsRedeem(Math.min(n, maxRedeemPoints));
-                  }}
-                />
-              </label>
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                <button
-                  type="button"
-                  className="rounded-sm border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted hover:border-(--gold)/35 hover:text-gold"
-                  onClick={() => setLoyaltyPointsRedeem(0)}
-                >
-                  None
-                </button>
-                {maxRedeemPoints > 0 ? (
-                  <button
-                    type="button"
-                    className="rounded-sm border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted hover:border-(--gold)/35 hover:text-gold"
-                    onClick={() => setLoyaltyPointsRedeem(maxRedeemPoints)}
-                  >
-                    Max ({maxRedeemPoints})
-                  </button>
-                ) : null}
-                {rewardHints
-                  .filter((r) => r.points <= maxRedeemPoints)
-                  .slice(0, 3)
-                  .map((r) => (
-                    <button
-                      key={r.points}
-                      type="button"
-                      className="rounded-sm border border-white/10 px-2 py-1 text-[10px] uppercase tracking-[0.12em] text-muted hover:border-(--gold)/35 hover:text-gold"
-                      onClick={() => setLoyaltyPointsRedeem(r.points)}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-              </div>
-              <p className="mt-2 text-[11px] text-white/40">
-                {((redeemRate || 0) * 100).toFixed(0)}¢ per point
-                {loyaltyDiscount > 0 ? ` · −${formatPrice(loyaltyDiscount)}` : ""}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-3 text-[11px] text-muted">
-              <Link href="/login?next=/cart" className="text-gold hover:underline">
-                Sign in
-              </Link>{" "}
-              to redeem loyalty points.
-            </p>
-          )}
 
           <OrderSummaryCard
             store={branch}
@@ -687,7 +527,9 @@ export default function CartPage() {
                   : []),
               ...(loyaltyDiscount > 0
                 ? [{ label: "Loyalty", value: `−${formatPrice(loyaltyDiscount)}` }]
-                : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
+                : couponDiscount > 0
+                  ? []
+                  : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
               {
                 label:
                   activeFulfillment === "delivery"
@@ -744,6 +586,29 @@ export default function CartPage() {
           />
         </aside>
       </div>
+
+      {lines.length > 0 ? (
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-[#070707]/95 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] lg:hidden">
+          <div className="mx-auto flex max-w-7xl items-center justify-between gap-3">
+            <p className="min-w-0">
+              <span className="block text-[10px] uppercase tracking-[0.16em] text-muted">Total</span>
+              <span className="text-base font-medium tabular-nums text-cream">{formatPrice(total)}</span>
+            </p>
+            <Link
+              href={canCheckout ? "/checkout" : "#"}
+              onClick={(e) => {
+                if (!canCheckout) e.preventDefault();
+              }}
+              aria-disabled={!canCheckout}
+              className="shrink-0"
+            >
+              <Button className="min-h-12 min-w-[9rem]" size="lg" disabled={!canCheckout}>
+                Checkout
+              </Button>
+            </Link>
+          </div>
+        </div>
+      ) : null}
 
       <Modal
         open={confirmClear}

@@ -1,43 +1,29 @@
 import { NextResponse } from "next/server";
-import { resolvePromotionDiscount, type PromoLineItem } from "@/lib/commerce/promotions";
+import { parsePromoLineItems, PromotionUsageLimitError, resolvePromotionDiscount } from "@/lib/commerce/promotions";
 import { SAMS_ORG_ID, resolveLocationOrganizationId } from "@/lib/db/organization";
 import { isDbConfigured } from "@/lib/db/prisma";
 import { COUPONS, getCouponDiscount } from "@/lib/commerce";
 import { prisma } from "@/lib/db/prisma";
 import { getRequestUser } from "@/lib/auth/require";
+import { isStaffRole } from "@/lib/auth/roles";
 
-function parseItems(raw: string | null): PromoLineItem[] | undefined {
+function parseItems(raw: string | null): ReturnType<typeof parsePromoLineItems> {
   if (!raw) return undefined;
   try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (!Array.isArray(parsed)) return undefined;
-    const items: PromoLineItem[] = [];
-    for (const row of parsed) {
-      if (!row || typeof row !== "object") continue;
-      const r = row as Record<string, unknown>;
-      if (typeof r.productId !== "string") continue;
-      const quantity = Number(r.quantity);
-      const price = Number(r.price);
-      if (!Number.isFinite(quantity) || quantity <= 0 || !Number.isFinite(price) || price < 0) {
-        continue;
-      }
-      items.push({
-        productId: r.productId,
-        quantity,
-        price,
-        category: typeof r.category === "string" ? r.category : undefined,
-        brand: typeof r.brand === "string" ? r.brand : undefined,
-      });
-    }
-    return items;
+    return parsePromoLineItems(JSON.parse(raw));
   } catch {
     return undefined;
   }
 }
 
-async function resolveFirstOrder(userId: string | undefined): Promise<boolean | undefined> {
+async function resolveFirstOrder(
+  userId: string | undefined,
+  organizationId: string,
+): Promise<boolean | undefined> {
   if (!userId || !isDbConfigured()) return undefined;
-  const count = await prisma.order.count({ where: { userId } });
+  const count = await prisma.order.count({
+    where: { userId, organizationId, status: { not: "cancelled" } },
+  });
   return count === 0;
 }
 
@@ -66,12 +52,13 @@ export async function GET(request: Request) {
 
   try {
     const user = await getRequestUser();
-    const isFirstOrder = await resolveFirstOrder(user?.id);
+    const shopperId = user && !isStaffRole(user) ? user.id : undefined;
 
     if (isDbConfigured()) {
       const organizationId = locationId
         ? ((await resolveLocationOrganizationId(locationId)) ?? SAMS_ORG_ID)
         : SAMS_ORG_ID;
+      const isFirstOrder = await resolveFirstOrder(shopperId, organizationId);
       const promo = await resolvePromotionDiscount({
         code: code || null,
         subtotal,
@@ -79,6 +66,7 @@ export async function GET(request: Request) {
         locationId,
         items,
         isFirstOrder,
+        userId: shopperId,
       });
       if (promo && (promo.discount > 0 || promo.freeDelivery)) {
         return NextResponse.json({
@@ -93,18 +81,17 @@ export async function GET(request: Request) {
         });
       }
       if (code) {
-        // Fall through to legacy map for seed codes if DB miss
-      } else {
-        return NextResponse.json({
-          ok: true,
-          code: null,
-          name: null,
-          discount: 0,
-          freeDelivery: false,
-          promotionId: null,
-          autoApplied: true,
-        });
+        return NextResponse.json({ ok: false, error: "That code is not valid." }, { status: 404 });
       }
+      return NextResponse.json({
+        ok: true,
+        code: null,
+        name: null,
+        discount: 0,
+        freeDelivery: false,
+        promotionId: null,
+        autoApplied: true,
+      });
     }
 
     if (code && COUPONS[code]) {
@@ -133,6 +120,9 @@ export async function GET(request: Request) {
 
     return NextResponse.json({ ok: false, error: "That code is not valid." }, { status: 404 });
   } catch (error) {
+    if (error instanceof PromotionUsageLimitError) {
+      return NextResponse.json({ ok: false, error: error.message }, { status: 409 });
+    }
     console.error("[GET /api/promotions/validate]", error);
     return NextResponse.json({ error: "Could not validate coupon." }, { status: 500 });
   }

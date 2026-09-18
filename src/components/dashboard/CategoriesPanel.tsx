@@ -13,6 +13,7 @@ import { hasPermission } from "@/lib/auth/permissions";
 import { removeRuntimeCategory, upsertRuntimeCategory } from "@/lib/runtime-data";
 import { useCatalogStore } from "@/store/catalog";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import type { ShopCategory } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -108,7 +109,13 @@ export function CategoriesPanel({ embedded = false }: { embedded?: boolean }) {
     const hint = used
       ? ` ${used} bottle${used === 1 ? "" : "s"} still use this category.`
       : "";
-    if (!window.confirm(`Remove “${category.name}”?${hint}`)) return;
+    const ok = await confirmAction({
+      title: "Remove category",
+      description: `Remove “${category.name}”?${hint}`,
+      confirmLabel: "Remove category",
+      tone: "danger",
+    });
+    if (!ok) return;
     setError("");
     try {
       await apiDeleteCategory(category.slug);

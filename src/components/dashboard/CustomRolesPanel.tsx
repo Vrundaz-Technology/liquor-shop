@@ -16,8 +16,9 @@ import { isConnectionError } from "@/lib/connection-messages";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { UserPermissionEditor } from "@/components/dashboard/UserPermissionEditor";
 import { useUserStore } from "@/store/user";
-import { isDbConnected } from "@/lib/runtime-data";
+import { confirmAction } from "@/store/dialog";
 import { usePersistedViewMode } from "@/hooks/usePersistedViewMode";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Modal } from "@/components/ui/Modal";
@@ -87,6 +88,7 @@ type Props = {
 
 export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: Props) {
   const actor = useUserStore((s) => s.profile);
+  const { ready: dbReady } = useServerConnection();
   const canManage = hasPermission(actor, "users.assign_roles");
   const [customRoles, setCustomRoles] = useState<CustomRoleDefinition[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,7 +115,7 @@ export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: 
   }, [autoOpenCreate, canManage, onCreateOpened]);
 
   const load = async () => {
-    if (!isDbConnected()) {
+    if (!dbReady) {
       setCustomRoles([]);
       setCustomRoleCatalog([]);
       setLoading(false);
@@ -135,7 +137,8 @@ export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: 
 
   useEffect(() => {
     void load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dbReady]);
 
   const directory = useMemo((): DirectoryRole[] => {
     const customs = [...customRoles]
@@ -219,7 +222,13 @@ export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: 
   };
 
   const remove = async (role: CustomRoleDefinition) => {
-    if (!window.confirm(`Delete the ${role.label} role? Users must be reassigned first.`)) return;
+    const ok = await confirmAction({
+      title: "Delete role",
+      description: `Delete the ${role.label} role? Users must be reassigned first.`,
+      confirmLabel: "Delete role",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {
@@ -292,9 +301,7 @@ export function CustomRolesPanel({ highlight, autoOpenCreate, onCreateOpened }: 
 
   return (
     <div className="mt-5 space-y-4">
-      {!isDbConnected() ? (
-        <ConnectionNotice className="mt-2" feature="save custom roles" preview />
-      ) : null}
+      <ConnectionNotice className="mt-2" feature="save custom roles" preview />
       {error && !editing ? <p className="text-sm text-red-300">{error}</p> : null}
 
       <section>

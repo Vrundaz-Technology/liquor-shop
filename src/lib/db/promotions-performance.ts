@@ -147,7 +147,7 @@ export async function fetchPromotionPerformance(
   const orderWhere: string[] = [
     `o.promotion_id IS NOT NULL`,
     `o.status <> 'cancelled'`,
-    `(o.organization_id = ? OR o.organization_id IS NULL)`,
+    `o.organization_id = ?`,
   ];
 
   if (filters.fromDate && /^\d{4}-\d{2}-\d{2}$/.test(filters.fromDate)) {
@@ -285,4 +285,201 @@ export async function fetchPromotionPerformance(
   }
 
   return { summary, offers };
+}
+
+export type PromoUsageOrder = {
+  id: string;
+  date: string;
+  createdAt: string | null;
+  status: string;
+  fulfillment: string;
+  locationId: string;
+  storeName: string;
+  customerId: string;
+  customerName: string;
+  customerEmail: string;
+  couponCode: string | null;
+  subtotal: number;
+  discountAmount: number;
+  total: number;
+  items: { productId: string; productName: string; quantity: number; price: number }[];
+};
+
+export type PromoUsageCustomer = {
+  id: string;
+  name: string;
+  email: string;
+  orders: number;
+  totalSpent: number;
+  discountGiven: number;
+  lastUsedAt: string | null;
+};
+
+export type PromoUsageDetail = {
+  offer: PromoOfferPerformance | null;
+  orders: PromoUsageOrder[];
+  customers: PromoUsageCustomer[];
+};
+
+type UsageOrderRow = {
+  id: string;
+  date: string;
+  created_at: Date | string | null;
+  status: string;
+  fulfillment: string;
+  location_id: string;
+  store_name: string | null;
+  user_id: string;
+  customer_name: string | null;
+  customer_email: string | null;
+  coupon_code: string | null;
+  subtotal: number | string | null;
+  discount_amount: number | string | null;
+  total: number | string | null;
+};
+
+export async function fetchPromotionUsage(
+  actor: UserProfile,
+  filters: {
+    organizationId: string;
+    promoId: string;
+    fromDate?: string;
+    toDate?: string;
+    locationId?: string;
+  },
+): Promise<PromoUsageDetail> {
+  const empty: PromoUsageDetail = { offer: null, orders: [], customers: [] };
+  if (!isDbConfigured()) return empty;
+
+  const { offers } = await fetchPromotionPerformance(actor, {
+    organizationId: filters.organizationId,
+    promoId: filters.promoId,
+    fromDate: filters.fromDate,
+    toDate: filters.toDate,
+    locationId: filters.locationId,
+    status: "all",
+  });
+  const offer = offers.find((row) => row.promoId === filters.promoId) ?? null;
+  if (!offer) return empty;
+
+  const allowAll = hasAllLocationAccess(actor);
+  const accessibleIds = accessibleLocations(actor).map((loc) => loc.id);
+  if (!allowAll && accessibleIds.length === 0) return { offer, orders: [], customers: [] };
+
+  const params: unknown[] = [];
+  const where: string[] = [`o.status <> 'cancelled'`];
+
+  if (offer.code) {
+    params.push(filters.promoId, offer.code);
+    where.push(
+      `(o.promotion_id = ? OR (o.promotion_id IS NULL AND UPPER(COALESCE(o.coupon_code, '')) = UPPER(?)))`,
+    );
+  } else {
+    params.push(filters.promoId);
+    where.push(`o.promotion_id = ?`);
+  }
+
+  params.push(filters.organizationId);
+  where.push(`o.organization_id = ?`);
+
+  if (filters.fromDate && /^\d{4}-\d{2}-\d{2}$/.test(filters.fromDate)) {
+    params.push(toYmdStart(filters.fromDate));
+    where.push(`o.created_at >= ?`);
+  }
+  if (filters.toDate && /^\d{4}-\d{2}-\d{2}$/.test(filters.toDate)) {
+    params.push(toYmdEnd(filters.toDate));
+    where.push(`o.created_at <= ?`);
+  }
+
+  if (filters.locationId && filters.locationId !== "all") {
+    if (!canAccessLocation(actor, filters.locationId)) return { offer, orders: [], customers: [] };
+    params.push(filters.locationId);
+    where.push(`o.location_id = ?`);
+  } else if (!allowAll) {
+    accessibleIds.forEach((id) => params.push(id));
+    where.push(`o.location_id IN (${accessibleIds.map(() => "?").join(",")})`);
+  }
+
+  const rows = await prisma.$queryRawUnsafe<UsageOrderRow[]>(
+    `SELECT o.id, o.date, o.created_at, o.status, o.fulfillment, o.location_id, o.user_id,
+            l.short_name AS store_name,
+            u.name AS customer_name, u.email AS customer_email,
+            o.coupon_code, o.subtotal, o.discount_amount, o.total
+     FROM orders o
+     LEFT JOIN users u ON u.id = o.user_id
+     LEFT JOIN locations l ON l.id = o.location_id
+     WHERE ${where.join(" AND ")}
+     ORDER BY o.created_at DESC
+     LIMIT 250`,
+    ...params,
+  );
+
+  const orderIds = rows.map((row) => row.id);
+  const itemRows =
+    orderIds.length === 0
+      ? []
+      : await prisma.orderItem.findMany({
+          where: { orderId: { in: orderIds } },
+          include: { product: { select: { name: true } } },
+        });
+  const itemsByOrder = new Map<string, PromoUsageOrder["items"]>();
+  for (const item of itemRows) {
+    const list = itemsByOrder.get(item.orderId) ?? [];
+    list.push({
+      productId: item.productId,
+      productName: item.product?.name ?? item.productId,
+      quantity: item.quantity,
+      price: moneyNumber(item.price),
+    });
+    itemsByOrder.set(item.orderId, list);
+  }
+
+  const orders: PromoUsageOrder[] = rows.map((row) => ({
+    id: row.id,
+    date: row.date,
+    createdAt:
+      row.created_at == null
+        ? null
+        : row.created_at instanceof Date
+          ? row.created_at.toISOString()
+          : new Date(row.created_at).toISOString(),
+    status: row.status,
+    fulfillment: row.fulfillment,
+    locationId: row.location_id,
+    storeName: row.store_name || row.location_id,
+    customerId: row.user_id,
+    customerName: row.customer_name || "Guest",
+    customerEmail: row.customer_email || "—",
+    couponCode: row.coupon_code,
+    subtotal: moneyNumber(row.subtotal ?? 0),
+    discountAmount: moneyNumber(row.discount_amount ?? 0),
+    total: moneyNumber(row.total ?? 0),
+    items: itemsByOrder.get(row.id) ?? [],
+  }));
+
+  const byCustomer = new Map<string, PromoUsageCustomer>();
+  for (const order of orders) {
+    const current = byCustomer.get(order.customerId) ?? {
+      id: order.customerId,
+      name: order.customerName,
+      email: order.customerEmail,
+      orders: 0,
+      totalSpent: 0,
+      discountGiven: 0,
+      lastUsedAt: null,
+    };
+    current.orders += 1;
+    current.totalSpent += order.total;
+    current.discountGiven += order.discountAmount;
+    if (!current.lastUsedAt || (order.createdAt && order.createdAt > current.lastUsedAt)) {
+      current.lastUsedAt = order.createdAt;
+    }
+    byCustomer.set(order.customerId, current);
+  }
+
+  return {
+    offer,
+    orders,
+    customers: [...byCustomer.values()].sort((a, b) => b.totalSpent - a.totalSpent || b.orders - a.orders),
+  };
 }

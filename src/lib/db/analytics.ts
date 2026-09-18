@@ -46,7 +46,7 @@ export type AnalyticsOverview = {
     deliveryOrders: number;
     pickupOrders: number;
     cancelledOrders: number;
-    /** Cancelled order value (proxy until payment refunds exist). */
+    /** Succeeded refunds in the selected range (from the payment ledger). */
     refunds: number;
     discounts: number;
     tax: number;
@@ -256,6 +256,8 @@ export async function fetchOwnerAnalytics(
   }
   await ensureOrganizationSchema();
   await ensureDispatchSchema();
+  const { ensurePaymentSchema } = await import("@/lib/db/payments");
+  await ensurePaymentSchema();
   const orgId = actorOrganizationId(actor) ?? SAMS_ORG_ID;
   const to = opts.to ?? new Date().toISOString().slice(0, 10);
   const from =
@@ -309,14 +311,14 @@ export async function fetchOwnerAnalytics(
        COALESCE(l.short_name, l.name) AS location_name,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' THEN 1 ELSE 0 END) AS UNSIGNED) AS orders,
        CAST(SUM(CASE WHEN o.status = 'cancelled' THEN 1 ELSE 0 END) AS UNSIGNED) AS cancelled_orders,
-       CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.total ELSE 0 END), 0) AS DECIMAL(14,2)) AS sales,
+       CAST(COALESCE(SUM(GREATEST(0, o.total - COALESCE(o.refunded_amount, 0))), 0) AS DECIMAL(14,2)) AS sales,
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.subtotal ELSE 0 END), 0) AS DECIMAL(14,2)) AS gross_sales,
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.discount_amount ELSE 0 END), 0) AS DECIMAL(14,2)) AS discounts,
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.tax_amount ELSE 0 END), 0) AS DECIMAL(14,2)) AS tax,
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' THEN o.delivery_fee ELSE 0 END), 0) AS DECIMAL(14,2)) AS delivery_revenue,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'delivery' THEN 1 ELSE 0 END) AS UNSIGNED) AS delivery_orders,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'pickup' THEN 1 ELSE 0 END) AS UNSIGNED) AS pickup_orders,
-       CAST(COALESCE(SUM(CASE WHEN o.status = 'cancelled' THEN o.total ELSE 0 END), 0) AS DECIMAL(14,2)) AS refunds,
+       CAST(COALESCE(SUM(COALESCE(o.refunded_amount, 0)), 0) AS DECIMAL(14,2)) AS refunds,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.fulfillment = 'delivery' AND COALESCE(o.delivery_channel, 'internal') <> 'shipday' THEN 1 ELSE 0 END) AS UNSIGNED) AS internal_delivery_orders,
        CAST(SUM(CASE WHEN o.status <> 'cancelled' AND o.delivery_channel = 'shipday' THEN 1 ELSE 0 END) AS UNSIGNED) AS shipday_orders,
        CAST(COALESCE(SUM(CASE WHEN o.status <> 'cancelled' AND o.delivery_channel = 'shipday' THEN COALESCE(o.provider_cost, 0) ELSE 0 END), 0) AS DECIMAL(14,2)) AS third_party_delivery_costs

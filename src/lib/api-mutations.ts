@@ -185,6 +185,35 @@ export async function apiPlaceOrder(input: {
   });
 }
 
+export type AvailableCoupon = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  label: string;
+  discount: number;
+  freeDelivery: boolean;
+  minSubtotal: number | null;
+  eligible: boolean;
+  reason: string | null;
+  endsAt: string | null;
+};
+
+export async function apiAvailableCoupons(input: {
+  locationId?: string;
+  subtotal: number;
+  items?: { productId: string; quantity: number; price: number; category?: string; brand?: string }[];
+}) {
+  const params = new URLSearchParams({
+    subtotal: String(input.subtotal),
+  });
+  if (input.locationId) params.set("locationId", input.locationId);
+  if (input.items?.length) params.set("items", JSON.stringify(input.items));
+  return apiFetch<{ ok: true; coupons: AvailableCoupon[] }>(
+    `/api/promotions/available?${params.toString()}`,
+  );
+}
+
 export async function apiValidateCoupon(input: {
   code?: string | null;
   locationId?: string;
@@ -271,6 +300,29 @@ export async function apiCancelOrder(_userId: string, orderId: string) {
   return apiFetch<{ order: Order; inventory?: InventorySnapshot }>("/api/orders", {
     method: "PATCH",
     body: JSON.stringify({ orderId, action: "cancel" }),
+  });
+}
+
+export async function apiRefundOrder(input: {
+  orderId: string;
+  amount?: number;
+  reason?: string;
+  restock?: boolean;
+  idempotencyKey?: string;
+}) {
+  return apiFetch<{
+    order: Order | null;
+    refund: {
+      amount: number;
+      remaining: number;
+      paymentStatus: string;
+      refundedAmount: number;
+      restocked: boolean;
+    };
+    inventory?: InventorySnapshot;
+  }>("/api/orders", {
+    method: "PATCH",
+    body: JSON.stringify({ action: "refund", ...input }),
   });
 }
 

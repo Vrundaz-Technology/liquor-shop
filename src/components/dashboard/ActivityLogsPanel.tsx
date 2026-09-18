@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ClipboardList,
   Download,
+  Maximize2,
   RefreshCw,
   UserRound,
 } from "lucide-react";
@@ -15,7 +16,7 @@ import {
   type ActivityChangeView,
 } from "@/lib/activity/changes";
 import { accessibleLocations } from "@/lib/auth/location-access";
-import { isDbConnected } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { isConnectionError } from "@/lib/connection-messages";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { PanelLoading } from "@/components/dashboard/DashboardLoading";
@@ -30,6 +31,7 @@ import { Select } from "@/components/ui/Select";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
 import { Pagination } from "@/components/ui/Pagination";
 import { PageSizeSelect } from "@/components/ui/PageSizeSelect";
+import { Modal } from "@/components/ui/Modal";
 import { MobileSortBar, SortableTh, tableCellClass, tableHeadRowClass, tableRowClass, tableWrapClass, useTableSort } from "@/components/ui/SortableTh";
 import { cn } from "@/lib/utils";
 
@@ -58,6 +60,7 @@ const ACTION_LABELS: Record<string, string> = {
   "order.placed": "Order placed",
   "pos.sale": "Point of sale",
   "order.cancelled": "Order cancelled",
+  "order.refunded": "Order refunded",
   "order.status": "Order status",
   "inventory.set": "Stock set",
   "inventory.adjust": "Stock adjusted",
@@ -120,12 +123,17 @@ const ACTION_TONE: Record<string, string> = {
   "order.placed": "border-(--success)/30 bg-(--success)/10 text-(--success)",
   "pos.sale": "border-(--gold)/30 bg-(--gold)/10 text-gold",
   "order.cancelled": "border-(--danger)/30 bg-(--danger)/10 text-(--danger)",
+  "order.refunded": "border-(--danger)/30 bg-(--danger)/10 text-(--danger)",
   "order.status": "border-(--gold)/30 bg-(--gold)/10 text-gold",
   "inventory.set": "border-(--gold)/30 bg-(--gold)/10 text-gold",
   "inventory.adjust": "border-(--gold)/30 bg-(--gold)/10 text-gold",
   "inventory.restock": "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
   "inventory.reset": "border-white/20 bg-white/5 text-cream",
   "inventory.visibility": "border-(--gold)/30 bg-(--gold)/10 text-gold",
+  "inventory.transfer": "border-(--gold)/30 bg-(--gold)/10 text-gold",
+  "inventory.pricing": "border-(--gold)/30 bg-(--gold)/10 text-gold",
+  "inventory.import": "border-emerald-400/30 bg-emerald-400/10 text-emerald-200",
+  "inventory.export": "border-white/20 bg-white/5 text-cream",
   "catalog.created": "border-violet-400/30 bg-violet-400/10 text-violet-200",
   "catalog.updated": "border-violet-400/30 bg-violet-400/10 text-violet-200",
   "catalog.deleted": "border-(--danger)/30 bg-(--danger)/10 text-(--danger)",
@@ -161,6 +169,9 @@ const ACTION_TONE: Record<string, string> = {
   "promotion.created": "border-violet-400/30 bg-violet-400/10 text-violet-200",
   "promotion.updated": "border-violet-400/30 bg-violet-400/10 text-violet-200",
   "promotion.deleted": "border-(--danger)/30 bg-(--danger)/10 text-(--danger)",
+  "crm.updated": "border-sky-400/30 bg-sky-400/10 text-sky-200",
+  "loyalty.updated": "border-(--gold)/30 bg-(--gold)/10 text-gold",
+  "loyalty.birthday_claimed": "border-(--gold)/30 bg-(--gold)/10 text-gold",
   "review.created": "border-amber-400/30 bg-amber-400/10 text-amber-200",
   "review.moderate": "border-amber-400/30 bg-amber-400/10 text-amber-200",
   "review.respond": "border-amber-400/30 bg-amber-400/10 text-amber-200",
@@ -175,11 +186,7 @@ function actionLabel(action: string) {
 
 function ActionLabel({ action }: { action: string }) {
   if (action === "pos.sale") {
-    return (
-      <>
-        <AbbrTooltip term="POS" /> sale
-      </>
-    );
+    return <AbbrTooltip term="POS" suffix="sale" />;
   }
   return <>{actionLabel(action)}</>;
 }
@@ -195,45 +202,78 @@ function roleLabel(role: string) {
   return "customer";
 }
 
-function truncateId(id?: string) {
-  if (!id) return "";
-  return id.length > 14 ? `${id.slice(0, 10)}…` : id;
-}
-
-function ChangesCell({ changes, summary }: { changes: ActivityChangeView[]; summary: string }) {
-  if (!changes.length) {
-    return <p className="text-sm text-cream/90">{summary}</p>;
-  }
-  const visible = changes.slice(0, 8);
+function ChangeLines({ changes }: { changes: ActivityChangeView[] }) {
   return (
     <ul className="space-y-1.5">
-      {visible.map((change, index) => (
+      {changes.map((change, index) => (
         <li
           key={`${change.field}-${index}`}
           className="rounded-sm border border-white/8 bg-white/[0.03] px-2 py-1.5"
         >
           <p className="text-[10px] uppercase tracking-[0.12em] text-muted">{change.field}</p>
-          <p className="mt-0.5 flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-xs leading-snug">
+          <p className="mt-0.5 flex flex-wrap items-start gap-x-1.5 gap-y-0.5 text-xs leading-snug">
             {change.from != null ? (
-              <span className="text-red-300/90 line-through decoration-red-300/70">
+              <span className="min-w-0 max-w-full break-words text-red-300/90 line-through decoration-red-300/70">
                 {change.from}
               </span>
             ) : null}
             {change.from != null && change.to != null ? (
-              <span className="text-muted" aria-hidden>
+              <span className="shrink-0 text-muted" aria-hidden>
                 →
               </span>
             ) : null}
             {change.to != null ? (
-              <span className="font-medium text-emerald-300">{change.to}</span>
+              <span className="min-w-0 max-w-full break-words font-medium text-emerald-300">
+                {change.to}
+              </span>
             ) : null}
           </p>
         </li>
       ))}
-      {changes.length > visible.length ? (
-        <li className="text-[11px] text-muted">+{changes.length - visible.length} more</li>
-      ) : null}
     </ul>
+  );
+}
+
+function ChangesCell({ changes, summary }: { changes: ActivityChangeView[]; summary: string }) {
+  const [open, setOpen] = useState(false);
+  if (!changes.length) {
+    return <p className="text-sm text-cream/90">{summary}</p>;
+  }
+  const overflow = changes.length > 2;
+  return (
+    <div>
+      <ChangeLines changes={overflow ? changes.slice(0, 2) : changes} />
+      {overflow ? (
+        <div className="mt-2">
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => setOpen(true)}
+          >
+            <Maximize2 size={13} aria-hidden />
+            View all {changes.length} changes
+          </Button>
+        </div>
+      ) : null}
+      <Modal
+        open={open}
+        title="Activity changes"
+        subtitle={summary}
+        className="sm:max-w-2xl"
+        onClose={() => setOpen(false)}
+        footer={
+          <div className="flex justify-end">
+            <Button type="button" variant="secondary" onClick={() => setOpen(false)}>
+              Close
+            </Button>
+          </div>
+        }
+      >
+        <ChangeLines changes={changes} />
+      </Modal>
+    </div>
   );
 }
 
@@ -350,6 +390,7 @@ function rangeForPreset(preset: DatePreset): { fromDate: string; toDate: string 
 
 export function ActivityLogsPanel() {
   const profile = useUserStore((s) => s.profile);
+  const { ready: dbReady } = useServerConnection();
   const canListUsers = hasPermission(profile, "users.view");
   const [logs, setLogs] = useState<ActivityLogEntry[]>([]);
   const [total, setTotal] = useState(0);
@@ -396,7 +437,7 @@ export function ActivityLogsPanel() {
   };
 
   useEffect(() => {
-    if (!canListUsers || !isDbConnected()) return;
+    if (!canListUsers || !dbReady) return;
     let cancelled = false;
     void apiFetchUsers({ limit: 100 })
       .then(({ users }) => {
@@ -413,11 +454,11 @@ export function ActivityLogsPanel() {
     return () => {
       cancelled = true;
     };
-  }, [canListUsers]);
+  }, [canListUsers, dbReady]);
 
   const load = async (pageOverride?: number) => {
     const activePage = pageOverride ?? page;
-    if (!isDbConnected()) {
+    if (!dbReady) {
       setLogs([]);
       setTotal(0);
       setLoading(false);
@@ -469,7 +510,7 @@ export function ActivityLogsPanel() {
     }, 250);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [action, entityType, actor, locationId, page, pageSize, sortKey, sortDir, fromDate, toDate, q]);
+  }, [action, entityType, actor, locationId, page, pageSize, sortKey, sortDir, fromDate, toDate, q, dbReady]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -485,12 +526,12 @@ export function ActivityLogsPanel() {
   const locations = useMemo(() => accessibleLocations(profile), [profile]);
 
   const locationName = (id?: string) => {
-    if (!id) return "";
+    if (!id) return "All stores";
     return locations.find((l) => l.id === id)?.shortName ?? id;
   };
 
   const handleExport = async () => {
-    if (!isDbConnected() || exporting) return;
+    if (!dbReady || exporting) return;
     setExporting(true);
     setError("");
     try {
@@ -537,34 +578,39 @@ export function ActivityLogsPanel() {
           <h2 className="hidden font-display text-3xl text-cream lg:mt-2 lg:block xl:text-4xl">
             Activity
           </h2>
-          <p className="max-w-2xl text-sm text-muted lg:mt-2">
+          <p className="max-w-2xl text-sm leading-relaxed text-muted lg:mt-2">
             Who changed what across stock, orders, catalog, and accounts — with before and after values.
           </p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2 sm:justify-end">
+        <div className="grid grid-cols-2 gap-2 sm:flex sm:shrink-0 sm:justify-end">
           <Button
             size="sm"
             variant="secondary"
+            className="w-full sm:w-auto"
             onClick={() => void handleExport()}
-            disabled={loading || exporting || !isDbConnected()}
+            disabled={loading || exporting || !dbReady}
           >
             <Download size={14} />
             {exporting ? "Exporting…" : "Export"}
           </Button>
-          <Button size="sm" variant="secondary" onClick={() => void load()} disabled={loading}>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="w-full sm:w-auto"
+            onClick={() => void load()}
+            disabled={loading}
+          >
             <RefreshCw size={14} className={loading ? "animate-spin" : ""} />
             Refresh
           </Button>
         </div>
       </div>
 
-      {!isDbConnected() ? (
-        <ConnectionNotice className="mt-5" feature="view activity history" />
-      ) : null}
+      <ConnectionNotice className="mt-5" feature="view activity history" />
 
       <div className="mt-5 space-y-3">
-        <div className="grid items-center gap-2 sm:grid-cols-[minmax(0,1.4fr)_minmax(0,0.9fr)_auto] lg:grid-cols-[minmax(0,1.6fr)_minmax(10rem,0.7fr)_minmax(10rem,0.7fr)_minmax(10rem,0.7fr)_auto]">
-          <label className="min-w-0 sm:col-span-3 lg:col-span-1">
+        <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+          <label className="min-w-0 w-full sm:min-w-[16rem] sm:flex-1">
             <span className="sr-only">Search</span>
             <SearchInput
               placeholder="Search activity…"
@@ -579,62 +625,65 @@ export function ActivityLogsPanel() {
               }}
             />
           </label>
-          <Select
-            value={datePreset}
-            ariaLabel="Date range"
-            onChange={(value) => {
-              const preset = value as DatePreset;
-              setDatePreset(preset);
-              if (preset === "custom") {
-                setFiltersOpen(true);
-                return;
-              }
-              const next = rangeForPreset(preset);
-              setFromDate(next.fromDate);
-              setToDate(next.toDate);
-            }}
-            options={[
-              { value: "all", label: "All time" },
-              { value: "today", label: "Today" },
-              { value: "7d", label: "Last 7 days" },
-              { value: "30d", label: "Last 30 days" },
-              { value: "month", label: "This month" },
-              { value: "custom", label: "Custom range" },
-            ]}
-          />
-          <div className="hidden lg:contents">
+          <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 sm:contents">
             <Select
-              value={action}
-              onChange={setAction}
-              ariaLabel="Action"
+              className="min-w-0 sm:w-[11.5rem]"
+              value={datePreset}
+              ariaLabel="Date range"
+              onChange={(value) => {
+                const preset = value as DatePreset;
+                setDatePreset(preset);
+                if (preset === "custom") {
+                  setFiltersOpen(true);
+                  return;
+                }
+                const next = rangeForPreset(preset);
+                setFromDate(next.fromDate);
+                setToDate(next.toDate);
+              }}
               options={[
-                { value: "all", label: "All actions" },
-                ...Object.entries(ACTION_LABELS).map(([id, label]) => ({
-                  value: id,
-                  label,
-                })),
+                { value: "all", label: "All time" },
+                { value: "today", label: "Today" },
+                { value: "7d", label: "Last 7 days" },
+                { value: "30d", label: "Last 30 days" },
+                { value: "month", label: "This month" },
+                { value: "custom", label: "Custom range" },
               ]}
             />
-            <Select
-              value={entityType}
-              onChange={setEntityType}
-              ariaLabel="Entity"
-              options={[
-                { value: "all", label: "All entities" },
-                ...Object.entries(ENTITY_LABELS).map(([id, label]) => ({
-                  value: id,
-                  label,
-                })),
-              ]}
-            />
-          </div>
-          <div className="flex h-11 items-stretch gap-2">
+            <div className="hidden xl:contents">
+              <Select
+                className="xl:w-[12.5rem]"
+                value={action}
+                onChange={setAction}
+                ariaLabel="Action"
+                options={[
+                  { value: "all", label: "All actions" },
+                  ...Object.entries(ACTION_LABELS).map(([id, label]) => ({
+                    value: id,
+                    label,
+                  })),
+                ]}
+              />
+              <Select
+                className="xl:w-[11rem]"
+                value={entityType}
+                onChange={setEntityType}
+                ariaLabel="Entity"
+                options={[
+                  { value: "all", label: "All entities" },
+                  ...Object.entries(ENTITY_LABELS).map(([id, label]) => ({
+                    value: id,
+                    label,
+                  })),
+                ]}
+              />
+            </div>
             <button
               type="button"
               onClick={() => setFiltersOpen((v) => !v)}
               aria-expanded={filtersOpen}
               className={cn(
-                "inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-sm border border-white/10 px-3 text-[11px] uppercase tracking-[0.14em] text-muted transition hover:border-(--gold)/40 hover:text-cream lg:flex-none",
+                "inline-flex h-11 items-center justify-center gap-1.5 rounded-sm border border-white/10 px-3.5 text-[11px] uppercase tracking-[0.14em] text-muted transition hover:border-(--gold)/40 hover:text-cream sm:flex-none",
                 filtersOpen && "border-(--gold)/40 text-cream",
               )}
             >
@@ -647,7 +696,7 @@ export function ActivityLogsPanel() {
         </div>
 
         {filtersOpen || datePreset === "custom" ? (
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
             {datePreset === "custom" ? (
               <>
                 <label className="block text-xs text-muted">
@@ -678,7 +727,7 @@ export function ActivityLogsPanel() {
                 </label>
               </>
             ) : null}
-            <div className="contents lg:hidden">
+            <div className="contents xl:hidden">
               <Select
                 label="Action"
                 value={action}
@@ -839,7 +888,7 @@ export function ActivityLogsPanel() {
       ) : (
       <>
       <MobileSortBar
-        className="mt-4 lg:hidden"
+        className="mt-4 xl:hidden"
         columns={[
           { key: "when", label: "When" },
           { key: "user", label: "Who" },
@@ -853,16 +902,23 @@ export function ActivityLogsPanel() {
         onSort={toggleSort}
       />
 
-      <div className={`mt-4 hidden lg:block ${tableWrapClass}`}>
-        <table className="w-full min-w-[1100px] text-left text-sm">
+      <div className={`mt-4 hidden max-w-full xl:block ${tableWrapClass}`}>
+        <table className="w-max min-w-full text-left text-sm">
           <thead>
             <tr className={tableHeadRowClass}>
-              <SortableTh label="When" column="when" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+              <SortableTh label="When" column="when" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} className="whitespace-nowrap" />
               <SortableTh label="Who" column="user" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Location" column="location" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
               <SortableTh label="Action" column="action" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <SortableTh label="Entity" column="entity" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
-              <th className="px-4 py-3 font-medium whitespace-nowrap text-[10px] uppercase tracking-[0.14em] text-muted">
+              <SortableTh
+                label="Entity"
+                column="entity"
+                sortKey={sortKey}
+                sortDir={sortDir}
+                onSort={toggleSort}
+                className="min-w-[12rem]"
+              />
+              <th className="min-w-[16rem] px-4 py-3 font-medium whitespace-nowrap text-[10px] uppercase tracking-[0.14em] text-muted">
                 Changes
               </th>
             </tr>
@@ -879,7 +935,7 @@ export function ActivityLogsPanel() {
               });
               return (
                 <tr key={log.id} className={tableRowClass}>
-                  <td className={`${tableCellClass} align-top text-xs text-muted whitespace-nowrap`}>
+                  <td className={`${tableCellClass} align-top whitespace-nowrap text-xs text-muted`}>
                     <time dateTime={log.createdAt} title={format(when, "PPpp")}>
                       <span className="block text-cream/90">{format(when, "MMM d, yyyy")}</span>
                       <span className="mt-0.5 block text-[10px] uppercase tracking-wider">
@@ -890,37 +946,37 @@ export function ActivityLogsPanel() {
                       </span>
                     </time>
                   </td>
-                  <td className="px-4 py-3 align-top">
+                  <td className="min-w-[10rem] max-w-[16rem] px-4 py-3 align-top">
                     <p className="text-cream">{log.actorName}</p>
                     {log.actorEmail ? (
-                      <p className="mt-0.5 text-[11px] text-muted">{log.actorEmail}</p>
+                      <p className="mt-0.5 break-all text-[11px] text-muted">{log.actorEmail}</p>
                     ) : (
                       <p className="mt-0.5 text-[11px] uppercase tracking-wider text-gold/80">
                         {roleLabel(log.actorRole)}
                       </p>
                     )}
                   </td>
-                  <td className="px-4 py-3 align-top text-xs text-muted">
-                    {loc?.shortName ?? "—"}
+                  <td className="whitespace-nowrap px-4 py-3 align-top text-xs text-muted">
+                    {loc?.shortName ?? "All stores"}
                   </td>
                   <td className="px-4 py-3 align-top">
                     <span
-                      className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
+                      className={`inline-flex max-w-full flex-wrap rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
                         ACTION_TONE[log.action] ?? "border-white/15 text-muted"
                       }`}
                     >
                       <ActionLabel action={log.action} />
                     </span>
                   </td>
-                  <td className="px-4 py-3 align-top text-xs text-muted">
+                  <td className="min-w-[12rem] px-4 py-3 align-top text-xs text-muted">
                     <p className="text-cream/90">{entityLabel(log.entityType)}</p>
                     {log.entityId ? (
-                      <p className="mt-0.5 font-mono text-[11px] text-white/45" title={log.entityId}>
-                        {truncateId(log.entityId)}
+                      <p className="mt-0.5 whitespace-nowrap font-mono text-[11px] leading-snug text-white/55" title={log.entityId}>
+                        {log.entityId}
                       </p>
                     ) : null}
                   </td>
-                  <td className="max-w-[22rem] px-4 py-3 align-top">
+                  <td className="min-w-[16rem] max-w-[28rem] px-4 py-3 align-top">
                     <ChangesCell changes={changes} summary={log.summary} />
                   </td>
                 </tr>
@@ -930,7 +986,7 @@ export function ActivityLogsPanel() {
         </table>
       </div>
 
-      <ol className="mt-4 space-y-3 lg:hidden">
+      <ol className="mt-4 space-y-3 xl:hidden">
         {logs.map((log) => {
           const loc = locations.find((l) => l.id === log.locationId);
           const when = new Date(log.createdAt);
@@ -943,12 +999,12 @@ export function ActivityLogsPanel() {
           return (
             <li
               key={log.id}
-              className="glass border border-white/5 p-4 sm:flex sm:items-start sm:justify-between sm:gap-6"
+              className="glass min-w-0 border border-white/5 p-3.5 sm:p-4"
             >
-              <div className="min-w-0 flex-1">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
                   <span
-                    className={`rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
+                    className={`inline-flex max-w-full flex-wrap rounded-full border px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] ${
                       ACTION_TONE[log.action] ?? "border-white/15 text-muted"
                     }`}
                   >
@@ -957,38 +1013,42 @@ export function ActivityLogsPanel() {
                   <span className="rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] uppercase tracking-[0.14em] text-muted">
                     {entityLabel(log.entityType)}
                   </span>
-                  {loc && (
-                    <span className="text-[10px] uppercase tracking-wider text-muted">
-                      {loc.shortName}
-                    </span>
-                  )}
+                  <span className="text-[10px] uppercase tracking-wider text-muted">
+                    {loc?.shortName ?? "All stores"}
+                  </span>
                 </div>
-                <div className="mt-3">
-                  <ChangesCell changes={changes} summary={log.summary} />
-                </div>
-                <p className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted">
-                  <span className="inline-flex items-center gap-1">
-                    <UserRound size={12} />
+                <time
+                  dateTime={log.createdAt}
+                  className="shrink-0 text-right text-xs text-muted"
+                  title={format(when, "PPpp")}
+                >
+                  <span className="block whitespace-nowrap text-cream/90">
+                    {format(when, "MMM d")}
+                  </span>
+                  <span className="mt-0.5 block text-[10px] uppercase tracking-wider">
+                    {format(when, "h:mm a")}
+                  </span>
+                </time>
+              </div>
+              <div className="mt-3 min-w-0">
+                <ChangesCell changes={changes} summary={log.summary} />
+              </div>
+              <div className="mt-3 space-y-1 text-xs text-muted">
+                <p className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                  <span className="inline-flex items-center gap-1 text-cream/85">
+                    <UserRound size={12} className="shrink-0" />
                     {log.actorName}
                   </span>
-                  {log.actorEmail && <span>{log.actorEmail}</span>}
-                  {log.entityId && (
-                    <span className="font-mono text-[11px] text-white/50" title={log.entityId}>
-                      {truncateId(log.entityId)}
-                    </span>
-                  )}
+                  {log.actorEmail ? (
+                    <span className="min-w-0 break-all">{log.actorEmail}</span>
+                  ) : null}
                 </p>
+                {log.entityId ? (
+                  <p className="break-all font-mono text-[11px] text-white/50" title={log.entityId}>
+                    {log.entityId}
+                  </p>
+                ) : null}
               </div>
-              <time
-                dateTime={log.createdAt}
-                className="mt-3 shrink-0 text-right text-xs text-muted sm:mt-0"
-                title={format(when, "PPpp")}
-              >
-                {format(when, "MMM d, yyyy")}
-                <span className="mt-1 block text-[10px] uppercase tracking-wider">
-                  {format(when, "h:mm:ss a")}
-                </span>
-              </time>
             </li>
           );
         })}

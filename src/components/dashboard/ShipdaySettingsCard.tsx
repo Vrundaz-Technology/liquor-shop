@@ -5,7 +5,7 @@ import { Check, Copy, KeyRound, Link2, ShieldAlert, ShieldCheck } from "lucide-r
 import { Button } from "@/components/ui/Button";
 import { PasswordInput } from "@/components/ui/PasswordInput";
 import { apiFetchShipdaySettings, apiSaveShipdaySettings } from "@/lib/api-mutations";
-import { isDbConnected } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { cn } from "@/lib/utils";
 
 function StatusPill({
@@ -45,7 +45,7 @@ export function ShipdaySettingsCard() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState("");
-  const dbReady = isDbConnected();
+  const { ready: dbReady } = useServerConnection();
   const canSave = Boolean(apiKey.trim() || webhookSecret.trim());
   const localWebhook =
     webhookUrl.includes("localhost") || webhookUrl.includes("127.0.0.1");

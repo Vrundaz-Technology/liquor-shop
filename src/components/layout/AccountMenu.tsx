@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { ChevronDown, LayoutDashboard, LogOut, UserRound } from "lucide-react";
+import { Bell, ChevronDown, LayoutDashboard, LogOut, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { roleLabel } from "@/lib/auth/roles";
@@ -94,6 +94,22 @@ export function AccountMenu({
                 )}
                 {isStaff ? "Dashboard" : "Account"}
               </Link>
+              {isStaff ? (
+                <Link
+                  href="/dashboard/notifications"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    onDashboard && pathname.startsWith("/dashboard/notifications")
+                      ? "bg-(--gold)/15 text-gold"
+                      : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <Bell size={14} className="shrink-0 opacity-80" />
+                  Notifications
+                </Link>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"

@@ -5,6 +5,8 @@ import { requirePermission } from "@/lib/auth/require";
 
 export async function GET() {
   try {
+    const allowed = await requirePermission("catalog.edit");
+    if (allowed.error) return allowed.error;
     const products = await fetchAllProducts();
     return NextResponse.json({ products });
   } catch (error) {

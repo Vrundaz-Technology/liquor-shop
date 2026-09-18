@@ -2,14 +2,19 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireStaff } from "@/lib/auth/require";
 import {
+  clearStaffNotifications,
   countUnreadStaffNotifications,
   listStaffNotificationsForUser,
   markStaffNotificationsRead,
 } from "@/lib/db/staff-notifications";
 
-const markSchema = z.union([
+const idsSchema = z.array(z.string().min(1)).min(1).max(100);
+
+const bodySchema = z.union([
   z.object({ all: z.literal(true) }),
-  z.object({ ids: z.array(z.string().min(1)).min(1).max(100) }),
+  z.object({ ids: idsSchema }),
+  z.object({ clear: z.literal(true) }),
+  z.object({ clearIds: idsSchema }),
 ]);
 
 export async function GET(request: Request) {
@@ -42,12 +47,18 @@ export async function POST(request: Request) {
     const auth = await requireStaff();
     if (auth.error) return auth.error;
 
-    const parsed = markSchema.safeParse(await request.json());
+    const parsed = bodySchema.safeParse(await request.json());
     if (!parsed.success) {
-      return NextResponse.json({ error: "Invalid mark-read payload." }, { status: 400 });
+      return NextResponse.json({ error: "Invalid notification payload." }, { status: 400 });
     }
 
-    const updated = await markStaffNotificationsRead(auth.user, parsed.data);
+    const body = parsed.data;
+    const updated =
+      "clear" in body
+        ? await clearStaffNotifications(auth.user, { all: true })
+        : "clearIds" in body
+          ? await clearStaffNotifications(auth.user, { ids: body.clearIds })
+          : await markStaffNotificationsRead(auth.user, body);
     const unread = await countUnreadStaffNotifications(auth.user);
     return NextResponse.json({ ok: true, updated, unread });
   } catch (error) {

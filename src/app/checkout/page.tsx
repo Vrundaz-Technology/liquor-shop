@@ -18,6 +18,7 @@ import type { DeliveryAddress, Order } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { BranchAvailabilityPanel } from "@/components/cart/BranchAvailabilityPanel";
+import { CartRewardsPanel } from "@/components/cart/CartRewardsPanel";
 import { FulfillmentModeToggle } from "@/components/cart/FulfillmentModeToggle";
 import { OrderSummaryCard } from "@/components/cart/OrderSummaryCard";
 import { isDbConnected } from "@/lib/runtime-data";
@@ -384,7 +385,7 @@ export default function CheckoutPage() {
   }, [couponQuery.isError, coupon, applyCoupon]);
 
   const loyaltyQuery = useQuery({
-    queryKey: ["loyalty-member-checkout", fulfillStoreId],
+    queryKey: ["loyalty-member", fulfillStoreId],
     enabled: isLoggedIn && isDbConnected(),
     staleTime: 60_000,
     queryFn: () => apiLoyaltyMember({ locationId: fulfillStoreId }),
@@ -713,7 +714,7 @@ export default function CheckoutPage() {
 
   return (
     <div className="mx-auto max-w-6xl px-3 py-8 sm:px-4 sm:py-10 md:px-8">
-      <div className="flex flex-wrap items-end justify-between gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <h1 className="font-display text-3xl text-cream sm:text-4xl">Checkout</h1>
           <p className="mt-1.5 text-sm text-muted">
@@ -740,8 +741,8 @@ export default function CheckoutPage() {
         </Link>
       </div>
 
-      <div className="mt-6 grid items-start gap-6 lg:grid-cols-[minmax(0,1fr)_320px] xl:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="space-y-4">
+      <div className="mt-6 grid items-start gap-5 lg:grid-cols-[minmax(0,1fr)_minmax(20rem,26rem)]">
+        <div className="order-1 min-w-0 space-y-4">
           <Section title="Contact">
             <div className="grid gap-3 sm:grid-cols-2">
               <Field label="Full name" invalid={Boolean(fieldErrors.name)} hint={fieldErrors.name}>
@@ -751,6 +752,7 @@ export default function CheckoutPage() {
                     setName(e.target.value);
                     clearFieldError("name");
                   }}
+                  placeholder="Jane Rivera"
                   autoComplete="name"
                   data-checkout-field="name"
                   aria-invalid={fieldErrors.name ? true : undefined}
@@ -760,7 +762,7 @@ export default function CheckoutPage() {
               <Field
                 label="Phone"
                 invalid={Boolean(fieldErrors.phone)}
-                hint={fieldErrors.phone || "10-digit US number"}
+                hint={fieldErrors.phone}
               >
                 <Input
                   value={phone}
@@ -784,6 +786,7 @@ export default function CheckoutPage() {
                       }));
                     }
                   }}
+                  placeholder="(212) 555-0100"
                   inputMode="tel"
                   autoComplete="tel"
                   maxLength={14}
@@ -805,6 +808,7 @@ export default function CheckoutPage() {
                     setEmail(e.target.value);
                     clearFieldError("email");
                   }}
+                  placeholder="you@email.com"
                   autoComplete="email"
                   data-checkout-field="email"
                   aria-invalid={fieldErrors.email ? true : undefined}
@@ -828,7 +832,7 @@ export default function CheckoutPage() {
                 : ""}
             </p>
 
-            <div className="mt-3 flex flex-wrap gap-2">
+            <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3">
               {locations.map((loc) => {
                 const cover = analyzeCartAvailability(items, loc.id);
                 const ok = !cover.hasConflicts && items.length > 0;
@@ -838,13 +842,13 @@ export default function CheckoutPage() {
                     key={loc.id}
                     type="button"
                     onClick={() => switchShoppingStore(loc.id)}
-                    className={`min-h-11 rounded-sm border px-3 py-2 text-left text-sm transition touch-manipulation ${
+                    className={`min-h-11 min-w-0 rounded-sm border px-2.5 py-2 text-left text-sm transition touch-manipulation sm:px-3 ${
                       selected
                         ? "border-(--gold)/50 bg-(--gold)/10 text-cream"
                         : "border-white/10 text-muted hover:border-white/25 hover:text-cream"
                     }`}
                   >
-                    <span className="block">{loc.shortName}</span>
+                    <span className="block truncate">{loc.shortName}</span>
                     {items.length > 0 ? (
                       <span
                         className={`text-[10px] uppercase tracking-wider ${
@@ -915,6 +919,7 @@ export default function CheckoutPage() {
                       setLine1(e.target.value);
                       clearFieldError("line1");
                     }}
+                    placeholder="128 Grand Avenue"
                     autoComplete="address-line1"
                     data-checkout-field="line1"
                     aria-invalid={fieldErrors.line1 ? true : undefined}
@@ -925,6 +930,7 @@ export default function CheckoutPage() {
                   <Input
                     value={line2}
                     onChange={(e) => setLine2(e.target.value)}
+                    placeholder="Apt 4B"
                     autoComplete="address-line2"
                     className={fieldClass}
                   />
@@ -941,6 +947,7 @@ export default function CheckoutPage() {
                       setCity(e.target.value);
                       clearFieldError("city");
                     }}
+                    placeholder="New York"
                     autoComplete="address-level2"
                     data-checkout-field="city"
                     aria-invalid={fieldErrors.city ? true : undefined}
@@ -954,6 +961,7 @@ export default function CheckoutPage() {
                       setState(e.target.value);
                       clearFieldError("state");
                     }}
+                    placeholder="NY"
                     autoComplete="address-level1"
                     data-checkout-field="state"
                     aria-invalid={fieldErrors.state ? true : undefined}
@@ -967,6 +975,7 @@ export default function CheckoutPage() {
                       setZip(e.target.value.replace(/[^\d-]/g, "").slice(0, 10));
                       clearFieldError("zip");
                     }}
+                    placeholder="10013"
                     autoComplete="postal-code"
                     inputMode="numeric"
                     maxLength={10}
@@ -979,6 +988,7 @@ export default function CheckoutPage() {
                   <Input
                     value={notes}
                     onChange={(e) => setNotes(e.target.value)}
+                    placeholder="Buzzer code, leave with doorman…"
                     className={fieldClass}
                   />
                 </Field>
@@ -997,11 +1007,14 @@ export default function CheckoutPage() {
           ) : null}
 
           <Section title="Payment">
-            <p className="mb-3 text-[11px] text-white/35">Stripe demo — no real charges. Test card 4242…</p>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <p className="mb-3 text-[11px] text-white/35">
+              Demo checkout — card details stay in your browser and are never sent to our servers.
+              Test card 4242. Live card processing (Stripe or Square) will replace this step.
+            </p>
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
               <Field
                 label="Card number"
-                className="sm:col-span-3"
+                className="col-span-2 sm:col-span-3"
                 invalid={Boolean(fieldErrors.card)}
                 hint={fieldErrors.card}
               >
@@ -1011,6 +1024,7 @@ export default function CheckoutPage() {
                     setCard(formatCardNumber(e.target.value));
                     clearFieldError("card");
                   }}
+                  placeholder="ACCT-000015"
                   inputMode="numeric"
                   autoComplete="cc-number"
                   data-checkout-field="card"
@@ -1025,6 +1039,7 @@ export default function CheckoutPage() {
                     setExpiry(formatExpiry(e.target.value));
                     clearFieldError("expiry");
                   }}
+                  placeholder="MM/YY"
                   inputMode="numeric"
                   autoComplete="cc-exp"
                   maxLength={5}
@@ -1040,6 +1055,7 @@ export default function CheckoutPage() {
                     setCvc(e.target.value.replace(/\D/g, "").slice(0, 4));
                     clearFieldError("cvc");
                   }}
+                  placeholder="123"
                   inputMode="numeric"
                   autoComplete="cc-csc"
                   maxLength={4}
@@ -1084,7 +1100,7 @@ export default function CheckoutPage() {
           </Button>
         </div>
 
-        <aside className="glass sticky top-[calc(4.5rem+env(safe-area-inset-top,0px))] h-fit p-4">
+        <aside className="order-2 min-w-0 h-fit p-4 sm:p-5 glass lg:sticky lg:top-[calc(4.5rem+env(safe-area-inset-top,0px))]">
           <p className="text-[10px] uppercase tracking-[0.18em] text-gold">
             Order · {branch.shortName}
           </p>
@@ -1113,7 +1129,7 @@ export default function CheckoutPage() {
                       />
                     </span>
                     <span className="min-w-0">
-                      <span className={`block leading-snug ${ok ? "text-cream" : "text-(--danger)"}`}>
+                      <span className={`block break-words leading-snug ${ok ? "text-cream" : "text-(--danger)"}`}>
                         {p.name}
                       </span>
                       <span className="text-xs text-muted">× {i.quantity}</span>
@@ -1137,7 +1153,16 @@ export default function CheckoutPage() {
               );
             })}
           </ul>
-          <div className="mt-3 space-y-1.5 border-t border-white/10 pt-3 text-sm">
+          <div className="mt-4 border-t border-white/10 pt-4">
+            <CartRewardsPanel
+              locationId={fulfillStoreId}
+              subtotal={subtotal}
+              promoItems={promoItems}
+              couponDiscount={couponDiscount}
+              loginNext="/checkout"
+            />
+          </div>
+          <div className="mt-4 space-y-1.5 border-t border-white/10 pt-4 text-sm">
             <OrderSummaryCard
               store={branch}
               fulfillment={activeFulfillment ?? "pickup"}
@@ -1187,7 +1212,9 @@ export default function CheckoutPage() {
                         value: `−${formatPrice(loyalty.discount)}`,
                       },
                     ]
-                  : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
+                  : couponDiscount > 0
+                    ? []
+                    : [{ label: "Discounts", value: formatPrice(0), muted: true }]),
                 {
                   label:
                     activeFulfillment === "delivery"

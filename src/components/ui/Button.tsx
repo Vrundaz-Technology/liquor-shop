@@ -42,7 +42,7 @@ export const Button = forwardRef<
       aria-busy={loading || undefined}
       aria-disabled={isDisabled || undefined}
       className={cn(
-        "inline-flex max-w-full items-center justify-center gap-2 rounded-sm touch-manipulation transition-all duration-300 disabled:cursor-not-allowed disabled:pointer-events-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--gold)]",
+        "inline-flex max-w-full cursor-pointer items-center justify-center gap-2 rounded-sm touch-manipulation transition-all duration-300 disabled:cursor-not-allowed disabled:pointer-events-none focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--gold)]",
         variants[variant],
         sizes[size],
         className,

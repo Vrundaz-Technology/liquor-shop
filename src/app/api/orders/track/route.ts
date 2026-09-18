@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { mapOrder } from "@/lib/db/mappers";
 import { hydrateOrderDelivery } from "@/lib/db/delivery";
+import { attachLoyaltyToOrders } from "@/lib/db/loyalty";
 import {
   buildTrackingSteps,
   trackingEtaLabel,
@@ -9,6 +10,8 @@ import {
   withComputedEta,
 } from "@/lib/commerce/order-tracking";
 import { getLocationById } from "@/data/locations";
+import { getRequestUser } from "@/lib/auth/require";
+import { hasPermission } from "@/lib/auth/permissions";
 
 export async function GET(request: Request) {
   try {
@@ -28,6 +31,16 @@ export async function GET(request: Request) {
       );
     }
 
+    const actor = await getRequestUser();
+    const canStaffView = actor ? hasPermission(actor, "orders.view") : false;
+
+    if (orderId && !code && !actor) {
+      return NextResponse.json(
+        { error: "Sign in or use the tracking code from your confirmation." },
+        { status: 401 },
+      );
+    }
+
     const order = await prisma.order.findFirst({
       where: code ? { tracking: { equals: code } } : { id: orderId },
       include: { items: true },
@@ -37,8 +50,13 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Order not found." }, { status: 404 });
     }
 
+    if (!code && orderId && actor && !canStaffView && order.userId !== actor.id) {
+      return NextResponse.json({ error: "Order not found." }, { status: 404 });
+    }
+
     let mapped = mapOrder(order);
     mapped = await hydrateOrderDelivery(mapped);
+    mapped = (await attachLoyaltyToOrders([mapped]))[0] ?? mapped;
     mapped = withComputedEta(mapped);
 
     const store = getLocationById(mapped.locationId);

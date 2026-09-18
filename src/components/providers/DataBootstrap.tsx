@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { hydrateRuntimeData } from "@/lib/runtime-data";
+import { hydrateRuntimeData, markRuntimeUnavailable } from "@/lib/runtime-data";
 import { useInventoryStore } from "@/store/inventory";
 import { useUserStore } from "@/store/user";
 import { useWishlistStore } from "@/store/wishlist";
@@ -54,7 +54,10 @@ export function DataBootstrap() {
         }
       } catch (error) {
         console.warn("[DataBootstrap] Using seed fallback:", error);
-        if (!cancelled) setHydrated(true);
+        if (!cancelled) {
+          markRuntimeUnavailable();
+          setHydrated(true);
+        }
       }
     }
 

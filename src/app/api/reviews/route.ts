@@ -91,6 +91,7 @@ export async function GET(request: Request) {
         locationId:
           locationId && canAccessLocation(auth.user, locationId) ? locationId : "all",
         q,
+        limit: 500,
       });
       const scoped = reviews.filter((r) => {
         if (!r.locationId) return true;

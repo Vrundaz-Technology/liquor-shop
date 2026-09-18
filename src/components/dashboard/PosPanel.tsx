@@ -4,8 +4,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  ArrowLeft,
   Check,
-  ChevronDown,
   MapPin,
   Minus,
   Plus,
@@ -39,6 +39,7 @@ import { Select } from "@/components/ui/Select";
 import { NativeSelect } from "@/components/ui/NativeSelect";
 import { SmartImage } from "@/components/ui/SmartImage";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { AvailableOffersList } from "@/components/cart/AvailableOffersList";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import type { CategorySlug, Order, OrderFulfillment, Product } from "@/types";
 
@@ -118,11 +119,10 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
   const [deliveryCity, setDeliveryCity] = useState("");
   const [deliveryState, setDeliveryState] = useState("");
   const [deliveryZip, setDeliveryZip] = useState("");
-  const [customerOpen, setCustomerOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState<Order | null>(null);
-  const [mobileTicketOpen, setMobileTicketOpen] = useState(false);
+  const [posStep, setPosStep] = useState<"build" | "pay">("build");
   const [justAddedId, setJustAddedId] = useState<string | null>(null);
   const [addedToast, setAddedToast] = useState<{
     key: number;
@@ -153,22 +153,8 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
   }, [fulfillment, location]);
 
   useEffect(() => {
-    if (fulfillment === "delivery") setCustomerOpen(true);
-  }, [fulfillment]);
-
-  useEffect(() => {
-    if (!mobileTicketOpen) return;
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = "hidden";
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setMobileTicketOpen(false);
-    };
-    window.addEventListener("keydown", onKey);
-    return () => {
-      document.body.style.overflow = prev;
-      window.removeEventListener("keydown", onKey);
-    };
-  }, [mobileTicketOpen]);
+    if (ticket.length === 0 && posStep === "pay") setPosStep("build");
+  }, [ticket.length, posStep]);
 
   useEffect(() => {
     if (!justAddedId) return;
@@ -396,8 +382,8 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
     setDeliveryCity("");
     setDeliveryState("");
     setDeliveryZip("");
-    setCustomerOpen(false);
     setError("");
+    setPosStep("build");
   };
 
   const completeSale = async () => {
@@ -425,12 +411,10 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
 
     if (fulfillment === "delivery") {
       if (!delivery?.line1 || !delivery.city || !delivery.state || !delivery.zip) {
-        setCustomerOpen(true);
         setError("Enter a delivery address for this order.");
         return;
       }
       if (!/^\(\d{3}\) \d{3}-\d{4}$/.test(delivery.phone)) {
-        setCustomerOpen(true);
         setError("Enter a valid delivery phone like (212) 555-0100.");
         return;
       }
@@ -465,7 +449,6 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
         addOrder(result.order, { loyaltyPoints: result.loyaltyPoints });
         setSuccess(result.order);
         clearTicket();
-        setMobileTicketOpen(false);
         return;
       }
 
@@ -508,7 +491,6 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       addOrder(order);
       setSuccess(order);
       clearTicket();
-      setMobileTicketOpen(false);
     } catch (err) {
       setError(
         err instanceof Error
@@ -691,8 +673,35 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       </div>
     );
 
+  const goToPayment = () => {
+    if (!ticketLines.length) {
+      setError("Add bottles to the ticket first.");
+      return;
+    }
+    if (hasConflicts) {
+      setError("Fix stock conflicts before continuing to payment.");
+      return;
+    }
+    setError("");
+    setPosStep("pay");
+  };
+
   const ticketPanel = (
-    <TicketPanel
+    <BuildTicketRail
+      location={location}
+      ticketLines={ticketLines}
+      locationId={locationId}
+      setRegisterLocation={setRegisterLocation}
+      setLineQty={setLineQty}
+      subtotal={subtotal}
+      hasConflicts={hasConflicts}
+      onContinue={goToPayment}
+      onClear={clearTicket}
+    />
+  );
+
+  const payScreen = (
+    <PayScreen
       location={location}
       fulfillment={fulfillment}
       setFulfillment={setFulfillment}
@@ -702,8 +711,6 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       locationId={locationId}
       setRegisterLocation={setRegisterLocation}
       setLineQty={setLineQty}
-      customerOpen={customerOpen}
-      setCustomerOpen={setCustomerOpen}
       customerName={customerName}
       setCustomerName={setCustomerName}
       customerEmail={customerEmail}
@@ -712,6 +719,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       setCustomerPhone={setCustomerPhone}
       coupon={coupon}
       setCoupon={setCoupon}
+      promoItems={promoItems}
       deliveryLine1={deliveryLine1}
       setDeliveryLine1={setDeliveryLine1}
       deliveryCity={deliveryCity}
@@ -729,6 +737,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
       hasConflicts={hasConflicts}
       submitting={submitting}
       canSell={canSell}
+      onBack={() => setPosStep("build")}
       onComplete={() => void completeSale()}
       onClear={clearTicket}
     />
@@ -776,9 +785,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
         ) : null}
       </AnimatePresence>
 
-      {!isDbConnected() ? (
-        <ConnectionNotice feature="save point-of-sale sales to the server" preview />
-      ) : null}
+      <ConnectionNotice feature="save point-of-sale sales to the server" preview />
 
       {success ? (
         <div
@@ -802,7 +809,7 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
         </div>
       ) : null}
 
-      {error && !mobileTicketOpen ? (
+      {error && posStep === "build" ? (
         <div
           role="alert"
           className="flex items-start justify-between gap-3 rounded-sm border border-(--danger)/35 bg-(--danger)/10 px-3 py-3 sm:px-4"
@@ -819,6 +826,10 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
         </div>
       ) : null}
 
+      {posStep === "pay" ? (
+        payScreen
+      ) : (
+      <>
       {/* Compact store switch — mobile / tablet (desktop uses page header) */}
       <div className="flex items-center gap-3 rounded-sm border border-white/10 bg-white/[0.02] px-3 py-2.5 lg:hidden">
         <div className="min-w-0 flex-1">
@@ -924,48 +935,274 @@ export function PosPanel({ locationId, onLocationChange }: Props) {
             <Button
               size="lg"
               className="w-full shadow-[0_10px_40px_rgba(0,0,0,0.55)]"
-              onClick={() => setMobileTicketOpen(true)}
+              disabled={!itemCount || hasConflicts}
+              onClick={goToPayment}
             >
               <ShoppingCart size={16} />
               {itemCount === 0
-                ? "Open ticket"
-                : `Ticket · ${itemCount} item${itemCount === 1 ? "" : "s"} · ${formatPrice(total)}`}
+                ? "Add items to continue"
+                : hasConflicts
+                  ? "Fix stock to continue"
+                  : `Review & pay · ${itemCount} item${itemCount === 1 ? "" : "s"} · ${formatPrice(subtotal)}`}
             </Button>
           </div>
         </div>
+      </div>
+      </>
+      )}
+    </div>
+  );
+}
 
-        {mobileTicketOpen ? (
-          <div
-            className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a]"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Current ticket"
+function PosSegmented<T extends string>({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: T;
+  onChange: (value: T) => void;
+  options: { value: T; label: string }[];
+}) {
+  return (
+    <div className="min-w-0">
+      <p className="mb-1.5 text-[11px] text-muted">{label}</p>
+      <div
+        className="grid gap-1"
+        style={{ gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))` }}
+      >
+        {options.map((opt) => {
+          const selected = value === opt.value;
+          return (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => onChange(opt.value)}
+              className={cn(
+                "min-h-10 rounded-sm border px-2 text-xs touch-manipulation transition",
+                selected
+                  ? "border-(--gold)/45 bg-(--gold)/12 text-cream"
+                  : "border-white/10 text-muted hover:border-white/20 hover:text-cream",
+              )}
+            >
+              {opt.label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TicketLineList({
+  ticketLines,
+  locationId,
+  setRegisterLocation,
+  setLineQty,
+}: {
+  ticketLines: TicketLineView[];
+  locationId: string;
+  setRegisterLocation: (id: string) => void;
+  setLineQty: (productId: string, quantity: number) => void;
+}) {
+  if (ticketLines.length === 0) {
+    return (
+      <div className="flex min-h-[10rem] flex-col items-center justify-center px-3 py-8 text-center">
+        <ShoppingCart size={28} className="text-muted/45" />
+        <p className="mt-3 text-sm text-cream">No items yet</p>
+        <p className="mt-1 max-w-[16rem] text-xs leading-relaxed text-muted">
+          Tap + on a bottle. Everything you add shows up here with a photo.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <ul className="divide-y divide-white/8">
+      {ticketLines.map((line) => {
+        const alts =
+          !line.available || line.stock < line.quantity
+            ? otherLocationsForDemand(line.productId, locationId, line.quantity)
+            : [];
+        const img = productImage(line.product);
+        return (
+          <li
+            key={line.productId}
+            className={cn("py-3 first:pt-0", !line.available && "rounded-sm bg-(--danger)/8 px-2")}
           >
-            <div className="flex shrink-0 items-center justify-between gap-3 border-b border-white/10 px-4 py-3 pt-[max(0.75rem,env(safe-area-inset-top))]">
-              <div className="min-w-0">
-                <p className="font-display text-xl text-cream">Ticket</p>
-                <p className="text-xs text-muted">
-                  {itemCount} item{itemCount === 1 ? "" : "s"} · {location.shortName}
-                </p>
+            <div className="flex items-start gap-3">
+              <div className="relative h-16 w-12 shrink-0 overflow-hidden rounded-sm bg-black/50">
+                {img ? (
+                  <SmartImage
+                    src={img}
+                    alt={line.product.name}
+                    fill
+                    className="object-contain p-1"
+                    sizes="48px"
+                  />
+                ) : null}
               </div>
-              <button
-                type="button"
-                aria-label="Close ticket"
-                onClick={() => setMobileTicketOpen(false)}
-                className="flex min-h-11 min-w-11 items-center justify-center rounded-sm border border-white/15 text-muted touch-manipulation hover:text-cream"
-              >
-                <X size={18} />
-              </button>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="line-clamp-2 text-sm leading-snug text-cream">{line.product.name}</p>
+                    <p className="mt-0.5 text-[12px] text-muted">
+                      {line.product.brand}
+                      {line.product.volumeMl ? ` · ${line.product.volumeMl}ml` : ""}
+                    </p>
+                    <p className="mt-0.5 text-[12px] text-muted">
+                      {formatPrice(line.unitPrice)} each
+                      {line.stock <= 3 ? (
+                        <span className={line.available ? " text-gold" : " text-(--danger)"}>
+                          {" "}
+                          · {line.stock} left
+                        </span>
+                      ) : null}
+                    </p>
+                  </div>
+                  <p className="shrink-0 text-sm font-medium tabular-nums text-cream">
+                    {formatPrice(line.lineTotal)}
+                  </p>
+                </div>
+                <div className="mt-2.5 flex items-center justify-between gap-2">
+                  <div className="inline-flex items-center rounded-sm border border-white/15">
+                    <button
+                      type="button"
+                      aria-label="Decrease quantity"
+                      onClick={() => setLineQty(line.productId, line.quantity - 1)}
+                      className="flex min-h-10 min-w-10 items-center justify-center text-cream touch-manipulation hover:bg-white/5"
+                    >
+                      <Minus size={15} />
+                    </button>
+                    <span className="w-8 text-center text-sm tabular-nums text-cream">
+                      {line.quantity}
+                    </span>
+                    <button
+                      type="button"
+                      aria-label="Increase quantity"
+                      disabled={line.quantity >= line.stock}
+                      onClick={() => setLineQty(line.productId, line.quantity + 1)}
+                      className="flex min-h-10 min-w-10 items-center justify-center text-cream touch-manipulation hover:bg-white/5 disabled:opacity-30"
+                    >
+                      <Plus size={15} />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    aria-label={`Remove ${line.product.name}`}
+                    onClick={() => setLineQty(line.productId, 0)}
+                    className="flex min-h-10 items-center gap-1.5 px-2 text-xs text-muted touch-manipulation hover:text-(--danger)"
+                  >
+                    <Trash2 size={14} />
+                    Remove
+                  </button>
+                </div>
+                {!line.available ? (
+                  <div className="mt-2 space-y-1.5">
+                    <p className="text-[12px] leading-snug text-(--danger)">
+                      Need {line.shortfall} more — only {line.stock} at this store.
+                    </p>
+                    {alts.length ? (
+                      <div className="flex flex-wrap gap-1.5">
+                        {alts.slice(0, 3).map((row) => (
+                          <button
+                            key={row.location.id}
+                            type="button"
+                            onClick={() => setRegisterLocation(row.location.id)}
+                            className="inline-flex min-h-9 items-center gap-1 border border-(--gold)/35 bg-(--gold)/8 px-2.5 py-1.5 text-[11px] text-gold touch-manipulation hover:bg-(--gold)/15"
+                          >
+                            <MapPin size={10} />
+                            Sell at {row.location.shortName} ({row.stock})
+                          </button>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-[12px] text-muted">Not available at other stores either.</p>
+                    )}
+                  </div>
+                ) : null}
+              </div>
             </div>
-            <div className="min-h-0 flex-1 overflow-hidden">{ticketPanel}</div>
-          </div>
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+function BuildTicketRail({
+  location,
+  ticketLines,
+  locationId,
+  setRegisterLocation,
+  setLineQty,
+  subtotal,
+  hasConflicts,
+  onContinue,
+  onClear,
+}: {
+  location: NonNullable<ReturnType<typeof getLocationById>>;
+  ticketLines: TicketLineView[];
+  locationId: string;
+  setRegisterLocation: (id: string) => void;
+  setLineQty: (productId: string, quantity: number) => void;
+  subtotal: number;
+  hasConflicts: boolean;
+  onContinue: () => void;
+  onClear: () => void;
+}) {
+  const itemCount = ticketLines.reduce((n, line) => n + line.quantity, 0);
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 border-b border-white/10 px-3 py-3 sm:px-4">
+        <p className="text-[11px] text-muted">Step 1 of 2</p>
+        <p className="mt-0.5 text-sm font-medium text-cream">Items on this sale</p>
+        <p className="mt-0.5 truncate text-xs text-muted">
+          {location.shortName}
+          {itemCount > 0 ? ` · ${itemCount} item${itemCount === 1 ? "" : "s"}` : " · empty"}
+        </p>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4">
+        <TicketLineList
+          ticketLines={ticketLines}
+          locationId={locationId}
+          setRegisterLocation={setRegisterLocation}
+          setLineQty={setLineQty}
+        />
+      </div>
+      <div className="shrink-0 space-y-2 border-t border-white/10 bg-black/40 px-3 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:px-4">
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-muted">Subtotal</span>
+          <span className="tabular-nums text-cream">{formatPrice(subtotal)}</span>
+        </div>
+        <Button
+          size="lg"
+          className="w-full"
+          disabled={!ticketLines.length || hasConflicts}
+          onClick={onContinue}
+        >
+          {hasConflicts
+            ? "Fix stock to continue"
+            : ticketLines.length === 0
+              ? "Add items to continue"
+              : "Continue to payment"}
+        </Button>
+        {ticketLines.length > 0 ? (
+          <button
+            type="button"
+            onClick={onClear}
+            className="w-full min-h-10 text-center text-sm text-muted touch-manipulation hover:text-cream"
+          >
+            Clear ticket
+          </button>
         ) : null}
       </div>
     </div>
   );
 }
 
-function TicketPanel({
+function PayScreen({
   location,
   fulfillment,
   setFulfillment,
@@ -975,8 +1212,6 @@ function TicketPanel({
   locationId,
   setRegisterLocation,
   setLineQty,
-  customerOpen,
-  setCustomerOpen,
   customerName,
   setCustomerName,
   customerEmail,
@@ -985,6 +1220,7 @@ function TicketPanel({
   setCustomerPhone,
   coupon,
   setCoupon,
+  promoItems,
   deliveryLine1,
   setDeliveryLine1,
   deliveryCity,
@@ -1002,6 +1238,7 @@ function TicketPanel({
   hasConflicts,
   submitting,
   canSell,
+  onBack,
   onComplete,
   onClear,
 }: {
@@ -1014,8 +1251,6 @@ function TicketPanel({
   locationId: string;
   setRegisterLocation: (id: string) => void;
   setLineQty: (productId: string, quantity: number) => void;
-  customerOpen: boolean;
-  setCustomerOpen: (v: boolean) => void;
   customerName: string;
   setCustomerName: (v: string) => void;
   customerEmail: string;
@@ -1024,6 +1259,13 @@ function TicketPanel({
   setCustomerPhone: (v: string) => void;
   coupon: string;
   setCoupon: (v: string) => void;
+  promoItems: {
+    productId: string;
+    quantity: number;
+    price: number;
+    category?: string;
+    brand?: string;
+  }[];
   deliveryLine1: string;
   setDeliveryLine1: (v: string) => void;
   deliveryCity: string;
@@ -1041,348 +1283,226 @@ function TicketPanel({
   hasConflicts: boolean;
   submitting: boolean;
   canSell: boolean;
+  onBack: () => void;
   onComplete: () => void;
   onClear: () => void;
 }) {
+  const itemCount = ticketLines.reduce((n, line) => n + line.quantity, 0);
   return (
-    <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 space-y-2.5 border-b border-white/10 p-3 sm:p-4">
-        <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-          <Select
-            label="Order type"
-            value={fulfillment}
-            onChange={(v) => setFulfillment(v as OrderFulfillment)}
-            options={[
-              { value: "pos", label: "In-store" },
-              ...(location.pickupAvailable
-                ? [{ value: "pickup", label: "Pickup" }]
-                : []),
-              ...(location.deliveryAvailable
-                ? [{ value: "delivery", label: "Delivery" }]
-                : []),
-            ]}
-          />
-          <Select
-            label="Payment"
-            value={paymentMethod}
-            onChange={(v) => setPaymentMethod(v as PaymentMethod)}
-            options={[
-              { value: "cash", label: "Cash" },
-              { value: "card", label: "Card" },
-              { value: "other", label: "Other" },
-            ]}
-          />
+    <div className="flex min-h-[min(82vh,920px)] flex-col overflow-hidden rounded-sm border border-white/10 bg-[#0c0c0c] md:h-[min(82vh,920px)]">
+      <div className="flex shrink-0 items-center gap-3 border-b border-white/10 px-3 py-3 sm:px-4">
+        <button
+          type="button"
+          onClick={onBack}
+          className="flex min-h-11 items-center gap-2 rounded-sm border border-white/15 px-3 text-sm text-cream touch-manipulation hover:border-white/25"
+        >
+          <ArrowLeft size={16} />
+          Items
+        </button>
+        <div className="min-w-0">
+          <p className="text-[11px] text-muted">Step 2 of 2</p>
+          <p className="truncate text-sm font-medium text-cream">
+            Payment · {location.shortName} · {itemCount} item{itemCount === 1 ? "" : "s"}
+          </p>
         </div>
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-3 py-3 sm:px-4">
-        {ticketLines.length === 0 ? (
-          <div className="flex min-h-[10rem] flex-col items-center justify-center px-3 py-8 text-center sm:min-h-[12rem]">
-            <ShoppingCart size={32} className="text-muted/45" />
-            <p className="mt-3 text-sm text-cream">Ticket is empty</p>
-            <p className="mt-1 max-w-[16rem] text-xs leading-relaxed text-muted">
-              Tap the + on any bottle to add it. Stock is checked for this store first.
-            </p>
-          </div>
-        ) : (
-          <ul className="space-y-2.5">
-            {ticketLines.map((line) => {
-              const alts =
-                !line.available || line.stock < line.quantity
-                  ? otherLocationsForDemand(line.productId, locationId, line.quantity)
-                  : [];
-              return (
-                <li
-                  key={line.productId}
-                  className={cn(
-                    "rounded-sm border p-2.5 sm:p-3",
-                    line.available
-                      ? "border-white/10 bg-white/[0.02]"
-                      : "border-(--danger)/35 bg-(--danger)/8",
-                  )}
-                >
-                  <div className="flex gap-2.5 sm:gap-3">
-                    <div className="relative h-14 w-11 shrink-0 overflow-hidden rounded-sm bg-black/40">
-                      {productImage(line.product) ? (
-                        <SmartImage
-                          src={productImage(line.product)}
-                          alt=""
-                          fill
-                          className="object-contain p-1"
-                          sizes="44px"
-                        />
-                      ) : null}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <p className="truncate text-sm text-cream">{line.product.name}</p>
-                          <p className="text-[11px] text-muted">
-                            {formatPrice(line.unitPrice)} each · {line.stock} here
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          aria-label={`Remove ${line.product.name}`}
-                          onClick={() => setLineQty(line.productId, 0)}
-                          className="flex min-h-9 min-w-9 shrink-0 items-center justify-center rounded-sm text-muted touch-manipulation hover:bg-white/5 hover:text-(--danger)"
-                        >
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between gap-2">
-                        <div className="inline-flex items-center rounded-sm border border-white/15">
-                          <button
-                            type="button"
-                            aria-label="Decrease quantity"
-                            onClick={() => setLineQty(line.productId, line.quantity - 1)}
-                            className="flex min-h-10 min-w-10 items-center justify-center text-cream touch-manipulation hover:bg-white/5"
-                          >
-                            <Minus size={15} />
-                          </button>
-                          <span className="w-8 text-center text-sm tabular-nums text-cream">
-                            {line.quantity}
-                          </span>
-                          <button
-                            type="button"
-                            aria-label="Increase quantity"
-                            disabled={line.quantity >= line.stock}
-                            onClick={() => setLineQty(line.productId, line.quantity + 1)}
-                            className="flex min-h-10 min-w-10 items-center justify-center text-cream touch-manipulation hover:bg-white/5 disabled:opacity-30"
-                          >
-                            <Plus size={15} />
-                          </button>
-                        </div>
-                        <p className="text-sm font-medium tabular-nums text-cream">
-                          {formatPrice(line.lineTotal)}
-                        </p>
-                      </div>
-                      {!line.available ? (
-                        <div className="mt-2 space-y-1.5">
-                          <p className="text-[11px] leading-snug text-(--danger)">
-                            Need {line.shortfall} more — only {line.stock} at this store.
-                          </p>
-                          {alts.length ? (
-                            <div className="flex flex-wrap gap-1.5">
-                              {alts.slice(0, 3).map((row) => (
-                                <button
-                                  key={row.location.id}
-                                  type="button"
-                                  onClick={() => setRegisterLocation(row.location.id)}
-                                  className="inline-flex min-h-9 items-center gap-1 border border-(--gold)/35 bg-(--gold)/8 px-2.5 py-1.5 text-[10px] uppercase tracking-wider text-gold touch-manipulation hover:bg-(--gold)/15"
-                                >
-                                  <MapPin size={10} />
-                                  Use {row.location.shortName} ({row.stock})
-                                </button>
-                              ))}
-                            </div>
-                          ) : (
-                            <p className="text-[11px] text-muted">
-                              Not available at other stores either.
-                            </p>
-                          )}
-                        </div>
-                      ) : null}
-                    </div>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-        )}
+      <div className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)]">
+        <section className="min-h-0 overflow-y-auto overscroll-contain border-b border-white/10 p-4 lg:border-b-0 lg:border-r">
+          <p className="mb-3 text-sm font-medium text-cream">What you added</p>
+          <TicketLineList
+            ticketLines={ticketLines}
+            locationId={locationId}
+            setRegisterLocation={setRegisterLocation}
+            setLineQty={setLineQty}
+          />
+        </section>
 
-        <div className="mt-4 border-t border-white/10 pt-3">
-          <button
-            type="button"
-            onClick={() => setCustomerOpen(!customerOpen)}
-            className="flex w-full min-h-11 items-center justify-between gap-2 rounded-sm border border-white/10 bg-white/[0.02] px-3 py-2.5 text-left touch-manipulation"
-            aria-expanded={customerOpen}
-          >
-            <span>
-              <span className="block text-sm text-cream">
-                {fulfillment === "delivery" ? "Customer & delivery" : "Customer (optional)"}
-              </span>
-              <span className="mt-0.5 block text-[11px] text-muted">
-                {fulfillment === "delivery"
-                  ? "Name, phone, and address required"
-                  : "Name, email, phone, or coupon"}
-              </span>
-            </span>
-            <ChevronDown
-              size={16}
-              className={cn("shrink-0 text-muted transition", customerOpen && "rotate-180")}
+        <aside className="flex min-h-0 flex-col bg-black/30">
+          <div className="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain p-4">
+            <PosSegmented
+              label="How they’re taking it"
+              value={fulfillment}
+              onChange={setFulfillment}
+              options={[
+                { value: "pos", label: "In-store" },
+                ...(location.pickupAvailable ? [{ value: "pickup" as const, label: "Pickup" }] : []),
+                ...(location.deliveryAvailable
+                  ? [{ value: "delivery" as const, label: "Delivery" }]
+                  : []),
+              ]}
             />
-          </button>
 
-          {customerOpen ? (
-            <div className="mt-2.5 grid gap-2.5">
-              <label className="block text-xs text-muted">
-                Name
+            <div className="space-y-2">
+              <p className="text-sm font-medium text-cream">Customer</p>
+              <Input
+                value={customerName}
+                onChange={(e) => setCustomerName(e.target.value)}
+                placeholder="Customer name (optional)"
+                autoComplete="name"
+                aria-label="Customer name"
+              />
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <Input
-                  className="mt-1.5"
-                  value={customerName}
-                  onChange={(e) => setCustomerName(e.target.value)}
-                  placeholder="Walk-in Guest"
-                  autoComplete="name"
-                />
-              </label>
-              <label className="block text-xs text-muted">
-                Email
-                <Input
-                  className="mt-1.5"
                   type="email"
                   value={customerEmail}
                   onChange={(e) => setCustomerEmail(e.target.value)}
-                  placeholder="loyalty@email.com"
+                  placeholder="Email (optional)"
                   autoComplete="email"
                   inputMode="email"
+                  aria-label="Customer email"
                 />
-              </label>
-              <label className="block text-xs text-muted">
-                Phone{fulfillment === "delivery" ? " (required)" : ""}
                 <Input
-                  className="mt-1.5"
                   value={customerPhone}
                   onChange={(e) => setCustomerPhone(formatPhoneInput(e.target.value))}
-                  placeholder="(212) 555-0100"
+                  placeholder={fulfillment === "delivery" ? "Phone (required)" : "Phone (optional)"}
                   inputMode="tel"
                   autoComplete="tel"
+                  aria-label="Customer phone"
                 />
-              </label>
-              <label className="block text-xs text-muted">
-                Coupon
-                <Input
-                  className="mt-1.5"
-                  value={coupon}
-                  onChange={(e) => setCoupon(e.target.value.toUpperCase())}
-                  placeholder="SAMS10"
-                  autoCapitalize="characters"
-                />
-              </label>
+              </div>
               {fulfillment === "delivery" ? (
-                <div className="space-y-2.5 rounded-sm border border-white/10 p-3">
-                  <p className="text-[10px] uppercase tracking-[0.18em] text-gold">
-                    Delivery address
-                  </p>
-                  <label className="block text-xs text-muted">
-                    Street
-                    <Input
-                      className="mt-1.5"
-                      value={deliveryLine1}
-                      onChange={(e) => setDeliveryLine1(e.target.value)}
-                      placeholder="123 Main St"
-                      autoComplete="street-address"
-                    />
-                  </label>
+                <div className="grid gap-2 rounded-sm border border-white/10 p-2.5">
+                  <p className="text-[11px] text-muted">Delivery address</p>
+                  <Input
+                    value={deliveryLine1}
+                    onChange={(e) => setDeliveryLine1(e.target.value)}
+                    placeholder="Street address"
+                    autoComplete="street-address"
+                    aria-label="Street address"
+                  />
                   <div className="grid grid-cols-2 gap-2">
-                    <label className="block text-xs text-muted">
-                      City
-                      <Input
-                        className="mt-1.5"
-                        value={deliveryCity}
-                        onChange={(e) => setDeliveryCity(e.target.value)}
-                        autoComplete="address-level2"
-                      />
-                    </label>
-                    <label className="block text-xs text-muted">
-                      State
-                      <Input
-                        className="mt-1.5"
-                        value={deliveryState}
-                        onChange={(e) => setDeliveryState(e.target.value)}
-                        autoComplete="address-level1"
-                      />
-                    </label>
-                  </div>
-                  <label className="block text-xs text-muted">
-                    ZIP
                     <Input
-                      className="mt-1.5"
-                      value={deliveryZip}
-                      onChange={(e) => setDeliveryZip(e.target.value)}
-                      placeholder="10001"
-                      inputMode="numeric"
-                      autoComplete="postal-code"
+                      value={deliveryCity}
+                      onChange={(e) => setDeliveryCity(e.target.value)}
+                      placeholder="City"
+                      autoComplete="address-level2"
+                      aria-label="City"
                     />
-                  </label>
+                    <Input
+                      value={deliveryState}
+                      onChange={(e) => setDeliveryState(e.target.value)}
+                      placeholder="State"
+                      autoComplete="address-level1"
+                      aria-label="State"
+                    />
+                  </div>
+                  <Input
+                    value={deliveryZip}
+                    onChange={(e) => setDeliveryZip(e.target.value)}
+                    placeholder="ZIP"
+                    inputMode="numeric"
+                    autoComplete="postal-code"
+                    aria-label="ZIP"
+                  />
                 </div>
               ) : null}
             </div>
-          ) : null}
-        </div>
-      </div>
 
-      <div className="shrink-0 space-y-3 border-t border-white/10 bg-black/40 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] sm:p-4">
-        <div className="space-y-1 text-sm">
-          <div className="flex justify-between text-muted">
-            <span>Subtotal</span>
-            <span className="tabular-nums text-[var(--success)]">{formatPrice(subtotal)}</span>
-          </div>
-          {discount > 0 ? (
-            <div className="flex justify-between text-muted">
-              <span>Discount</span>
-              <span className="tabular-nums text-gold">−{formatPrice(discount)}</span>
+            <div>
+              <span className="mb-1.5 block text-[11px] text-muted">Promo code</span>
+              <Input
+                value={coupon}
+                onChange={(e) => setCoupon(e.target.value.toUpperCase())}
+                placeholder="WELCOME20"
+                autoCapitalize="characters"
+                aria-label="Promo code"
+              />
+              {coupon && discount > 0 ? (
+                <p className="mt-1.5 text-[11px] text-gold">Applied · save {formatPrice(discount)}</p>
+              ) : null}
+              <div className="mt-3">
+                <AvailableOffersList
+                  locationId={locationId}
+                  subtotal={subtotal}
+                  promoItems={promoItems}
+                  appliedCode={coupon}
+                  onApply={(code) => setCoupon(code)}
+                />
+              </div>
             </div>
-          ) : null}
-          {shipping > 0 ? (
-            <div className="flex justify-between text-muted">
-              <span>Delivery fee</span>
-              <span className="tabular-nums">{formatPrice(shipping)}</span>
-            </div>
-          ) : null}
-          <div className="flex justify-between text-muted">
-            <span>Tax</span>
-            <span className="tabular-nums">{formatPrice(tax)}</span>
+
+            <dl className="space-y-1.5 text-sm">
+              <div className="flex justify-between gap-3 text-muted">
+                <dt>Subtotal</dt>
+                <dd className="tabular-nums text-cream">{formatPrice(subtotal)}</dd>
+              </div>
+              {discount > 0 ? (
+                <div className="flex justify-between gap-3 text-muted">
+                  <dt>Discount</dt>
+                  <dd className="tabular-nums text-gold">−{formatPrice(discount)}</dd>
+                </div>
+              ) : null}
+              {shipping > 0 ? (
+                <div className="flex justify-between gap-3 text-muted">
+                  <dt>Delivery fee</dt>
+                  <dd className="tabular-nums text-cream">{formatPrice(shipping)}</dd>
+                </div>
+              ) : null}
+              <div className="flex justify-between gap-3 text-muted">
+                <dt>Tax</dt>
+                <dd className="tabular-nums text-cream">{formatPrice(tax)}</dd>
+              </div>
+              <div className="flex justify-between gap-3 border-t border-white/10 pt-2 text-base text-cream">
+                <dt>Total</dt>
+                <dd className="font-medium tabular-nums text-gold">{formatPrice(total)}</dd>
+              </div>
+            </dl>
+
+            <PosSegmented
+              label="Payment"
+              value={paymentMethod}
+              onChange={setPaymentMethod}
+              options={[
+                { value: "cash", label: "Cash" },
+                { value: "card", label: "Card" },
+                { value: "other", label: "Other" },
+              ]}
+            />
+
+            {error ? (
+              <p
+                role="alert"
+                className="rounded-sm border border-(--danger)/30 bg-(--danger)/10 px-3 py-2 text-xs text-(--danger)"
+              >
+                {error}
+              </p>
+            ) : null}
+
+            {!canSell ? (
+              <p className="rounded-sm border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-muted">
+                Browse-only <AbbrTooltip term="POS" />. Ask an owner to grant Complete sales to ring
+                up orders.
+              </p>
+            ) : null}
           </div>
-          <div className="flex justify-between border-t border-white/10 pt-2 text-base text-cream">
-            <span>Total</span>
-            <span className="font-medium tabular-nums text-gold">{formatPrice(total)}</span>
+
+          <div className="shrink-0 flex items-center gap-2 border-t border-white/10 px-4 py-3 pb-[max(0.75rem,env(safe-area-inset-bottom))]">
+            <Button
+              size="lg"
+              className="min-w-0 flex-1"
+              loading={submitting}
+              disabled={!canSell || !ticketLines.length || hasConflicts}
+              onClick={onComplete}
+            >
+              {!submitting ? <Check size={16} aria-hidden /> : null}
+              {!canSell
+                ? "Sales not permitted"
+                : submitting
+                  ? "Completing…"
+                  : hasConflicts
+                    ? "Fix stock to continue"
+                    : `Charge ${formatPrice(total)}`}
+            </Button>
+            <button
+              type="button"
+              onClick={onClear}
+              className="min-h-12 shrink-0 px-3 text-sm text-muted touch-manipulation hover:text-cream"
+            >
+              Clear ticket
+            </button>
           </div>
-        </div>
-
-        {error ? (
-          <p
-            role="alert"
-            className="rounded-sm border border-(--danger)/30 bg-(--danger)/10 px-3 py-2 text-xs text-(--danger)"
-          >
-            {error}
-          </p>
-        ) : null}
-
-        {!canSell ? (
-          <p className="rounded-sm border border-white/10 bg-white/[0.03] px-3 py-2 text-xs text-muted">
-            Browse-only <AbbrTooltip term="POS" />. Ask an owner to
-            grant Complete sales to ring up orders.
-          </p>
-        ) : null}
-
-        <Button
-          size="lg"
-          className="w-full"
-          loading={submitting}
-          disabled={!canSell || !ticketLines.length || hasConflicts}
-          onClick={onComplete}
-        >
-          {!submitting ? <Check size={16} aria-hidden /> : null}
-          {!canSell
-            ? "Sales not permitted"
-            : submitting
-              ? "Completing…"
-              : hasConflicts
-                ? "Fix stock to continue"
-                : ticketLines.length === 0
-                  ? "Add items to sell"
-                  : `Complete sale · ${formatPrice(total)}`}
-        </Button>
-        {ticketLines.length > 0 ? (
-          <button
-            type="button"
-            onClick={onClear}
-            className="w-full min-h-10 text-center text-xs uppercase tracking-wider text-muted touch-manipulation hover:text-cream"
-          >
-            Clear ticket
-          </button>
-        ) : null}
+        </aside>
       </div>
     </div>
   );

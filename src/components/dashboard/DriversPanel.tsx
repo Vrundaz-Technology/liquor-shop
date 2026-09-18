@@ -12,10 +12,11 @@ import { getAllLocations } from "@/data/locations";
 import { drivers as seedDrivers } from "@/data/drivers";
 import { accessibleLocations } from "@/lib/auth/location-access";
 import { hasPermission } from "@/lib/auth/permissions";
-import { isDbConnected } from "@/lib/runtime-data";
 import { isConnectionError } from "@/lib/connection-messages";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import { useDeliveryStore } from "@/store/delivery";
 import type { Driver, DriverStatus } from "@/types";
 import { Button } from "@/components/ui/Button";
@@ -101,7 +102,7 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
   const [editing, setEditing] = useState<Driver | "new" | null>(null);
   const [form, setForm] = useState<DriverForm>(emptyForm(stores[0]?.id ?? "loc1"));
   const [busy, setBusy] = useState(false);
-  const dbReady = isDbConnected();
+  const { ready: dbReady } = useServerConnection();
   const canManage = hasPermission(actor, "deliveries.manage");
 
   const { sortKey, sortDir, toggleSort } = useTableSort<"name" | "store" | "vehicle" | "contact" | "status">(
@@ -244,9 +245,13 @@ export function DriversPanel({ embedded = false }: { embedded?: boolean }) {
 
   const deactivate = async (driver: Driver) => {
     if (!canManage) return;
-    if (!window.confirm(`Deactivate ${driver.name}? They will no longer appear in delivery assignment.`)) {
-      return;
-    }
+    const ok = await confirmAction({
+      title: "Deactivate driver",
+      description: `Deactivate ${driver.name}? They will no longer appear in delivery assignment.`,
+      confirmLabel: "Deactivate",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

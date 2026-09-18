@@ -175,7 +175,7 @@ export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
             if (!disabled) setOpen((v) => !v);
           }}
           className={cn(
-            "flex h-11 w-full items-center justify-between gap-2 rounded-sm border bg-white/5 px-3.5 text-left text-sm text-cream outline-none transition focus:border-(--gold)/50 focus:bg-white/[0.07]",
+            "flex h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-sm border bg-white/5 px-3.5 text-left text-sm text-cream outline-none transition focus:border-(--gold)/50 focus:bg-white/[0.07]",
             open
               ? "border-(--gold)/50 bg-white/[0.07]"
               : "border-white/10 hover:border-white/20",

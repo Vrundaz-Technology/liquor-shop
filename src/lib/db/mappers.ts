@@ -213,6 +213,9 @@ export function mapOrder(row: DbOrderRow): Order {
     discountAmount?: number;
     deliveryFee?: number;
     paymentStatus?: string;
+    paymentMethod?: string | null;
+    paymentProvider?: string | null;
+    refundedAmount?: unknown;
     assignedStaffId?: string | null;
     couponCode?: string | null;
     promotionId?: string | null;
@@ -220,6 +223,12 @@ export function mapOrder(row: DbOrderRow): Order {
   return {
     id: row.id,
     date: row.date,
+    createdAt:
+      row.createdAt instanceof Date
+        ? row.createdAt.toISOString()
+        : typeof row.createdAt === "string"
+          ? row.createdAt
+          : undefined,
     status: row.status as Order["status"],
     items: row.items.map((i) => ({
       productId: i.productId,
@@ -232,6 +241,9 @@ export function mapOrder(row: DbOrderRow): Order {
     discountAmount: moneyOptional(ext.discountAmount),
     deliveryFee: moneyOptional(ext.deliveryFee),
     paymentStatus: ext.paymentStatus,
+    paymentMethod: ext.paymentMethod ?? undefined,
+    paymentProvider: ext.paymentProvider ?? undefined,
+    refundedAmount: moneyOptional(ext.refundedAmount),
     fulfillment: row.fulfillment as Order["fulfillment"],
     locationId: row.locationId,
     organizationId: ext.organizationId ?? undefined,

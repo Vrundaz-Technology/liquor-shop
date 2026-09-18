@@ -25,6 +25,13 @@ const categoryEnum = z.enum([
   "product_question",
 ]);
 
+const attachmentSchema = z.object({
+  url: z.string().startsWith("/uploads/").max(300),
+  name: z.string().trim().min(1).max(191),
+  type: z.string().trim().min(1).max(80),
+  size: z.number().int().min(0).max(6 * 1024 * 1024),
+});
+
 const createSchema = z.object({
   action: z.literal("create").optional(),
   category: categoryEnum,
@@ -33,13 +40,19 @@ const createSchema = z.object({
   orderId: z.string().min(1).optional().nullable(),
   locationId: z.string().min(1).optional().nullable(),
   priority: z.enum(["low", "normal", "high"]).optional(),
+  attachments: z.array(attachmentSchema).max(5).optional(),
 });
 
-const replySchema = z.object({
-  action: z.literal("reply"),
-  ticketId: z.string().min(1),
-  body: z.string().trim().min(1).max(5000),
-});
+const replySchema = z
+  .object({
+    action: z.literal("reply"),
+    ticketId: z.string().min(1),
+    body: z.string().trim().max(5000).optional().default(""),
+    attachments: z.array(attachmentSchema).max(5).optional(),
+  })
+  .refine((value) => value.body.length > 0 || (value.attachments?.length ?? 0) > 0, {
+    message: "Add a reply or an attachment.",
+  });
 
 const staffUpdateSchema = z.object({
   action: z.literal("update"),
@@ -118,6 +131,7 @@ export async function POST(request: Request) {
           author: staffAuth.user,
           body: parsed.data.body,
           asStaff: true,
+          attachments: parsed.data.attachments,
         });
         await recordActivity({
           actorUserId: staffAuth.user.id,
@@ -141,6 +155,7 @@ export async function POST(request: Request) {
         author: user,
         body: parsed.data.body,
         asStaff: false,
+        attachments: parsed.data.attachments,
       });
       void (async () => {
         try {
@@ -229,6 +244,7 @@ export async function POST(request: Request) {
       orderId: parsed.data.orderId,
       locationId: parsed.data.locationId,
       priority: parsed.data.priority,
+      attachments: parsed.data.attachments,
     });
 
     await recordActivity({

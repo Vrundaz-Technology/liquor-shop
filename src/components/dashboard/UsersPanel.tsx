@@ -18,9 +18,9 @@ import {
   hasPermission,
   isDemoAccountEmail,
 } from "@/lib/auth/roles";
-import { isDbConnected } from "@/lib/runtime-data";
 import { isConnectionError } from "@/lib/connection-messages";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { useUserStore } from "@/store/user";
 import type { ManagedUser, UserProfile } from "@/types";
 import { Input } from "@/components/ui/Input";
@@ -49,6 +49,7 @@ type UsersView = "directory" | "permissions";
 
 export function UsersPanel() {
   const actor = useUserStore((s) => s.profile);
+  const { ready: dbReady } = useServerConnection();
   const [view, setView] = useState<UsersView>("directory");
   const [users, setUsers] = useState<ManagedUser[]>([]);
   const [total, setTotal] = useState(0);
@@ -96,7 +97,7 @@ export function UsersPanel() {
     const activePage = pageOverride ?? page;
     const activeQ = overrides?.q ?? q;
     const activeRole = overrides?.role ?? role;
-    if (!isDbConnected()) {
+    if (!dbReady) {
       setUsers([]);
       setTotal(0);
       setLoading(false);
@@ -132,14 +133,14 @@ export function UsersPanel() {
   };
 
   useEffect(() => {
-    if (!isDbConnected()) return;
+    if (!dbReady) return;
     void apiFetchRoles()
       .then((data) => {
         setCustomRoles(data.roles);
         setCustomRoleCatalog(data.roles);
       })
       .catch(() => {});
-  }, []);
+  }, [dbReady]);
 
   useEffect(() => {
     setPage(1);
@@ -148,7 +149,7 @@ export function UsersPanel() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [role, page, pageSize, sortKey, sortDir]);
+  }, [role, page, pageSize, sortKey, sortDir, dbReady]);
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const safePage = Math.min(page, totalPages);
@@ -305,9 +306,7 @@ export function UsersPanel() {
         ) : null}
       </div>
 
-      {!isDbConnected() ? (
-        <ConnectionNotice className="mt-5" feature="manage team accounts" />
-      ) : null}
+      <ConnectionNotice className="mt-5" feature="manage team accounts" />
 
       {view === "permissions" && canManageRoles ? (
         <CustomRolesPanel
@@ -403,7 +402,7 @@ export function UsersPanel() {
             <p className="text-xs text-muted">
               {loading
                 ? "Loading…"
-                : !isDbConnected()
+                : !dbReady
                   ? ""
                 : total === 0
                   ? "No users"

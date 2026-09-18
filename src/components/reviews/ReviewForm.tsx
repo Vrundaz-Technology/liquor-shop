@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useUserStore } from "@/store/user";
+import { promptAction } from "@/store/dialog";
 import type { PlatformReview, ReviewTargetType } from "@/types";
 import { cn } from "@/lib/utils";
 
@@ -144,12 +145,19 @@ export function ReviewList({
   const [msg, setMsg] = useState("");
 
   const report = async (reviewId: string) => {
-    const reason = window.prompt("Why are you reporting this review?");
-    if (!reason || reason.trim().length < 3) return;
+    const reason = await promptAction({
+      title: "Report review",
+      description: "Tell us why this review should be flagged.",
+      inputLabel: "Reason",
+      placeholder: "Spam, fake, offensive…",
+      confirmLabel: "Report",
+      minLength: 3,
+    });
+    if (!reason) return;
     const res = await fetch("/api/reviews", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "report", reviewId, reason: reason.trim() }),
+      body: JSON.stringify({ action: "report", reviewId, reason }),
     });
     const data = (await res.json()) as { error?: string };
     setMsg(res.ok ? "Thanks — we flagged this for review." : data.error ?? "Report failed.");

@@ -11,6 +11,7 @@ import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { PromotionsPerformancePanel } from "@/components/dashboard/PromotionsPerformancePanel";
 import {
   compareValues,
+  MobileSortBar,
   SortableTh,
   tableCellClass,
   tableHeadRowClass,
@@ -22,6 +23,7 @@ import { cn, nativeSelectClass } from "@/lib/utils";
 import { categories as shopCategories } from "@/data/categories";
 import { getAllLocations } from "@/data/locations";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import { accessibleLocations } from "@/lib/auth/location-access";
 import {
   hasAtMostDecimals,
@@ -40,6 +42,7 @@ type PromoRules = {
   buyQty?: number;
   getQty?: number;
   firstOrderOnly?: boolean;
+  maxUsesPerUser?: number;
   daysOfWeek?: number[];
   startTime?: string | null;
   endTime?: string | null;
@@ -77,6 +80,7 @@ type FormState = {
   active: boolean;
   stackable: boolean;
   firstOrderOnly: boolean;
+  maxUsesPerUser: string;
   category: string;
   brand: string;
   buyQty: string;
@@ -115,6 +119,17 @@ function FieldError({ message }: { message?: string }) {
   );
 }
 
+function promoOfferLine(p: Promo) {
+  const bits = [p.code ? p.code : "Auto-apply"];
+  if (p.type === "percent") {
+    bits.push(`${(p.value * 100).toFixed(hasAtMostDecimals(p.value, 2) ? 0 : 2)}%`);
+  } else if (p.type === "fixed") {
+    bits.push(`$${Number(p.value).toFixed(2)}`);
+  }
+  if (p.rules?.maxUsesPerUser) bits.push(`${p.rules.maxUsesPerUser}× / customer`);
+  return bits.join(" · ");
+}
+
 function toLocalInputValue(iso: string | null | undefined) {
   if (!iso) return "";
   const d = new Date(iso);
@@ -143,6 +158,7 @@ function emptyForm(defaultLocationId: string): FormState {
     active: true,
     stackable: false,
     firstOrderOnly: false,
+    maxUsesPerUser: "",
     category: "",
     brand: "",
     buyQty: "2",
@@ -179,6 +195,7 @@ function formFromPromo(promo: Promo, defaultLocationId: string): FormState {
     active: Boolean(promo.active),
     stackable: Boolean(promo.stackable),
     firstOrderOnly: Boolean(promo.rules?.firstOrderOnly),
+    maxUsesPerUser: promo.rules?.maxUsesPerUser ? String(promo.rules.maxUsesPerUser) : "",
     category: promo.rules?.categories?.[0] ?? "",
     brand: promo.rules?.brands?.[0] ?? "",
     buyQty: String(promo.rules?.buyQty ?? 2),
@@ -373,6 +390,13 @@ export function PromotionsPanel() {
       next.endsAt = "End must be after start.";
     }
 
+    if (form.maxUsesPerUser.trim()) {
+      const uses = parseFiniteNumber(form.maxUsesPerUser);
+      if (uses == null || !Number.isInteger(uses) || uses < 1 || uses > 99) {
+        next.maxUsesPerUser = "Enter a whole number from 1 to 99, or leave blank for unlimited.";
+      }
+    }
+
     return next;
   }, [form]);
 
@@ -411,6 +435,8 @@ export function PromotionsPanel() {
       if (form.category) rules.categories = [form.category];
       if (form.brand.trim()) rules.brands = [form.brand.trim()];
       if (form.firstOrderOnly) rules.firstOrderOnly = true;
+      const maxUses = parseFiniteNumber(form.maxUsesPerUser);
+      if (maxUses != null && maxUses >= 1) rules.maxUsesPerUser = Math.floor(maxUses);
       if (form.daysOfWeek.length) rules.daysOfWeek = form.daysOfWeek;
       if (form.startTime) rules.startTime = form.startTime;
       if (form.endTime) rules.endTime = form.endTime;
@@ -447,6 +473,7 @@ export function PromotionsPanel() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["promotions"] });
       void qc.invalidateQueries({ queryKey: ["promotions-performance"] });
+      void qc.invalidateQueries({ queryKey: ["promotions-performance-usage"] });
       closeModal();
     },
   });
@@ -461,6 +488,7 @@ export function PromotionsPanel() {
     onSuccess: () => {
       void qc.invalidateQueries({ queryKey: ["promotions"] });
       void qc.invalidateQueries({ queryKey: ["promotions-performance"] });
+      void qc.invalidateQueries({ queryKey: ["promotions-performance-usage"] });
     },
   });
 
@@ -521,6 +549,7 @@ export function PromotionsPanel() {
       buyQty: true,
       getQty: true,
       endsAt: true,
+      maxUsesPerUser: true,
     });
     if (!canSubmit) return;
     save.mutate();
@@ -646,7 +675,78 @@ export function PromotionsPanel() {
                 No {statusFilter} promotions.
               </div>
             ) : (
-              <div className={tableWrapClass}>
+              <>
+                <MobileSortBar
+                  className="lg:hidden"
+                  columns={[
+                    { key: "name", label: "Offer" },
+                    { key: "scope", label: "Scope" },
+                    { key: "type", label: "Type" },
+                    { key: "priority", label: "Priority" },
+                    { key: "status", label: "Status" },
+                  ]}
+                  sortKey={sortKey}
+                  sortDir={sortDir}
+                  onSort={toggleSort}
+                />
+                <ul className="space-y-2 lg:hidden">
+                  {sortedPromotions.map((p) => (
+                    <li
+                      key={p.id}
+                      className={cn(
+                        "rounded-sm border border-white/10 bg-black/20 p-3",
+                        !p.active && "opacity-75",
+                      )}
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium text-cream">{p.name}</p>
+                          <p className="mt-0.5 text-xs text-muted">{promoOfferLine(p)}</p>
+                        </div>
+                        <span
+                          className={cn(
+                            "inline-flex shrink-0 items-center gap-1.5 rounded-md border px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.14em]",
+                            p.active
+                              ? "border-emerald-500/35 bg-emerald-500/10 text-emerald-100"
+                              : "border-white/12 bg-white/[0.03] text-muted",
+                          )}
+                        >
+                          {p.active ? "Active" : "Inactive"}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-xs capitalize text-muted">
+                        {p.scope} · {p.type.replace("_", " ")} · Priority {p.priority}
+                      </p>
+                      <div className="mt-3 flex gap-2">
+                        <button
+                          type="button"
+                          className="inline-flex min-h-11 min-w-11 flex-1 items-center justify-center rounded-sm border border-white/10 text-xs uppercase tracking-[0.14em] text-muted"
+                          onClick={() => openEdit(p)}
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          className="inline-flex min-h-11 min-w-11 flex-1 items-center justify-center rounded-sm border border-white/10 text-xs uppercase tracking-[0.14em] text-red-200"
+                          disabled={deletePromo.isPending}
+                          onClick={() => {
+                            void confirmAction({
+                              title: "Delete promotion",
+                              description: `Delete “${p.name}”? This cannot be undone.`,
+                              confirmLabel: "Delete",
+                              tone: "danger",
+                            }).then((ok) => {
+                              if (ok) deletePromo.mutate(p.id);
+                            });
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className={cn(tableWrapClass, "hidden lg:block")}>
                 <table className="w-full min-w-[48rem] text-left text-sm">
                   <thead>
                     <tr className={tableHeadRowClass}>
@@ -696,14 +796,7 @@ export function PromotionsPanel() {
                       >
                         <td className={cn(tableCellClass, "min-w-[12rem]")}>
                           <p className="font-medium text-cream">{p.name}</p>
-                          <p className="mt-0.5 text-xs text-muted">
-                            {p.code ? p.code : "Auto-apply"}
-                            {p.type === "percent"
-                              ? ` · ${(p.value * 100).toFixed(hasAtMostDecimals(p.value, 2) ? 0 : 2)}%`
-                              : p.type === "fixed"
-                                ? ` · $${Number(p.value).toFixed(2)}`
-                                : ""}
-                          </p>
+                          <p className="mt-0.5 text-xs text-muted">{promoOfferLine(p)}</p>
                         </td>
                         <td className={cn(tableCellClass, "capitalize text-muted")}>{p.scope}</td>
                         <td className={cn(tableCellClass, "capitalize text-muted")}>
@@ -747,14 +840,14 @@ export function PromotionsPanel() {
                               aria-label={`Delete ${p.name}`}
                               disabled={deletePromo.isPending}
                               onClick={() => {
-                                if (
-                                  !window.confirm(
-                                    `Delete “${p.name}”? This cannot be undone.`,
-                                  )
-                                ) {
-                                  return;
-                                }
-                                deletePromo.mutate(p.id);
+                                void confirmAction({
+                                  title: "Delete promotion",
+                                  description: `Delete “${p.name}”? This cannot be undone.`,
+                                  confirmLabel: "Delete",
+                                  tone: "danger",
+                                }).then((ok) => {
+                                  if (ok) deletePromo.mutate(p.id);
+                                });
                               }}
                             >
                               <Trash2 size={14} />
@@ -766,6 +859,7 @@ export function PromotionsPanel() {
                   </tbody>
                 </table>
               </div>
+              </>
             )}
           </div>
         )
@@ -1135,6 +1229,24 @@ export function PromotionsPanel() {
               className="size-4 accent-(--gold)"
             />
             First-order only
+          </label>
+          <label className="sm:col-span-2">
+            <span className={labelClass}>Uses per customer</span>
+            <input
+              type="number"
+              min={1}
+              max={99}
+              inputMode="numeric"
+              placeholder="Unlimited"
+              value={form.maxUsesPerUser}
+              onChange={(e) => setForm({ ...form, maxUsesPerUser: e.target.value })}
+              onBlur={() => markTouched("maxUsesPerUser")}
+              className={show("maxUsesPerUser") ? fieldErrorClass : fieldClass}
+            />
+            <FieldError message={show("maxUsesPerUser")} />
+            <p className="mt-1.5 text-xs text-muted">
+              Leave blank for no limit. Example: 2 means each shopper can redeem this offer twice.
+            </p>
           </label>
           <label className="flex min-h-11 items-center gap-2 text-sm text-cream sm:col-span-2">
             <input

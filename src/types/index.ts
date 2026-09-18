@@ -70,6 +70,7 @@ export type InventoryLedgerReason =
   | "restock"
   | "adjustment"
   | "cancel"
+  | "refund"
   | "reset"
   | "transfer_out"
   | "transfer_in"
@@ -95,6 +96,7 @@ export type ActivityAction =
   | "order.placed"
   | "pos.sale"
   | "order.cancelled"
+  | "order.refunded"
   | "order.status"
   | "inventory.set"
   | "inventory.adjust"
@@ -294,6 +296,13 @@ export type SupportCategory =
 export type SupportTicketStatus = "open" | "pending" | "resolved" | "closed";
 export type SupportRouteScope = "store" | "owner" | "platform";
 
+export type SupportAttachment = {
+  url: string;
+  name: string;
+  type: string;
+  size: number;
+};
+
 export type SupportMessage = {
   id: string;
   ticketId: string;
@@ -302,6 +311,7 @@ export type SupportMessage = {
   authorRole: "customer" | "staff" | "system";
   body: string;
   createdAt: string;
+  attachments?: SupportAttachment[];
 };
 
 export type SupportTicket = {
@@ -322,6 +332,8 @@ export type SupportTicket = {
   createdAt: string;
   updatedAt: string;
   messages?: SupportMessage[];
+  lastMessagePreview?: string;
+  messageCount?: number;
 };
 
 export type CartItem = {
@@ -391,6 +403,8 @@ export type OrderStatus =
 export type Order = {
   id: string;
   date: string;
+  /** ISO timestamp when the order was placed. Prefer this over `date` for display. */
+  createdAt?: string;
   status: OrderStatus;
   items: { productId: string; quantity: number; price: number }[];
   total: number;
@@ -399,6 +413,9 @@ export type Order = {
   discountAmount?: number;
   deliveryFee?: number;
   paymentStatus?: string;
+  paymentMethod?: string;
+  paymentProvider?: string;
+  refundedAmount?: number;
   fulfillment: OrderFulfillment;
   locationId: string;
   organizationId?: string;
@@ -412,6 +429,10 @@ export type Order = {
   assignedStaffId?: string;
   couponCode?: string;
   promotionId?: string;
+  /** Points spent at checkout (from loyalty ledger). */
+  loyaltyPointsUsed?: number;
+  /** Points earned from this order (from loyalty ledger). */
+  loyaltyPointsEarned?: number;
   deliveryChannel?: "internal" | "shipday";
   shipdayOrderId?: string;
   providerStatus?: string;

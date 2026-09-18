@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -21,12 +22,15 @@ import { PanelLoading } from "@/components/dashboard/DashboardLoading";
 import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import { type LocationFilter } from "@/components/dashboard/LocationScopeBar";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import { useInventoryStore } from "@/store/inventory";
 import { isDbConnected } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { apiFetch } from "@/lib/api-client";
 import {
   apiCancelOrder,
   apiFetchOrders,
+  apiRefundOrder,
   apiUpdateOrderStatus,
 } from "@/lib/api-mutations";
 import { getLocationById } from "@/data/locations";
@@ -41,9 +45,13 @@ import {
   ORDER_STATUS_LABELS,
 } from "@/lib/commerce/order-labels";
 import { dashboardPath, parseDashboardPath } from "@/lib/dashboard/routes";
+import { orderPaymentColumnLabel, remainingRefundable } from "@/lib/commerce/payments";
 import { formatPrice, cn } from "@/lib/utils";
+import { sanitizeMoneyInput } from "@/lib/validation/money";
 import { usePersistedViewMode } from "@/hooks/usePersistedViewMode";
 import { Button } from "@/components/ui/Button";
+import { Input } from "@/components/ui/Input";
+import { Modal } from "@/components/ui/Modal";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { Pagination } from "@/components/ui/Pagination";
@@ -319,17 +327,7 @@ function formatOrderDate(value: string) {
 }
 
 function paymentLabel(order: Order) {
-  if (order.status === "cancelled") return "Cancelled";
-  if (order.fulfillment === "pos") return "Pay at register — paid";
-  if (order.fulfillment === "delivery") {
-    return order.status === "delivered" ? "Paid · delivered" : "Paid online";
-  }
-  return order.status === "picked_up" ||
-    order.status === "ready_for_pickup" ||
-    order.status === "ready" ||
-    order.status === "delivered"
-    ? "Paid · pickup"
-    : "Paid online";
+  return orderPaymentColumnLabel(order);
 }
 
 function matchesTab(order: Order, tab: StatusTab) {
@@ -366,6 +364,7 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
   const canManage = hasPermission(profile, "orders.manage");
   const canViewDeliveries = hasPermission(profile, "deliveries.view");
   const allowAll = hasAllLocationAccess(profile);
+  const { loaded, connected } = useServerConnection();
 
   const [orders, setOrders] = useState<StoreOrder[]>([]);
   const [unreadOrderCount, setUnreadOrderCount] = useState(0);
@@ -384,8 +383,15 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
   const [debouncedQ, setDebouncedQ] = useState("");
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [refundTarget, setRefundTarget] = useState<StoreOrder | null>(null);
+  const [refundAmount, setRefundAmount] = useState("");
+  const [refundReason, setRefundReason] = useState("");
+  const [refundRestock, setRefundRestock] = useState(false);
+  const [refundIdempotency, setRefundIdempotency] = useState("");
   const { sortKey, sortDir, toggleSort } = useTableSort<SortKey>("date", "desc");
   const menuRef = useRef<HTMLDivElement>(null);
+  const menuTriggerRef = useRef<HTMLButtonElement | null>(null);
+  const menuAnchorRef = useRef<DOMRect | null>(null);
   const columnsRef = useRef<HTMLDivElement>(null);
 
   const selectedId = parseDashboardPath(pathname).orderId;
@@ -411,12 +417,55 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
     return () => window.clearTimeout(t);
   }, [query]);
 
+  const closeMenu = useCallback(() => {
+    setMenuId(null);
+    menuTriggerRef.current = null;
+    menuAnchorRef.current = null;
+  }, []);
+
+  const toggleMenu = useCallback((orderId: string, button: HTMLButtonElement) => {
+    setMenuId((current) => {
+      if (current === orderId) {
+        menuTriggerRef.current = null;
+        menuAnchorRef.current = null;
+        return null;
+      }
+      menuTriggerRef.current = button;
+      menuAnchorRef.current = button.getBoundingClientRect();
+      return orderId;
+    });
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!menuId || !menuRef.current || !menuAnchorRef.current) return;
+    const menu = menuRef.current;
+    const anchor = menuAnchorRef.current;
+    const width = menu.offsetWidth;
+    const height = menu.offsetHeight;
+    const gap = 4;
+    const pad = 8;
+    const spaceBelow = window.innerHeight - pad - (anchor.bottom + gap);
+    const placeAbove = height > spaceBelow && anchor.top - gap - height >= pad;
+    const top = placeAbove
+      ? anchor.top - height - gap
+      : Math.min(anchor.bottom + gap, window.innerHeight - height - pad);
+    const left = Math.min(
+      window.innerWidth - width - pad,
+      Math.max(pad, anchor.right - width),
+    );
+    menu.style.top = `${Math.max(pad, top)}px`;
+    menu.style.left = `${left}px`;
+  }, [menuId]);
+
   useEffect(() => {
     if (!menuId && !columnsOpen) return;
     const onPointer = (event: MouseEvent) => {
       const target = event.target as Node;
-      if (menuId && menuRef.current && !menuRef.current.contains(target)) {
-        setMenuId(null);
+      if (menuId) {
+        if (menuRef.current?.contains(target) || menuTriggerRef.current?.contains(target)) {
+          return;
+        }
+        closeMenu();
       }
       if (columnsOpen && columnsRef.current && !columnsRef.current.contains(target)) {
         setColumnsOpen(false);
@@ -424,22 +473,28 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        setMenuId(null);
+        closeMenu();
         setColumnsOpen(false);
       }
     };
+    const onReposition = () => closeMenu();
     document.addEventListener("mousedown", onPointer);
     document.addEventListener("keydown", onKey);
+    window.addEventListener("resize", onReposition);
+    document.addEventListener("scroll", onReposition, true);
     return () => {
       document.removeEventListener("mousedown", onPointer);
       document.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onReposition);
+      document.removeEventListener("scroll", onReposition, true);
     };
-  }, [menuId, columnsOpen]);
+  }, [menuId, columnsOpen, closeMenu]);
 
   const dateRange = useMemo(() => rangeForPreset(datePreset), [datePreset]);
 
   const load = useCallback(async () => {
-    if (!isDbConnected()) {
+    if (!loaded) return;
+    if (!connected) {
       const fallback = profile.orders
         .filter((o) => locationId === "all" || o.locationId === locationId)
         .filter((o) => fulfillmentFilter === "all" || o.fulfillment === fulfillmentFilter)
@@ -497,6 +552,8 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
     profile.name,
     profile.orders,
     unreadOnly,
+    loaded,
+    connected,
   ]);
 
   useEffect(() => {
@@ -614,7 +671,7 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
   );
 
   const openSummary = (orderId: string) => {
-    setMenuId(null);
+    closeMenu();
     setOrderParam(orderId);
     const order = orders.find((o) => o.id === orderId);
     if (order) void markOrderRead(order);
@@ -635,9 +692,15 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
 
   const handleCancel = async (order: StoreOrder) => {
     if (!canManage) return;
-    if (!window.confirm(`Cancel order ${order.id} and restock bottles?`)) return;
+    const ok = await confirmAction({
+      title: "Cancel order",
+      description: `Cancel ${order.id}, refund the remaining payment, and restock the bottles? This cannot be undone.`,
+      confirmLabel: "Cancel order",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusyId(order.id);
-    setMenuId(null);
+    closeMenu();
     try {
       if (isDbConnected()) {
         const result = await apiCancelOrder(profile.id, order.id);
@@ -667,10 +730,77 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
     }
   };
 
+  const openRefund = (order: StoreOrder) => {
+    const remaining = remainingRefundable(order.total, order.refundedAmount ?? 0);
+    if (remaining <= 0) return;
+    const fulfilled =
+      order.status === "delivered" ||
+      order.status === "picked_up" ||
+      order.status === "completed";
+    setRefundTarget(order);
+    setRefundAmount(remaining.toFixed(2));
+    setRefundReason("");
+    setRefundRestock(!fulfilled && order.status !== "cancelled");
+    setRefundIdempotency(`refund:${order.id}:${crypto.randomUUID()}`);
+    closeMenu();
+  };
+
+  const handleRefund = async () => {
+    if (!canManage || !refundTarget) return;
+    const remaining = remainingRefundable(
+      refundTarget.total,
+      refundTarget.refundedAmount ?? 0,
+    );
+    const amount = Number(refundAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setError("Enter a refund amount greater than 0.");
+      return;
+    }
+    if (amount > remaining) {
+      setError(`Refund cannot exceed ${formatPrice(remaining)}.`);
+      return;
+    }
+    setBusyId(refundTarget.id);
+    try {
+      const result = await apiRefundOrder({
+        orderId: refundTarget.id,
+        amount,
+        reason: refundReason.trim() || undefined,
+        restock: refundRestock,
+        idempotencyKey: refundIdempotency || undefined,
+      });
+      if (result.inventory) {
+        syncFromServer(
+          result.inventory.stocks,
+          result.inventory.seats,
+          result.inventory.hidden,
+          result.inventory.reserved,
+        );
+      }
+      setOrders((prev) =>
+        prev.map((o) => {
+          if (o.id !== refundTarget.id) return o;
+          return {
+            ...o,
+            ...(result.order ?? {}),
+            paymentStatus: result.refund.paymentStatus,
+            refundedAmount: result.refund.refundedAmount,
+          };
+        }),
+      );
+      setRefundTarget(null);
+      setError("");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not refund order.");
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const handleStatus = async (order: StoreOrder, status: Order["status"]) => {
     if (!canManage) return;
     setBusyId(order.id);
-    setMenuId(null);
+    closeMenu();
     try {
       await apiUpdateOrderStatus(order.id, status);
       setOrders((prev) => prev.map((o) => (o.id === order.id ? { ...o, status } : o)));
@@ -701,8 +831,76 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
     );
   }
 
+  const refundRemaining = refundTarget
+    ? remainingRefundable(refundTarget.total, refundTarget.refundedAmount ?? 0)
+    : 0;
+  const refundModal = (
+    <Modal
+      open={Boolean(refundTarget)}
+      onClose={() => setRefundTarget(null)}
+      title="Refund payment"
+      subtitle={
+        refundTarget
+          ? `${refundTarget.id} · remaining ${formatPrice(refundRemaining)}`
+          : undefined
+      }
+      footer={
+        <div className="flex flex-col-reverse gap-2 sm:flex-row sm:justify-end">
+          <Button type="button" variant="secondary" onClick={() => setRefundTarget(null)}>
+            Close
+          </Button>
+          <Button
+            type="button"
+            loading={Boolean(refundTarget && busyId === refundTarget.id)}
+            onClick={() => void handleRefund()}
+          >
+            Issue refund
+          </Button>
+        </div>
+      }
+    >
+      {refundTarget ? (
+        <div className="space-y-4">
+          <label className="block space-y-1.5">
+            <span className="text-[10px] uppercase tracking-[0.16em] text-muted">Amount</span>
+            <Input
+              inputMode="decimal"
+              value={refundAmount}
+              onChange={(e) => setRefundAmount(sanitizeMoneyInput(e.target.value))}
+              aria-label="Refund amount"
+            />
+          </label>
+          <label className="block space-y-1.5">
+            <span className="text-[10px] uppercase tracking-[0.16em] text-muted">Reason</span>
+            <Input
+              value={refundReason}
+              onChange={(e) => setRefundReason(e.target.value)}
+              placeholder="Damaged bottle, customer request…"
+              maxLength={240}
+            />
+          </label>
+          <label className="flex items-start gap-2 text-sm text-cream">
+            <input
+              type="checkbox"
+              className="mt-1"
+              checked={refundRestock}
+              onChange={(e) => setRefundRestock(e.target.checked)}
+            />
+            <span>
+              Restock bottles
+              <span className="mt-0.5 block text-xs text-muted">
+                Leave off for a delivered order the customer is keeping.
+              </span>
+            </span>
+          </label>
+        </div>
+      ) : null}
+    </Modal>
+  );
+
   if (selectedId && selectedOrder) {
     return (
+      <>
       <OrderSummaryView
         order={selectedOrder}
         onBack={closeSummary}
@@ -740,6 +938,16 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                   Cancel · restock
                 </Button>
               ) : null}
+              {remainingRefundable(selectedOrder.total, selectedOrder.refundedAmount ?? 0) > 0 ? (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={busyId === selectedOrder.id}
+                  onClick={() => openRefund(selectedOrder)}
+                >
+                  Refund
+                </Button>
+              ) : null}
               {selectedOrder.fulfillment === "delivery" &&
               canViewDeliveries &&
               isDeliveryReadyForDispatch(selectedOrder.status) ? (
@@ -767,6 +975,8 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
           ) : null
         }
       />
+      {refundModal}
+      </>
     );
   }
 
@@ -1121,12 +1331,6 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
             const loc = getLocationById(order.locationId);
             const next = nextOrderStatus(order.status, order.fulfillment);
             const phone = order.delivery?.phone?.trim() || "";
-            const canCancel =
-              canManage &&
-              order.status !== "cancelled" &&
-              order.status !== "delivered" &&
-              order.status !== "picked_up" &&
-              order.status !== "completed";
             const bottles = bottleCount(order);
             const menuOpen = menuId === order.id;
 
@@ -1169,7 +1373,7 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                     </div>
                     <div className="shrink-0 text-right">
                       {columns.total ? (
-                        <p className="font-display text-lg tabular-nums leading-none text-gold">
+                        <p className="font-price text-lg leading-none text-gold">
                           {formatPrice(order.total)}
                         </p>
                       ) : null}
@@ -1267,56 +1471,11 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                       )}
                       aria-label={`More actions for ${order.id}`}
                       aria-expanded={menuOpen}
-                      onClick={() =>
-                        setMenuId((id) => (id === order.id ? null : order.id))
-                      }
+                      aria-haspopup="menu"
+                      onClick={(event) => toggleMenu(order.id, event.currentTarget)}
                     >
                       <MoreVertical size={15} />
                     </button>
-                    {menuOpen ? (
-                      <div
-                        ref={menuRef}
-                        className="absolute right-0 bottom-full z-20 mb-1 w-48 border border-white/10 bg-(--bg-elevated) py-1 shadow-xl"
-                      >
-                        <MenuItem
-                          icon={<Eye size={14} />}
-                          label="View details"
-                          onClick={() => openSummary(order.id)}
-                        />
-                        <MenuItem
-                          icon={<ExternalLink size={14} />}
-                          label="Open in new tab"
-                          onClick={() => {
-                            setMenuId(null);
-                            window.open(
-                              dashboardPath("orders", { orderId: order.id }),
-                              "_blank",
-                              "noopener,noreferrer",
-                            );
-                          }}
-                        />
-                        {canManage &&
-                        canViewDeliveries &&
-                        order.fulfillment === "delivery" ? (
-                          <MenuItem
-                            icon={<Truck size={14} />}
-                            label="Open deliveries"
-                            onClick={() => {
-                              setMenuId(null);
-                              router.push(dashboardPath("deliveries"));
-                            }}
-                          />
-                        ) : null}
-                        {canCancel ? (
-                          <MenuItem
-                            label="Cancel · restock"
-                            danger
-                            disabled={busyId === order.id}
-                            onClick={() => void handleCancel(order)}
-                          />
-                        ) : null}
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               </article>
@@ -1638,65 +1797,11 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                           className="inline-flex min-h-9 min-w-9 items-center justify-center rounded-sm text-muted hover:bg-white/5 hover:text-cream"
                           aria-label={`Actions for ${order.id}`}
                           aria-expanded={menuId === order.id}
-                          onClick={() =>
-                            setMenuId((id) => (id === order.id ? null : order.id))
-                          }
+                          aria-haspopup="menu"
+                          onClick={(event) => toggleMenu(order.id, event.currentTarget)}
                         >
                           <MoreVertical size={16} />
                         </button>
-                        {menuId === order.id ? (
-                          <div
-                            ref={menuRef}
-                            className="absolute right-2 top-full z-20 mt-1 w-48 border border-white/10 bg-(--bg-elevated) py-1 shadow-xl"
-                          >
-                            <MenuItem
-                              icon={<Eye size={14} />}
-                              label="View details"
-                              onClick={() => openSummary(order.id)}
-                            />
-                            <MenuItem
-                              icon={<ExternalLink size={14} />}
-                              label="Open in new tab"
-                              onClick={() => {
-                                setMenuId(null);
-                                window.open(
-                                  dashboardPath("orders", { orderId: order.id }),
-                                  "_blank",
-                                  "noopener,noreferrer",
-                                );
-                              }}
-                            />
-                            {canManage && next ? (
-                              <MenuItem
-                                label={`Mark ${STATUS_LABEL[next].toLowerCase()}`}
-                                disabled={busyId === order.id}
-                                onClick={() => void handleStatus(order, next)}
-                              />
-                            ) : null}
-                            {canManage &&
-                            canViewDeliveries &&
-                            order.fulfillment === "delivery" ? (
-                              <MenuItem
-                                icon={<Truck size={14} />}
-                                label="Open deliveries"
-                                  onClick={() => {
-                                    setMenuId(null);
-                                    router.push(dashboardPath("deliveries"));
-                                  }}
-                              />
-                            ) : null}
-                            {canManage &&
-                            order.status !== "cancelled" &&
-                            order.status !== "delivered" ? (
-                              <MenuItem
-                                label="Cancel · restock"
-                                danger
-                                disabled={busyId === order.id}
-                                onClick={() => void handleCancel(order)}
-                              />
-                            ) : null}
-                          </div>
-                        ) : null}
                       </td>
                     </tr>
                   );
@@ -1715,7 +1820,128 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
           className="mt-6"
         />
       ) : null}
+
+      {menuId && typeof document !== "undefined"
+        ? createPortal(
+            <OrderRowMenu
+              menuRef={menuRef}
+              order={orders.find((row) => row.id === menuId) ?? null}
+              busyId={busyId}
+              canManage={canManage}
+              canViewDeliveries={canViewDeliveries}
+              onViewDetails={(id) => {
+                closeMenu();
+                openSummary(id);
+              }}
+              onOpenTab={(id) => {
+                closeMenu();
+                window.open(
+                  dashboardPath("orders", { orderId: id }),
+                  "_blank",
+                  "noopener,noreferrer",
+                );
+              }}
+              onMarkStatus={(order, next) => {
+                closeMenu();
+                void handleStatus(order, next);
+              }}
+              onOpenDeliveries={() => {
+                closeMenu();
+                router.push(dashboardPath("deliveries"));
+              }}
+              onCancel={(order) => void handleCancel(order)}
+              onRefund={(order) => openRefund(order)}
+            />,
+            document.body,
+          )
+        : null}
+      {refundModal}
     </section>
+  );
+}
+
+function OrderRowMenu({
+  menuRef,
+  order,
+  busyId,
+  canManage,
+  canViewDeliveries,
+  onViewDetails,
+  onOpenTab,
+  onMarkStatus,
+  onOpenDeliveries,
+  onCancel,
+  onRefund,
+}: {
+  menuRef: React.RefObject<HTMLDivElement | null>;
+  order: StoreOrder | null;
+  busyId: string | null;
+  canManage: boolean;
+  canViewDeliveries: boolean;
+  onViewDetails: (id: string) => void;
+  onOpenTab: (id: string) => void;
+  onMarkStatus: (order: StoreOrder, next: Order["status"]) => void;
+  onOpenDeliveries: () => void;
+  onCancel: (order: StoreOrder) => void;
+  onRefund: (order: StoreOrder) => void;
+}) {
+  if (!order) return null;
+  const next = nextOrderStatus(order.status, order.fulfillment);
+  const canCancel =
+    canManage &&
+    order.status !== "cancelled" &&
+    order.status !== "delivered" &&
+    order.status !== "picked_up" &&
+    order.status !== "completed";
+  const canRefund =
+    canManage && remainingRefundable(order.total, order.refundedAmount ?? 0) > 0;
+
+  return (
+    <div
+      ref={menuRef}
+      role="menu"
+      className="fixed z-[90] w-48 border border-white/10 bg-(--bg-elevated) py-1 shadow-xl"
+    >
+      <MenuItem
+        icon={<Eye size={14} />}
+        label="View details"
+        onClick={() => onViewDetails(order.id)}
+      />
+      <MenuItem
+        icon={<ExternalLink size={14} />}
+        label="Open in new tab"
+        onClick={() => onOpenTab(order.id)}
+      />
+      {canManage && next ? (
+        <MenuItem
+          label={`Mark ${STATUS_LABEL[next].toLowerCase()}`}
+          disabled={busyId === order.id}
+          onClick={() => onMarkStatus(order, next)}
+        />
+      ) : null}
+      {canManage && canViewDeliveries && order.fulfillment === "delivery" ? (
+        <MenuItem
+          icon={<Truck size={14} />}
+          label="Open deliveries"
+          onClick={onOpenDeliveries}
+        />
+      ) : null}
+      {canRefund ? (
+        <MenuItem
+          label="Refund"
+          disabled={busyId === order.id}
+          onClick={() => onRefund(order)}
+        />
+      ) : null}
+      {canCancel ? (
+        <MenuItem
+          label="Cancel · restock"
+          danger
+          disabled={busyId === order.id}
+          onClick={() => onCancel(order)}
+        />
+      ) : null}
+    </div>
   );
 }
 

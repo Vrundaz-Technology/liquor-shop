@@ -17,7 +17,8 @@ export type DashboardSection =
   | "promotions"
   | "loyalty"
   | "deliveries"
-  | "profile";
+  | "profile"
+  | "notifications";
 
 export const DASHBOARD_SECTION_PATHS: Record<DashboardSection, string> = {
   overview: "/dashboard",
@@ -37,6 +38,7 @@ export const DASHBOARD_SECTION_PATHS: Record<DashboardSection, string> = {
   loyalty: "/dashboard/loyalty",
   deliveries: "/dashboard/deliveries",
   profile: "/dashboard/profile",
+  notifications: "/dashboard/notifications",
 };
 
 const SECTION_BY_SEGMENT: Record<string, DashboardSection> = {
@@ -56,6 +58,7 @@ const SECTION_BY_SEGMENT: Record<string, DashboardSection> = {
   loyalty: "loyalty",
   deliveries: "deliveries",
   profile: "profile",
+  notifications: "notifications",
 };
 
 export const DASHBOARD_SECTION_META: {
@@ -104,7 +107,7 @@ export const DASHBOARD_SECTION_META: {
     id: "customers",
     label: "Customers",
     permission: "customers.view",
-    description: "CRM segments, spend, and customer notes for your organization.",
+    description: "Owner customer database: spend, loyalty, favorites, discounts, and marketing consent.",
   },
   {
     id: "promotions",
@@ -165,6 +168,12 @@ export const DASHBOARD_SECTION_META: {
     label: "Profile",
     permission: "dashboard.access",
     description: "Update your photo, name, email, and password.",
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    permission: "dashboard.access",
+    description: "Sounds and read behaviour for this device, plus your staff inbox.",
   },
 ];
 

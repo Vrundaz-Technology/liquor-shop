@@ -5,6 +5,7 @@ import { requireUser } from "@/lib/auth/require";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 
 const MAX_BYTES = 4 * 1024 * 1024;
+const MAX_SUPPORT_BYTES = 6 * 1024 * 1024;
 
 function sniffImage(buffer: Buffer): "jpg" | "png" | "webp" | null {
   if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
@@ -40,22 +41,42 @@ export async function POST(request: Request) {
     }
     const form = await request.formData();
     const file = form.get("file");
+    const purpose = String(form.get("purpose") ?? "");
+    const support = purpose === "support";
     if (!(file instanceof File)) {
-      return NextResponse.json({ error: "Choose an image to upload." }, { status: 400 });
+      return NextResponse.json({ error: "Choose a file to upload." }, { status: 400 });
     }
-    if (file.size > MAX_BYTES) {
-      return NextResponse.json({ error: "Image must be under 4 MB after resize." }, { status: 400 });
+    const maxBytes = support ? MAX_SUPPORT_BYTES : MAX_BYTES;
+    if (file.size > maxBytes) {
+      return NextResponse.json(
+        { error: support ? "Attachment must be under 6 MB." : "Image must be under 4 MB after resize." },
+        { status: 400 },
+      );
     }
     const buffer = Buffer.from(await file.arrayBuffer());
-    const kind = sniffImage(buffer);
-    if (!kind) {
-      return NextResponse.json({ error: "Please upload a JPG, PNG, or WebP image." }, { status: 400 });
+    const imageKind = sniffImage(buffer);
+    const isPdf = support && buffer.length >= 4 && buffer.toString("ascii", 0, 4) === "%PDF";
+    if (!imageKind && !isPdf) {
+      return NextResponse.json(
+        {
+          error: support
+            ? "Please upload a JPG, PNG, WebP, or PDF."
+            : "Please upload a JPG, PNG, or WebP image.",
+        },
+        { status: 400 },
+      );
     }
+    const kind = imageKind ?? "pdf";
     const name = `${Date.now()}-${crypto.randomUUID().slice(0, 8)}.${kind}`;
     const dir = path.join(process.cwd(), "public", "uploads");
     await mkdir(dir, { recursive: true });
     await writeFile(path.join(dir, name), buffer);
-    return NextResponse.json({ url: `/uploads/${name}` });
+    return NextResponse.json({
+      url: `/uploads/${name}`,
+      name: file.name || name,
+      type: kind === "pdf" ? "application/pdf" : `image/${kind === "jpg" ? "jpeg" : kind}`,
+      size: buffer.length,
+    });
   } catch (error) {
     console.error("[POST /api/uploads]", error);
     return NextResponse.json({ error: "Failed to upload image." }, { status: 500 });

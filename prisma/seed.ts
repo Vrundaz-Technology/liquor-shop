@@ -9,6 +9,8 @@ import {
   demoOwner,
   demoAccounts,
 } from "../src/data/events";
+import { loyaltyTestCustomers } from "../src/data/loyalty-test-customers";
+import { seedLoyaltyFixtures } from "../src/lib/db/seed-loyalty-fixtures";
 import { hashPassword } from "../src/lib/auth/password";
 import { DEMO_PASSWORD } from "../src/lib/auth/roles";
 import { ensureDeliverySchema } from "../src/lib/db/delivery";
@@ -460,6 +462,9 @@ async function main() {
 
   console.log(`Seeding ${demoUser.orders.length} demo orders…`);
   await seedOrders(demoUser.id, demoUser.orders);
+
+  console.log(`Seeding ${loyaltyTestCustomers.length} loyalty ladder test shoppers…`);
+  await seedLoyaltyFixtures(prisma, passwordHash);
 
   console.log("Seeding loyalty + promotions…");
   await ensureLoyaltyProgram(SAMS_ORG_ID);

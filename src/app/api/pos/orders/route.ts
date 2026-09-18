@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { fetchInventoryState, placePosOrder, StockConflictError } from "@/lib/db/queries";
+import { PromotionUsageLimitError } from "@/lib/commerce/promotions";
 import { placePosOrderSchema } from "@/lib/db/validators";
 import { requirePermission } from "@/lib/auth/require";
 import { canAccessLocation } from "@/lib/auth/location-access";
@@ -58,6 +59,9 @@ export async function POST(request: Request) {
         { error: error.message, shortfalls: error.shortfalls },
         { status: 409 },
       );
+    }
+    if (error instanceof PromotionUsageLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof Error) {
       const known = [

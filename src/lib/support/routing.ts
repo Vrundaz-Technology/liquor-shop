@@ -1,4 +1,4 @@
-import type { SupportCategory, SupportRouteScope } from "@/types";
+import type { SupportCategory, SupportRouteScope, SupportTicketStatus } from "@/types";
 
 export const SUPPORT_CATEGORIES: {
   value: SupportCategory;
@@ -18,6 +18,33 @@ export const SUPPORT_CATEGORIES: {
 export const SUPPORT_CATEGORY_LABELS: Record<SupportCategory, string> = Object.fromEntries(
   SUPPORT_CATEGORIES.map((c) => [c.value, c.label]),
 ) as Record<SupportCategory, string>;
+
+export const SUPPORT_STATUS_LABELS: Record<SupportTicketStatus, string> = {
+  open: "Open",
+  pending: "Waiting on you",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+export const SUPPORT_STAFF_STATUS_LABELS: Record<SupportTicketStatus, string> = {
+  open: "Open",
+  pending: "Waiting on customer",
+  resolved: "Resolved",
+  closed: "Closed",
+};
+
+export const SUPPORT_STATUS_STYLES: Record<SupportTicketStatus, string> = {
+  open: "border-amber-500/35 bg-amber-500/15 text-amber-200",
+  pending: "border-sky-500/35 bg-sky-500/15 text-sky-200",
+  resolved: "border-(--gold)/40 bg-(--gold)/15 text-gold",
+  closed: "border-white/15 bg-white/5 text-muted",
+};
+
+export const SUPPORT_ROUTE_LABELS: Record<SupportRouteScope, string> = {
+  store: "Store team",
+  owner: "Owner team",
+  platform: "Platform billing",
+};
 
 export type TicketRouteResult = {
   scope: SupportRouteScope;

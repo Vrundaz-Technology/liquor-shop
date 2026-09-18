@@ -10,10 +10,12 @@ import {
 } from "@/lib/api-mutations";
 import { hasPermission } from "@/lib/auth/permissions";
 import { accessibleLocations, canAccessLocation } from "@/lib/auth/location-access";
-import { isDbConnected, removeRuntimeEvent, upsertRuntimeEvent } from "@/lib/runtime-data";
+import { removeRuntimeEvent, upsertRuntimeEvent } from "@/lib/runtime-data";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
 import { useRuntimeEvents } from "@/hooks/useRuntimeEvents";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import type { EventItem } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { CoverImageUpload } from "@/components/ui/ImageUpload";
@@ -113,10 +115,10 @@ export function EventsPanel() {
   const [form, setForm] = useState<EventForm>(() => emptyEventForm(stores[0]?.id ?? ""));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const canCreate = hasPermission(actor, "events.create") && isDbConnected();
-  const canEdit = hasPermission(actor, "events.edit") && isDbConnected();
-  const canDelete = hasPermission(actor, "events.delete") && isDbConnected();
-  const dbReady = isDbConnected();
+  const { ready: dbReady } = useServerConnection();
+  const canCreate = hasPermission(actor, "events.create") && dbReady;
+  const canEdit = hasPermission(actor, "events.edit") && dbReady;
+  const canDelete = hasPermission(actor, "events.delete") && dbReady;
 
   const openCreate = () => {
     setForm(emptyEventForm(stores[0]?.id ?? ""));
@@ -201,7 +203,13 @@ export function EventsPanel() {
   };
 
   const remove = async (event: EventItem) => {
-    if (!window.confirm(`Remove “${event.title}”?`)) return;
+    const ok = await confirmAction({
+      title: "Remove event",
+      description: `Remove “${event.title}”? This cannot be undone.`,
+      confirmLabel: "Remove event",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

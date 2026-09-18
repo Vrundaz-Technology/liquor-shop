@@ -103,7 +103,10 @@ export function TrackOrderForm() {
                 {formatPrice(result.order.total)}
               </p>
             </div>
-            <Link href="/account?tab=orders" className="text-xs text-gold hover:underline">
+            <Link
+              href={`/account?tab=orders&order=${encodeURIComponent(result.order.id)}`}
+              className="text-xs text-gold hover:underline"
+            >
               Open in account
             </Link>
           </div>

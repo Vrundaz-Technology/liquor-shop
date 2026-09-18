@@ -11,12 +11,12 @@ import {
   Gift,
   Heart,
   MapPin,
-  Menu,
   MessageSquare,
   Headphones,
   Package,
   PanelLeftClose,
   PanelLeftOpen,
+  Menu,
   ShoppingBag,
   Store,
   Timer,
@@ -25,13 +25,14 @@ import {
   UserRound,
   Users,
   ArrowLeftRight,
+  Bell,
   X,
 } from "lucide-react";
 import { useUserStore } from "@/store/user";
 import { useBranchStore } from "@/store/branch";
 import { getLocationById } from "@/data/locations";
-import { DashboardTopBar } from "@/components/dashboard/DashboardTopBar";
 import { type LocationFilter } from "@/components/dashboard/LocationScopeBar";
+import { DashboardTopBar } from "@/components/dashboard/DashboardTopBar";
 import { hasAnyPermission, hasPermission, type Permission } from "@/lib/auth/permissions";
 import {
   dashboardPath,
@@ -115,6 +116,11 @@ const UsersPanel = dynamic(
 const ProfilePanel = dynamic(
   () => import("@/components/dashboard/ProfilePanel").then((m) => m.ProfilePanel),
   { ssr: false, loading: () => panelLoading("profile") },
+);
+const NotificationsPanel = dynamic(
+  () =>
+    import("@/components/dashboard/NotificationsPanel").then((m) => m.NotificationsPanel),
+  { ssr: false, loading: () => panelLoading("notifications") },
 );
 const OverviewAnalyticsPanel = dynamic(
   () =>
@@ -271,6 +277,14 @@ const DASHBOARD_TABS: {
     permission: "dashboard.access",
     group: "account",
     description: "Update your photo, name, email, and password.",
+  },
+  {
+    id: "notifications",
+    label: "Notifications",
+    icon: Bell,
+    permission: "dashboard.access",
+    group: "account",
+    description: "Sounds and read behaviour for this device, plus your staff inbox.",
   },
 ];
 
@@ -758,7 +772,6 @@ export function MemberDashboard() {
           sidebarReady && "transition-[padding] duration-150 ease-out",
         )}
       >
-        {/* Desktop top chrome — notifications + account (storefront header stays off dashboard) */}
         <div
           className={cn(
             "sticky z-20 hidden border-b border-white/10 bg-[#090909]/92 backdrop-blur-xl lg:block",
@@ -766,7 +779,7 @@ export function MemberDashboard() {
             CHROME_HEADER_H,
           )}
         >
-          <div className={cn("flex h-full items-center px-6 xl:px-10 2xl:px-12")}>
+          <div className="flex h-full items-center px-6 xl:px-10 2xl:px-12">
             <DashboardTopBar profile={profile} />
           </div>
         </div>
@@ -884,6 +897,8 @@ export function MemberDashboard() {
           <UsersPanel />
         ) : dashboardTab === "profile" ? (
           <ProfilePanel />
+        ) : dashboardTab === "notifications" ? (
+          <NotificationsPanel />
         ) : (
           <>
             <OverviewAnalyticsPanel

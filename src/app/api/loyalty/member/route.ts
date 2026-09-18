@@ -35,6 +35,19 @@ export async function GET(request: Request) {
     return NextResponse.json({
       ok: true,
       organizationId: orgId,
+      program: program
+        ? {
+            name: program.name,
+            pointsPerDollar: program.pointsPerDollar,
+            redeemRate: program.redeemRate,
+            birthdayPoints: program.birthdayPoints,
+            referralPoints: program.referralPoints,
+            referralSignupPoints: program.referralSignupPoints,
+            rewards: program.rewards,
+            tiers: program.tiers,
+            active: program.active,
+          }
+        : null,
       balance: balance.points,
       tier: balance.tier,
       ...data,

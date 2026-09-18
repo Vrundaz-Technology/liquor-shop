@@ -6,6 +6,7 @@ import {
 } from "@/lib/db/organization";
 import { moneyNumber } from "@/lib/db/money";
 import { addColumnIfMissing, createUniqueIndexIfMissing } from "@/lib/db/schema-guard";
+import type { Order } from "@/types";
 
 export type LoyaltyTierDef = { name: string; minPoints: number };
 
@@ -207,12 +208,32 @@ async function adjustLoyaltyPoints(input: {
     return { points: 0, balance: current, tier: row.loyalty_tier || "Member" };
   }
 
-  const tier = tierForPoints(nextBalance, prog[0].tiers);
+  const affected = await prisma.$executeRawUnsafe(
+    `UPDATE organization_customers
+     SET loyalty_points = loyalty_points + ?, updated_at = NOW(3)
+     WHERE organization_id = ? AND user_id = ?
+       AND loyalty_points + ? >= 0`,
+    applied,
+    input.organizationId,
+    input.userId,
+    applied,
+  );
+  if (Number(affected) === 0) {
+    throw new Error("Not enough loyalty points.");
+  }
+
+  const after = await prisma.$queryRawUnsafe<{ loyalty_points: number }[]>(
+    `SELECT loyalty_points FROM organization_customers
+     WHERE organization_id = ? AND user_id = ? LIMIT 1`,
+    input.organizationId,
+    input.userId,
+  );
+  const balance = Number(after[0]?.loyalty_points ?? nextBalance);
+  const tier = tierForPoints(balance, prog[0].tiers);
   await prisma.$executeRawUnsafe(
     `UPDATE organization_customers
-     SET loyalty_points = ?, loyalty_tier = ?, updated_at = NOW(3)
+     SET loyalty_tier = ?
      WHERE organization_id = ? AND user_id = ?`,
-    nextBalance,
     tier,
     input.organizationId,
     input.userId,
@@ -221,7 +242,7 @@ async function adjustLoyaltyPoints(input: {
   // Keep users.* in sync for the shopping org so profile/header stay consistent.
   await prisma.user.update({
     where: { id: input.userId },
-    data: { loyaltyPoints: nextBalance, loyaltyTier: tier },
+    data: { loyaltyPoints: balance, loyaltyTier: tier },
   });
 
   await prisma.$executeRawUnsafe(
@@ -231,11 +252,11 @@ async function adjustLoyaltyPoints(input: {
     programId,
     input.userId,
     applied,
-    nextBalance,
+    balance,
     input.reason,
     input.orderId ?? null,
   );
-  return { points: applied, balance: nextBalance, tier };
+  return { points: applied, balance, tier };
 }
 
 export async function earnLoyaltyPoints(input: {
@@ -297,6 +318,33 @@ export async function redeemLoyaltyPoints(input: {
     userId: input.userId,
     delta: -input.points,
     reason: input.reason ?? "redeem",
+    orderId: input.orderId,
+  });
+}
+
+export async function reverseLoyaltyForCancelledOrder(input: {
+  organizationId: string;
+  userId: string;
+  orderId: string;
+}) {
+  if (!isDbConfigured()) return { points: 0, balance: 0 };
+  await ensureOrganizationSchema();
+  const rows = await prisma.$queryRawUnsafe<{ delta: number; reason: string }[]>(
+    `SELECT delta, reason FROM loyalty_ledger WHERE order_id = ? AND user_id = ?`,
+    input.orderId,
+    input.userId,
+  );
+  if (!rows.length) return { points: 0, balance: 0 };
+  if (rows.some((row) => row.reason === "order_cancel")) {
+    return { points: 0, balance: 0 };
+  }
+  const net = rows.reduce((sum, row) => sum + Number(row.delta ?? 0), 0);
+  if (!net) return { points: 0, balance: 0 };
+  return adjustLoyaltyPoints({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    delta: -net,
+    reason: "order_cancel",
     orderId: input.orderId,
   });
 }
@@ -702,9 +750,51 @@ export function loyaltyReasonLabel(reason: string) {
       return "Referral signup";
     case "promo":
       return "Promotional points";
+    case "order_cancel":
+      return "Order cancelled";
     case "adjustment":
       return "Adjustment";
     default:
       return reason.replace(/_/g, " ");
+  }
+}
+
+/** Attach redeemed / earned points from the loyalty ledger onto mapped orders. */
+export async function attachLoyaltyToOrders<T extends Order>(orders: T[]): Promise<T[]> {
+  if (!orders.length || !isDbConfigured()) return orders;
+  try {
+    await ensureLoyaltyColumns();
+    const ids = [...new Set(orders.map((order) => order.id))];
+    const placeholders = ids.map(() => "?").join(",");
+    const rows = await prisma.$queryRawUnsafe<
+      { order_id: string; reason: string; pts: number | bigint }[]
+    >(
+      `SELECT order_id, reason, CAST(SUM(delta) AS SIGNED) AS pts
+       FROM loyalty_ledger
+       WHERE order_id IN (${placeholders})
+       GROUP BY order_id, reason`,
+      ...ids,
+    );
+    const byOrder = new Map<string, { used: number; earned: number }>();
+    for (const row of rows) {
+      if (!row.order_id) continue;
+      const cur = byOrder.get(row.order_id) ?? { used: 0, earned: 0 };
+      const pts = Number(row.pts);
+      if (row.reason === "redeem" || pts < 0) cur.used += Math.abs(pts);
+      if (row.reason === "earn" && pts > 0) cur.earned += pts;
+      byOrder.set(row.order_id, cur);
+    }
+    return orders.map((order) => {
+      const loyalty = byOrder.get(order.id);
+      if (!loyalty) return order;
+      return {
+        ...order,
+        loyaltyPointsUsed: loyalty.used || undefined,
+        loyaltyPointsEarned: loyalty.earned || undefined,
+      };
+    });
+  } catch (error) {
+    console.error("[attachLoyaltyToOrders]", error);
+    return orders;
   }
 }

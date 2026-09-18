@@ -66,7 +66,6 @@ export function Header() {
   );
   const logout = useUserStore((s) => s.logout);
   const locations = useRuntimeLocations();
-  const onDashboard = pathname.startsWith("/dashboard");
   const branchOptions =
     isLoggedIn && isStaff ? accessibleLocations(profile, locations) : locations;
   const branch =
@@ -273,14 +272,6 @@ export function Header() {
                 {branch.shortName}
               </span>
             </button>
-            {onDashboard ? (
-              <Link
-                href="/shop"
-                className="hidden items-center border border-[var(--gold)]/45 px-2.5 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[var(--gold)] transition-colors hover:bg-[var(--gold)]/10 lg:inline-flex"
-              >
-                Shop
-              </Link>
-            ) : null}
             <button
               onClick={() => {
                 setSearchOpen(true);
@@ -293,7 +284,7 @@ export function Header() {
             </button>
             <Link
               href="/wishlist"
-              className="hidden min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5 lg:inline-flex"
+              className="inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5"
               aria-label="Wishlist"
             >
               <Heart size={18} />
@@ -431,7 +422,7 @@ export function Header() {
                   <button
                     type="button"
                     onClick={() => setQuery("")}
-                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-sm text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--cream)]"
+                    className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-sm text-[var(--muted)] transition hover:bg-white/10 hover:text-[var(--cream)]"
                     aria-label="Clear search"
                     title="Clear search"
                   >
@@ -441,7 +432,7 @@ export function Header() {
                 <button
                   onClick={startVoice}
                   className={cn(
-                    "shrink-0 rounded-sm p-2",
+                    "inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-sm",
                     listening ? "animate-pulse text-[var(--gold)]" : "text-[var(--muted)]",
                   )}
                   aria-label="Voice search"
@@ -451,7 +442,7 @@ export function Header() {
                 <button
                   onClick={() => setSearchOpen(false)}
                   aria-label="Close search"
-                  className="shrink-0 p-2"
+                  className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center"
                 >
                   <X size={18} />
                 </button>
@@ -520,7 +511,7 @@ export function Header() {
           >
             <div className="flex items-center justify-between px-4 py-4 sm:px-6 sm:py-5">
               <button
-                className="text-[var(--cream)]"
+                className="inline-flex min-h-11 min-w-11 items-center justify-center text-[var(--cream)]"
                 onClick={() => setOpen(false)}
                 aria-label="Close menu"
               >

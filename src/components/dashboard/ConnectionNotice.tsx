@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { RefreshCw, WifiOff } from "lucide-react";
 import { recheckServerConnection } from "@/lib/connection-messages";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { Button } from "@/components/ui/Button";
 import { cn } from "@/lib/utils";
 
@@ -16,8 +17,11 @@ type Props = {
 };
 
 export function ConnectionNotice({ feature, preview = false, className, onConnected }: Props) {
+  const { loaded, offline } = useServerConnection();
   const [checking, setChecking] = useState(false);
   const [stillOffline, setStillOffline] = useState(false);
+
+  if (!loaded || !offline) return null;
 
   const checkConnection = async () => {
     setChecking(true);

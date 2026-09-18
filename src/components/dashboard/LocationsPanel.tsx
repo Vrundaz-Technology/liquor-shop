@@ -13,11 +13,12 @@ import {
 import { hasPermission } from "@/lib/auth/permissions";
 import { accessibleLocations, hasAllLocationAccess } from "@/lib/auth/location-access";
 import {
-  isDbConnected,
   removeRuntimeLocation,
   upsertRuntimeLocation,
 } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { useUserStore } from "@/store/user";
+import { confirmAction } from "@/store/dialog";
 import type { StoreLocation } from "@/types";
 import { Button } from "@/components/ui/Button";
 import { CoverImageUpload, GalleryImageUpload } from "@/components/ui/ImageUpload";
@@ -227,7 +228,7 @@ export function LocationsPanel() {
   const [form, setForm] = useState<LocationForm>(emptyForm());
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const dbReady = isDbConnected();
+  const { ready: dbReady } = useServerConnection();
   const canCreate = hasPermission(actor, "locations.create") && dbReady;
   const canEdit = hasPermission(actor, "locations.edit") && dbReady;
   const canDelete = hasPermission(actor, "locations.delete") && dbReady;
@@ -311,9 +312,13 @@ export function LocationsPanel() {
   };
 
   const remove = async (location: StoreLocation) => {
-    if (!window.confirm(`Remove ${location.shortName}? Events at this store will also be deleted.`)) {
-      return;
-    }
+    const ok = await confirmAction({
+      title: "Remove store",
+      description: `Remove ${location.shortName}? Events at this store will also be deleted.`,
+      confirmLabel: "Remove store",
+      tone: "danger",
+    });
+    if (!ok) return;
     setBusy(true);
     setError("");
     try {

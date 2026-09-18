@@ -79,6 +79,7 @@ const rulesSchema = z
     buyQty: z.number().int().min(1).max(20).optional(),
     getQty: z.number().int().min(1).max(10).optional(),
     firstOrderOnly: z.boolean().optional(),
+    maxUsesPerUser: z.number().int().min(1).max(99).optional().nullable(),
     daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
     startTime: z
       .string()
@@ -246,6 +247,18 @@ export async function POST(request: Request) {
   if (isUpdate && !previous) {
     return NextResponse.json({ error: "Promotion not found." }, { status: 404 });
   }
+  if (previous) {
+    const isPlatform = previous.scope === "platform" || previous.organization_id == null;
+    if (isPlatform && auth.user.role !== "owner") {
+      return NextResponse.json(
+        { error: "Only owners can change platform promotions." },
+        { status: 403 },
+      );
+    }
+    if (!isPlatform && previous.organization_id !== orgId) {
+      return NextResponse.json({ error: "Promotion not found." }, { status: 404 });
+    }
+  }
 
   const id = await upsertPromotion({
     ...body.data,
@@ -263,21 +276,23 @@ export async function POST(request: Request) {
   const before = previous ? snapshotFromRow(previous) : null;
   const fieldChanges = diffPromotionSnapshots(before, after);
 
-  if (!isUpdate || fieldChanges.length > 0) {
-    await recordActivity({
-      actorUserId: auth.user.id,
-      action: isUpdate ? "promotion.updated" : "promotion.created",
-      entityType: "promotion",
-      entityId: id,
-      locationId: body.data.locationId ?? previous?.location_id ?? undefined,
-      summary: isUpdate
+  await recordActivity({
+    actorUserId: auth.user.id,
+    action: isUpdate ? "promotion.updated" : "promotion.created",
+    entityType: "promotion",
+    entityId: id,
+    locationId: body.data.locationId ?? previous?.location_id ?? undefined,
+    summary: isUpdate
+      ? fieldChanges.length
         ? `${auth.user.name} updated promotion ${body.data.name} (${fieldChanges.length} field${
             fieldChanges.length === 1 ? "" : "s"
           })`
-        : `${auth.user.name} created promotion ${body.data.name}`,
-      metadata: activityChanges(fieldChanges),
-    });
-  }
+        : `${auth.user.name} saved promotion ${body.data.name}`
+      : `${auth.user.name} created promotion ${body.data.name}`,
+    metadata: activityChanges(
+      fieldChanges.length ? fieldChanges : [{ field: "name", to: body.data.name }],
+    ),
+  });
 
   if (body.data.active !== false && body.data.scope !== "platform" && !isUpdate) {
     void (async () => {

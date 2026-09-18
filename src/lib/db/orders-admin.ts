@@ -8,9 +8,11 @@ import {
 } from "@/lib/auth/location-access";
 import { hasPermission } from "@/lib/auth/permissions";
 import { recordActivity } from "@/lib/db/activity";
+import { activityChanges } from "@/lib/activity/changes";
 import { ensureOrganizationSchema } from "@/lib/db/organization";
 import { ensureDispatchSchema } from "@/lib/db/dispatch-settings";
 import { moneyNumber, moneyOptional } from "@/lib/db/money";
+import { attachLoyaltyToOrders } from "@/lib/db/loyalty";
 import {
   canTransitionStatus,
   migrateLegacyStatus,
@@ -54,6 +56,11 @@ type OrderListRow = {
   discount_amount: number | null;
   delivery_fee: number | null;
   payment_status: string | null;
+  payment_method: string | null;
+  payment_provider: string | null;
+  refunded_amount: number | null;
+  coupon_code: string | null;
+  promotion_id: string | null;
   driver_id: string | null;
   delivery_status: string | null;
   delivery_phone: string | null;
@@ -110,6 +117,8 @@ export async function listStoreOrders(
   if (!isDbConfigured()) return [];
   await ensureOrganizationSchema();
   await ensureDispatchSchema();
+  const { ensurePaymentSchema } = await import("@/lib/db/payments");
+  await ensurePaymentSchema();
 
   const allowAll = hasAllLocationAccess(actor);
   const accessibleIds = accessibleLocations(actor).map((loc) => loc.id);
@@ -181,7 +190,9 @@ export async function listStoreOrders(
   const rows = await prisma.$queryRawUnsafe<OrderListRow[]>(
     `SELECT o.id, o.user_id, o.date, o.status, o.total, o.fulfillment, o.location_id, o.tracking,
             o.organization_id, o.subtotal, o.tax_amount, o.discount_amount, o.delivery_fee,
-            o.payment_status, o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
+            o.payment_status, o.payment_method, o.payment_provider, o.refunded_amount,
+            o.coupon_code, o.promotion_id,
+            o.driver_id, o.delivery_status, o.delivery_phone, o.delivery_address,
             o.delivery_channel, o.provider_status, o.provider_failed,
             u.name AS customer_name, u.email AS customer_email,
             d.name AS driver_name, d.phone AS driver_phone, d.vehicle AS driver_vehicle,
@@ -213,7 +224,7 @@ export async function listStoreOrders(
     itemsByOrder.set(item.orderId, list);
   }
 
-  return rows.map((row) => {
+  const mapped: StoreOrder[] = rows.map((row) => {
     const status = migrateLegacyStatus(row.status, row.fulfillment, row.delivery_status) as Order["status"];
     const driver: Driver | undefined =
       row.driver_id && row.driver_name
@@ -241,6 +252,11 @@ export async function listStoreOrders(
       discountAmount: moneyOptional(row.discount_amount),
       deliveryFee: moneyOptional(row.delivery_fee),
       paymentStatus: row.payment_status ?? undefined,
+      paymentMethod: row.payment_method ?? undefined,
+      paymentProvider: row.payment_provider ?? undefined,
+      refundedAmount: moneyOptional(row.refunded_amount),
+      couponCode: row.coupon_code ?? undefined,
+      promotionId: row.promotion_id ?? undefined,
       fulfillment: row.fulfillment as Order["fulfillment"],
       locationId: row.location_id,
       organizationId: row.organization_id ?? undefined,
@@ -249,7 +265,10 @@ export async function listStoreOrders(
       driverId: row.driver_id ?? undefined,
       driver,
       delivery: parseAddress(row.delivery_address),
-      deliveryChannel: row.delivery_channel === "shipday" ? "shipday" : row.delivery_channel === "internal" ? "internal" : undefined,
+      deliveryChannel:
+        row.delivery_channel === "shipday" || row.delivery_channel === "internal"
+          ? row.delivery_channel
+          : undefined,
       providerStatus: row.provider_status ?? undefined,
       providerFailed: row.provider_failed === true || row.provider_failed === 1 || undefined,
       customerId: row.user_id,
@@ -259,6 +278,7 @@ export async function listStoreOrders(
       notificationId,
     };
   });
+  return attachLoyaltyToOrders(mapped);
 }
 
 async function unreadOrderNotificationMap(userId: string, orderIds: string[]) {
@@ -421,11 +441,7 @@ export async function staffUpdateOrderStatus(
     entityId: orderId,
     locationId: order.locationId,
     summary: `${actor.name} set order ${orderId} to ${status}`,
-    metadata: {
-      status,
-      previous: order.status,
-      changes: [{ field: "status", from: order.status, to: status }],
-    },
+    metadata: activityChanges([{ field: "status", from: order.status, to: status }]),
   });
 
   void (async () => {

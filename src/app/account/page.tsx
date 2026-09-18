@@ -4,6 +4,8 @@ import { FormEvent, useEffect, useMemo, useState, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
+  AlertCircle,
+  CheckCircle2,
   Heart,
   LayoutGrid,
   LogOut,
@@ -11,7 +13,6 @@ import {
   Menu,
   Package,
   Headphones,
-  RotateCcw,
   Shield,
   Star,
   Store,
@@ -33,13 +34,23 @@ import { LoyaltyMemberCard } from "@/components/dashboard/LoyaltyMemberCard";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { getAllLocations } from "@/data/locations";
 import { getCategories } from "@/data/categories";
-import { formatPrice, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import {
+  MobileSortBar,
+  SortableTh,
+  tableCellClass,
+  tableHeadRowClass,
+  tableRowClass,
+  tableWrapClass,
+  useTableSort,
+  compareValues,
+} from "@/components/ui/SortableTh";
 import { useDeliveryStore } from "@/store/delivery";
-import { OrderTrackingTimeline } from "@/components/orders/OrderTrackingTimeline";
-import { ReviewForm } from "@/components/reviews/ReviewForm";
+import { CustomerAddressesPanel } from "@/components/account/CustomerAddressesPanel";
+import { CustomerOrdersList } from "@/components/account/CustomerOrdersList";
+import { AccountOverviewCharts } from "@/components/account/AccountOverviewCharts";
+import { CustomerOrderDetail } from "@/components/orders/CustomerOrderDetail";
 import { CustomerSupportCenter } from "@/components/support/CustomerSupportCenter";
-import { customerStatusLabel } from "@/lib/commerce/order-tracking";
-import { getProductById } from "@/data/products";
 import type { UserPreferences, UserProfile } from "@/types";
 import { useQuery } from "@tanstack/react-query";
 import { apiLoyaltyMember } from "@/lib/api-mutations";
@@ -70,16 +81,6 @@ const SIDEBAR_HEIGHT =
 const SIDEBAR_WIDTH = "w-[15.5rem] xl:w-[16.5rem]";
 const CONTENT_PAD = "lg:pl-[15.5rem] xl:pl-[16.5rem]";
 
-const emptyAddress = (): Address => ({
-  id: `addr-${crypto.randomUUID()}`,
-  label: "Home",
-  line1: "",
-  city: "",
-  state: "",
-  zip: "",
-  isDefault: false,
-});
-
 function LoyaltyAccountSection({
   birthday,
   setBirthday,
@@ -89,22 +90,37 @@ function LoyaltyAccountSection({
 }) {
   const profile = useUserStore((s) => s.profile);
   const branchId = useBranchStore((s) => s.branchId);
-  const memberQuery = useQuery({
-    queryKey: ["loyalty-member-account", branchId],
-    enabled: isDbConnected(),
-    staleTime: 30_000,
-    queryFn: () => apiLoyaltyMember({ locationId: branchId }),
-  });
   const historyQuery = useQuery({
     queryKey: ["loyalty-member-history", branchId],
     enabled: isDbConnected(),
     staleTime: 30_000,
     queryFn: () => apiLoyaltyMember({ locationId: branchId, history: true }),
   });
+  const {
+    sortKey,
+    sortDir,
+    toggleSort,
+  } = useTableSort<"activity" | "order" | "date" | "points">("date", "desc", ["date", "points"]);
 
-  const balance = memberQuery.data?.balance ?? profile.loyaltyPoints;
-  const tier = memberQuery.data?.tier ?? profile.loyaltyTier;
-  const program = memberQuery.data?.program;
+  const balance = historyQuery.data?.balance ?? profile.loyaltyPoints;
+  const tier = historyQuery.data?.tier ?? profile.loyaltyTier;
+  const program = historyQuery.data?.program;
+  const entries = historyQuery.data?.entries ?? [];
+  const sortedEntries = useMemo(() => {
+    return [...entries].sort((a, b) => {
+      switch (sortKey) {
+        case "activity":
+          return compareValues(a.reasonLabel ?? a.reason, b.reasonLabel ?? b.reason, sortDir);
+        case "order":
+          return compareValues(a.orderId ?? "", b.orderId ?? "", sortDir);
+        case "points":
+          return compareValues(a.delta, b.delta, sortDir);
+        case "date":
+        default:
+          return compareValues(a.createdAt, b.createdAt, sortDir);
+      }
+    });
+  }, [entries, sortDir, sortKey]);
 
   return (
     <SectionCard
@@ -137,38 +153,91 @@ function LoyaltyAccountSection({
           <p className="mt-2 text-sm text-muted">Loading history…</p>
         ) : historyQuery.error ? (
           <p className="mt-2 text-sm text-(--danger)">Could not load history.</p>
-        ) : !(historyQuery.data?.entries?.length) ? (
+        ) : !entries.length ? (
           <p className="mt-2 text-sm text-muted">No points activity yet — place an order to start earning.</p>
         ) : (
-          <ul className="mt-2 divide-y divide-white/10 rounded-sm border border-white/10">
-            {historyQuery.data.entries.map((entry) => (
-              <li
-                key={entry.id}
-                className="flex items-center justify-between gap-3 px-3 py-2.5 text-sm"
-              >
-                <div className="min-w-0">
-                  <p className="truncate text-cream">
-                    {entry.reasonLabel ?? entry.reason}
-                    {entry.orderId ? (
-                      <span className="text-muted"> · {entry.orderId}</span>
-                    ) : null}
-                  </p>
-                  <p className="text-[11px] text-muted">
+          <>
+            <MobileSortBar
+              className="mt-3 xl:hidden"
+              columns={[
+                { key: "activity", label: "Activity" },
+                { key: "order", label: "Order" },
+                { key: "date", label: "Date" },
+                { key: "points", label: "Points" },
+              ]}
+              sortKey={sortKey}
+              sortDir={sortDir}
+              onSort={toggleSort}
+            />
+            <ul className="mt-3 space-y-2 xl:hidden">
+              {sortedEntries.map((entry) => (
+                <li key={entry.id} className="rounded-sm border border-white/10 bg-black/20 p-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <p className="text-sm text-cream">{entry.reasonLabel ?? entry.reason}</p>
+                    <p
+                      className={cn(
+                        "shrink-0 text-sm tabular-nums font-medium",
+                        entry.delta >= 0 ? "text-gold" : "text-cream",
+                      )}
+                    >
+                      {entry.delta >= 0 ? "+" : ""}
+                      {entry.delta.toLocaleString()}
+                    </p>
+                  </div>
+                  <p className="mt-1 text-xs text-muted">
                     {new Date(entry.createdAt).toLocaleString()}
+                    {entry.orderId ? ` · ${entry.orderId}` : ""}
                   </p>
-                </div>
-                <span
-                  className={cn(
-                    "shrink-0 font-medium",
-                    entry.delta >= 0 ? "text-gold" : "text-cream",
-                  )}
-                >
-                  {entry.delta >= 0 ? "+" : ""}
-                  {entry.delta.toLocaleString()}
-                </span>
-              </li>
-            ))}
-          </ul>
+                </li>
+              ))}
+            </ul>
+            <div className={cn(tableWrapClass, "mt-3 hidden xl:block")}>
+            <table className="w-full min-w-[36rem] text-left text-sm">
+              <thead>
+                <tr className={tableHeadRowClass}>
+                  <SortableTh label="Activity" column="activity" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Order" column="order" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Date" column="date" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} />
+                  <SortableTh label="Points" column="points" sortKey={sortKey} sortDir={sortDir} onSort={toggleSort} align="right" />
+                </tr>
+              </thead>
+              <tbody>
+                {sortedEntries.map((entry) => (
+                  <tr key={entry.id} className={tableRowClass}>
+                    <td className={cn(tableCellClass, "text-cream")}>
+                      {entry.reasonLabel ?? entry.reason}
+                    </td>
+                    <td className={tableCellClass}>
+                      {entry.orderId ? (
+                        <Link
+                          href={`/account?tab=orders&order=${encodeURIComponent(entry.orderId)}`}
+                          className="text-cream hover:text-gold"
+                        >
+                          {entry.orderId}
+                        </Link>
+                      ) : (
+                        <span className="text-muted">—</span>
+                      )}
+                    </td>
+                    <td className={cn(tableCellClass, "whitespace-nowrap text-muted")}>
+                      {new Date(entry.createdAt).toLocaleString()}
+                    </td>
+                    <td
+                      className={cn(
+                        tableCellClass,
+                        "text-right tabular-nums font-medium",
+                        entry.delta >= 0 ? "text-gold" : "text-cream",
+                      )}
+                    >
+                      {entry.delta >= 0 ? "+" : ""}
+                      {entry.delta.toLocaleString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          </>
         )}
       </div>
     </SectionCard>
@@ -182,23 +251,32 @@ function SectionCard({
   children,
   action,
 }: {
-  eyebrow: string;
-  title: string;
+  eyebrow?: string;
+  title?: string;
   description?: string;
   children: ReactNode;
   action?: ReactNode;
 }) {
+  const hasHead = Boolean(eyebrow || title || description || action);
   return (
-    <section className="border border-white/10 bg-black/20 p-4 sm:p-5 lg:p-6">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-[10px] uppercase tracking-[0.18em] text-gold">{eyebrow}</p>
-          <h2 className="mt-1 font-display text-xl text-cream sm:text-2xl">{title}</h2>
-          {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
+    <section className="min-w-0 border border-white/10 bg-black/20 px-4 py-4 sm:px-6 sm:py-5 lg:px-8">
+      {hasHead ? (
+        <div className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0">
+            {eyebrow ? (
+              <p className="text-[10px] uppercase tracking-[0.18em] text-gold">{eyebrow}</p>
+            ) : null}
+            {title ? (
+              <h2 className={cn("font-display text-xl text-cream sm:text-2xl", eyebrow && "mt-1")}>
+                {title}
+              </h2>
+            ) : null}
+            {description ? <p className="mt-1 text-sm text-muted">{description}</p> : null}
+          </div>
+          {action}
         </div>
-        {action}
-      </div>
-      <div className="mt-5">{children}</div>
+      ) : null}
+      {children}
     </section>
   );
 }
@@ -295,7 +373,7 @@ export default function AccountPage() {
   const tabs = useMemo(
     () =>
       [
-        { id: "overview" as const, label: "Overview", icon: LayoutGrid, description: "Snapshot of your loyalty, orders, and store." },
+        { id: "overview" as const, label: "Overview", icon: LayoutGrid, description: "Loyalty, orders, spend trends, and your home store." },
         { id: "orders" as const, label: "Orders", icon: Package, description: "Track status and reorder favorites in one tap." },
         { id: "addresses" as const, label: "Addresses", icon: MapPin, description: "Saved delivery addresses for faster checkout." },
         { id: "stores" as const, label: "Store & prefs", icon: Store, description: "Home store and shopping preferences." },
@@ -319,9 +397,33 @@ export default function AccountPage() {
     const params = new URLSearchParams(searchParams.toString());
     if (id === "overview") params.delete("tab");
     else params.set("tab", id);
+    params.delete("order");
     const qs = params.toString();
     router.replace(qs ? `/account?${qs}` : "/account", { scroll: false });
   };
+
+  const setOrderParam = (orderId: string | null) => {
+    setTab("orders");
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "orders");
+    if (orderId) params.set("order", orderId);
+    else params.delete("order");
+    router.replace(`/account?${params.toString()}`, { scroll: false });
+  };
+
+  const selectedOrderId = searchParams.get("order");
+  const viewingOrder = tab === "orders" && Boolean(selectedOrderId);
+  const selectedOrder = useMemo(() => {
+    if (!selectedOrderId) return null;
+    const raw = profile.orders.find((o) => o.id === selectedOrderId);
+    return raw ? enrich(raw) : null;
+  }, [selectedOrderId, profile.orders, enrich]);
+
+  useEffect(() => {
+    if (tab === "orders" && selectedOrderId) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
+  }, [tab, selectedOrderId]);
 
   if (!authReady || !isLoggedIn) {
     return (
@@ -474,7 +576,7 @@ export default function AccountPage() {
           );
         })}
       </ul>
-      <div className="shrink-0 border-t border-white/10 p-3">
+      <div className="shrink-0 space-y-2 border-t border-white/10 p-3">
         <div className="flex items-center gap-3 rounded-sm border border-white/10 bg-white/[0.03] px-2.5 py-2">
           <UserAvatar name={profile.name} src={profile.avatarUrl} size={36} />
           <div className="min-w-0 flex-1">
@@ -484,6 +586,34 @@ export default function AccountPage() {
             </p>
           </div>
         </div>
+        <div className="grid grid-cols-2 gap-2">
+          <Link href="/wishlist" className="min-w-0" onClick={opts?.onNavigate}>
+            <Button size="sm" variant="secondary" className="w-full">
+              <Heart size={14} />
+              Wishlist
+            </Button>
+          </Link>
+          <Button
+            size="sm"
+            variant="ghost"
+            className="w-full"
+            onClick={async () => {
+              await logout();
+              window.location.assign("/login");
+            }}
+          >
+            <LogOut size={14} />
+            Sign out
+          </Button>
+        </div>
+        {isStaffRole(profile) ? (
+          <Link href="/dashboard" className="block" onClick={opts?.onNavigate}>
+            <Button size="sm" variant="secondary" className="w-full">
+              <Shield size={14} />
+              Dashboard
+            </Button>
+          </Link>
+        ) : null}
       </div>
     </nav>
   );
@@ -512,7 +642,8 @@ export default function AccountPage() {
         {renderNav()}
       </aside>
 
-      {/* Mobile top bar */}
+      {/* Mobile top bar — hidden on order detail (that view has its own back row) */}
+      {!viewingOrder ? (
       <div
         className={cn(
           "sticky z-30 border-b border-white/10 bg-[#090909]/92 backdrop-blur-xl lg:hidden",
@@ -531,15 +662,16 @@ export default function AccountPage() {
           </button>
           <div className="min-w-0 flex-1">
             <p className="truncate text-[10px] uppercase tracking-[0.18em] text-gold">
-              Account · {activeTab.label}
+              Account
             </p>
             <p className="truncate font-display text-lg leading-tight text-cream sm:text-xl">
-              {firstName}
+              {activeTab.label}
             </p>
           </div>
           <UserAvatar name={profile.name} src={profile.avatarUrl} size={36} />
         </div>
       </div>
+      ) : null}
 
       <AnimatePresence>
         {sidebarOpen ? (
@@ -587,86 +719,44 @@ export default function AccountPage() {
 
       {/* Main content — full remaining width */}
       <div className={cn("relative pl-0", CONTENT_PAD)}>
-        <div className="w-full min-w-0 px-3 py-5 sm:px-5 sm:py-6 md:px-6 md:py-8 lg:px-8 xl:px-10 2xl:px-12">
-          <header className="mb-5 hidden border-b border-white/10 pb-5 lg:block">
-            <div className="flex flex-wrap items-end justify-between gap-4">
+        <div
+          className={cn(
+            "w-full min-w-0 px-4 sm:px-6 lg:px-8 xl:px-10",
+            viewingOrder ? "py-4 sm:py-5" : "py-5 sm:py-6",
+          )}
+        >
+          {!viewingOrder ? (
+            <header className="mb-5 flex flex-wrap items-start justify-between gap-3 border-b border-white/10 pb-4">
               <div className="min-w-0">
-                <p className="flex items-center gap-2 text-[10px] uppercase tracking-[0.22em] text-gold">
-                  <ActiveIcon size={12} className="text-gold" aria-hidden />
+                <p className="hidden items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-gold lg:flex">
+                  <ActiveIcon size={12} aria-hidden />
                   Account · {activeTab.label}
                 </p>
-                <h1 className="mt-2 font-display text-3xl text-cream xl:text-4xl">
+                <h1 className="hidden font-display text-3xl text-cream lg:mt-1.5 lg:block">
                   {activeTab.label}
                 </h1>
-                <p className="mt-2 max-w-2xl text-sm text-muted">{activeTab.description}</p>
+                <p className="max-w-xl text-sm text-muted">{activeTab.description}</p>
               </div>
-              <div className="flex flex-wrap gap-2">
-                <Link href="/wishlist">
-                  <Button size="sm" variant="secondary">
-                    <Heart size={14} />
-                    Wishlist
-                  </Button>
-                </Link>
-                {isStaffRole(profile) ? (
-                  <Link href="/dashboard">
-                    <Button size="sm" variant="secondary">
-                      <Shield size={14} />
-                      Dashboard
-                    </Button>
-                  </Link>
-                ) : null}
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={async () => {
-                    await logout();
-                    window.location.assign("/login");
-                  }}
-                >
-                  <LogOut size={14} />
-                  Sign out
-                </Button>
-              </div>
-            </div>
-          </header>
-
-          <div className="mb-4 flex flex-wrap gap-2 lg:hidden">
-            <Link href="/wishlist">
-              <Button size="sm" variant="secondary">
-                <Heart size={14} />
-                Wishlist
-              </Button>
-            </Link>
-            {isStaffRole(profile) ? (
-              <Link href="/dashboard">
-                <Button size="sm" variant="secondary">
-                  <Shield size={14} />
-                  Dashboard
-                </Button>
-              </Link>
-            ) : null}
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={async () => {
-                await logout();
-                window.location.assign("/login");
-              }}
-            >
-              <LogOut size={14} />
-              Sign out
-            </Button>
-          </div>
+            </header>
+          ) : null}
 
           {(message || error) && (
-            <p
+            <div
+              role="status"
               className={cn(
-                "mb-4 text-sm",
-                message ? "text-emerald-300" : "text-red-300",
+                "mb-4 flex items-start gap-2.5 rounded-sm border px-3 py-2.5 text-sm",
+                message
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-100"
+                  : "border-red-500/25 bg-red-500/10 text-red-200",
               )}
             >
-              {message || error}
-            </p>
+              {message ? (
+                <CheckCircle2 size={16} className="mt-0.5 shrink-0" aria-hidden />
+              ) : (
+                <AlertCircle size={16} className="mt-0.5 shrink-0" aria-hidden />
+              )}
+              <p>{message || error}</p>
+            </div>
           )}
 
           <div className="space-y-5">
@@ -713,6 +803,8 @@ export default function AccountPage() {
                 ))}
               </div>
 
+              <AccountOverviewCharts orders={profile.orders} />
+
               <SectionCard
                 eyebrow="Quick actions"
                 title="Keep shopping simple"
@@ -733,12 +825,18 @@ export default function AccountPage() {
             </>
           ) : null}
 
-          {tab === "orders" ? (
-            <SectionCard
-              eyebrow="History"
-              title="Your orders"
-              description="Track status and reorder favorites in one tap."
-            >
+          {tab === "orders" && selectedOrder ? (
+            <CustomerOrderDetail
+              order={selectedOrder}
+              onBack={() => setOrderParam(null)}
+              onReorder={() => onReorder(selectedOrder.id)}
+              onHelp={() => {
+                setSupportOrderId(selectedOrder.id);
+                selectTab("support");
+              }}
+            />
+          ) : tab === "orders" ? (
+            <SectionCard>
               <p className="mb-4 text-xs text-muted">
                 Have a tracking code?{" "}
                 <Link href="/track" className="text-gold hover:underline">
@@ -748,6 +846,13 @@ export default function AccountPage() {
               {reorderMsg ? <p className="mb-3 text-sm text-gold">{reorderMsg}</p> : null}
               {ordersLoading && profile.orders.length === 0 ? (
                 <p className="text-sm text-muted">Loading orders…</p>
+              ) : selectedOrderId && !selectedOrder && !ordersLoading ? (
+                <div className="rounded-sm border border-dashed border-white/15 px-4 py-10 text-center">
+                  <p className="text-sm text-cream">That order isn’t in your history.</p>
+                  <Button size="sm" className="mt-3" onClick={() => setOrderParam(null)}>
+                    Back to orders
+                  </Button>
+                </div>
               ) : profile.orders.length === 0 ? (
                 <div className="rounded-sm border border-dashed border-white/15 px-4 py-10 text-center">
                   <p className="text-sm text-cream">No orders yet</p>
@@ -756,282 +861,34 @@ export default function AccountPage() {
                   </Link>
                 </div>
               ) : (
-                <ul className="space-y-3">
-                  {profile.orders.slice(0, 20).map((raw) => {
-                    const order = enrich(raw);
-                    const itemCount = order.items.reduce((n, i) => n + i.quantity, 0);
-                    return (
-                      <li
-                        key={order.id}
-                        className="rounded-sm border border-white/10 bg-black/20 p-4"
-                      >
-                        <div className="flex flex-wrap items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="font-medium text-cream">{order.id}</p>
-                            <p className="mt-1 text-xs uppercase tracking-[0.12em] text-muted">
-                              {order.date} · {itemCount} item{itemCount === 1 ? "" : "s"} ·{" "}
-                              {customerStatusLabel(order)}
-                              {order.tracking ? ` · ${order.tracking}` : ""}
-                            </p>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <span className="tabular-nums text-gold">
-                              {formatPrice(order.total)}
-                            </span>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="secondary"
-                              onClick={() => onReorder(order.id)}
-                            >
-                              <RotateCcw size={13} />
-                              Reorder
-                            </Button>
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="ghost"
-                              onClick={() => {
-                                setSupportOrderId(order.id);
-                                selectTab("support");
-                              }}
-                            >
-                              <Headphones size={13} />
-                              Help
-                            </Button>
-                          </div>
-                        </div>
-                        {order.fulfillment !== "pos" ? (
-                          <div className="mt-4 border-t border-white/10 pt-4">
-                            <OrderTrackingTimeline order={order} compact />
-                          </div>
-                        ) : null}
-                        {order.status === "delivered" || order.status === "picked_up" || order.status === "completed" ? (
-                          <div className="mt-4 space-y-4 border-t border-white/10 pt-4">
-                            <p className="text-[10px] uppercase tracking-[0.14em] text-gold">
-                              Leave a review
-                            </p>
-                            {order.fulfillment === "delivery" ? (
-                              <ReviewForm
-                                targetType="delivery"
-                                orderId={order.id}
-                                locationId={order.locationId}
-                              />
-                            ) : null}
-                            <ReviewForm
-                              targetType="store"
-                              locationId={order.locationId}
-                            />
-                            {order.items[0] ? (
-                              <p className="text-xs text-muted">
-                                Rate a bottle:{" "}
-                                {order.items.slice(0, 3).map((item, idx) => {
-                                  const product = getProductById(item.productId);
-                                  if (!product) return null;
-                                  return (
-                                    <span key={item.productId}>
-                                      {idx > 0 ? " · " : ""}
-                                      <Link
-                                        href={`/products/${product.slug}`}
-                                        className="text-gold hover:underline"
-                                      >
-                                        {product.name}
-                                      </Link>
-                                    </span>
-                                  );
-                                })}
-                              </p>
-                            ) : null}
-                          </div>
-                        ) : null}
-                      </li>
-                    );
-                  })}
-                </ul>
+                <CustomerOrdersList
+                  orders={profile.orders.map((raw) => enrich(raw))}
+                  onOpen={setOrderParam}
+                  onReorder={onReorder}
+                  onHelp={(orderId) => {
+                    setSupportOrderId(orderId);
+                    selectTab("support");
+                  }}
+                />
               )}
             </SectionCard>
           ) : null}
 
           {tab === "addresses" ? (
-            <SectionCard
-              eyebrow="Delivery"
-              title="Saved addresses"
-              description="Apply these at checkout in one tap."
-              action={
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="secondary"
-                  disabled={busy || addresses.length >= 12}
-                  onClick={() =>
-                    setEditingAddress({
-                      ...emptyAddress(),
-                      isDefault: addresses.length === 0,
-                    })
-                  }
-                >
-                  Add address
-                </Button>
-              }
-            >
-              {editingAddress ? (
-                <div className="mb-4 space-y-3 rounded-sm border border-(--gold)/25 bg-(--gold)/5 p-3 sm:p-4">
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="block text-xs text-muted">
-                      Label
-                      <Input
-                        className="mt-1"
-                        value={editingAddress.label}
-                        onChange={(e) =>
-                          setEditingAddress({ ...editingAddress, label: e.target.value })
-                        }
-                        placeholder="Home, Work…"
-                      />
-                    </label>
-                    <label className="block text-xs text-muted sm:col-span-2">
-                      Street
-                      <Input
-                        className="mt-1"
-                        value={editingAddress.line1}
-                        onChange={(e) =>
-                          setEditingAddress({ ...editingAddress, line1: e.target.value })
-                        }
-                        required
-                      />
-                    </label>
-                    <label className="block text-xs text-muted">
-                      City
-                      <Input
-                        className="mt-1"
-                        value={editingAddress.city}
-                        onChange={(e) =>
-                          setEditingAddress({ ...editingAddress, city: e.target.value })
-                        }
-                      />
-                    </label>
-                    <div className="grid grid-cols-2 gap-3">
-                      <label className="block text-xs text-muted">
-                        State
-                        <Input
-                          className="mt-1"
-                          value={editingAddress.state}
-                          onChange={(e) =>
-                            setEditingAddress({ ...editingAddress, state: e.target.value })
-                          }
-                        />
-                      </label>
-                      <label className="block text-xs text-muted">
-                        ZIP
-                        <Input
-                          className="mt-1"
-                          value={editingAddress.zip}
-                          onChange={(e) =>
-                            setEditingAddress({ ...editingAddress, zip: e.target.value })
-                          }
-                        />
-                      </label>
-                    </div>
-                  </div>
-                  <label className="flex items-center gap-2 text-sm text-cream">
-                    <input
-                      type="checkbox"
-                      checked={editingAddress.isDefault}
-                      onChange={(e) =>
-                        setEditingAddress({ ...editingAddress, isDefault: e.target.checked })
-                      }
-                    />
-                    Default address
-                  </label>
-                  <div className="flex flex-wrap gap-2">
-                    <Button
-                      type="button"
-                      size="sm"
-                      loading={busy}
-                      onClick={() => {
-                        const exists = addresses.some((a) => a.id === editingAddress.id);
-                        const next = exists
-                          ? addresses.map((a) =>
-                              a.id === editingAddress.id ? editingAddress : a,
-                            )
-                          : [...addresses, editingAddress];
-                        const withDefault = editingAddress.isDefault
-                          ? next.map((a) => ({
-                              ...a,
-                              isDefault: a.id === editingAddress.id,
-                            }))
-                          : next;
-                        void saveAddresses(withDefault);
-                      }}
-                    >
-                      Save address
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => setEditingAddress(null)}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              ) : null}
-
-              {addresses.length === 0 && !editingAddress ? (
-                <p className="text-sm text-muted">No saved addresses yet.</p>
-              ) : (
-                <ul className="space-y-2">
-                  {addresses.map((address) => (
-                    <li
-                      key={address.id}
-                      className="flex flex-wrap items-start justify-between gap-3 rounded-sm border border-white/10 px-3 py-3"
-                    >
-                      <div className="min-w-0">
-                        <p className="text-sm text-cream">
-                          {address.label}
-                          {address.isDefault ? (
-                            <span className="ml-2 text-[10px] uppercase tracking-[0.12em] text-gold">
-                              Default
-                            </span>
-                          ) : null}
-                        </p>
-                        <p className="mt-1 text-xs text-muted">
-                          {address.line1}, {address.city}, {address.state} {address.zip}
-                        </p>
-                      </div>
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() => setEditingAddress(address)}
-                        >
-                          Edit
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          onClick={() =>
-                            void saveAddresses(addresses.filter((a) => a.id !== address.id))
-                          }
-                        >
-                          Remove
-                        </Button>
-                      </div>
-                    </li>
-                  ))}
-                </ul>
-              )}
+            <SectionCard>
+              <CustomerAddressesPanel
+                addresses={addresses}
+                editing={editingAddress}
+                busy={busy}
+                onEdit={setEditingAddress}
+                onChangeDraft={setEditingAddress}
+                onSave={(next) => void saveAddresses(next)}
+              />
             </SectionCard>
           ) : null}
 
           {tab === "stores" ? (
-            <SectionCard
-              eyebrow="Preferences"
-              title="Favorite store & shopping prefs"
-              description="We use these to speed up cart and checkout."
-            >
+            <SectionCard>
               <div className="grid gap-4 sm:grid-cols-2">
                 <div>
                   <Select
@@ -1174,11 +1031,7 @@ export default function AccountPage() {
           ) : null}
 
           {tab === "support" ? (
-            <SectionCard
-              eyebrow="Help"
-              title="Support center"
-              description="Tickets auto-route to the right store, owner, or platform team."
-            >
+            <SectionCard>
               <CustomerSupportCenter
                 compact
                 defaultOrderId={supportOrderId || undefined}
@@ -1188,7 +1041,7 @@ export default function AccountPage() {
           ) : null}
 
           {tab === "profile" ? (
-            <SectionCard eyebrow="Account" title="Profile & security">
+            <SectionCard>
               <form className="space-y-5" onSubmit={saveProfile}>
                 <AvatarUpload
                   name={name}

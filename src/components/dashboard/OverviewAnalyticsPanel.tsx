@@ -273,7 +273,7 @@ function AnalyticsBody({
     { label: "Shipday deliveries", value: String(t.shipdayDeliveryOrders ?? 0) },
     { label: "Pickup orders", value: String(t.pickupOrders) },
     { label: "Cancelled", value: String(t.cancelledOrders) },
-    { label: "Refunds*", value: formatPrice(t.refunds), hint: "Cancelled order value (proxy)" },
+    { label: "Refunds", value: formatPrice(t.refunds), hint: "Recorded refunds in this range" },
     { label: "New customers", value: String(t.newCustomers) },
     { label: "Returning", value: String(t.returningCustomers) },
   ];
@@ -317,7 +317,7 @@ function AnalyticsBody({
           >
             {card.label}
           </p>
-          <p className="mt-2 truncate font-display text-xl tabular-nums text-cream sm:text-2xl">
+          <p className="font-price mt-2 truncate text-xl text-cream sm:text-2xl">
             {card.value}
           </p>
         </div>
@@ -356,8 +356,7 @@ function AnalyticsBody({
         <h3 className="text-[10px] uppercase tracking-[0.16em] text-muted">Financial</h3>
         {renderCards(financeCards)}
         <p className="text-[11px] text-muted">
-          *Refunds currently use cancelled order value until payment refunds are tracked. Delivery /
-          3P costs show when configured.
+          Delivery / 3P costs show when configured.
         </p>
       </section>
 

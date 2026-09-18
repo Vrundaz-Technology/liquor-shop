@@ -45,18 +45,22 @@ async function snapshotActor(db: Db, userId?: string | null) {
 
 export async function recordActivity(input: ActivityInput, db: Db = prisma) {
   if (!isDbConfigured()) return;
-  const actor = await snapshotActor(db, input.actorUserId);
-  await db.activityLog.create({
-    data: {
-      ...actor,
-      action: input.action,
-      entityType: input.entityType,
-      entityId: input.entityId,
-      summary: input.summary,
-      metadata: input.metadata as Prisma.InputJsonValue | undefined,
-      locationId: input.locationId,
-    },
-  });
+  try {
+    const actor = await snapshotActor(db, input.actorUserId);
+    await db.activityLog.create({
+      data: {
+        ...actor,
+        action: input.action,
+        entityType: input.entityType,
+        entityId: input.entityId,
+        summary: input.summary,
+        metadata: input.metadata as Prisma.InputJsonValue | undefined,
+        locationId: input.locationId,
+      },
+    });
+  } catch (error) {
+    console.error("[recordActivity]", input.action, input.entityId, error);
+  }
 }
 
 export function mapActivity(row: {
@@ -123,7 +127,17 @@ export async function fetchActivityLogs(filters: {
 
   const andParts: Prisma.ActivityLogWhereInput[] = [];
   if (filters.locationId) {
-    andParts.push({ locationId: filters.locationId });
+    andParts.push({
+      OR: [
+        { locationId: filters.locationId },
+        {
+          AND: [
+            { locationId: null },
+            { entityType: { in: ["promotion", "loyalty", "customer", "role"] } },
+          ],
+        },
+      ],
+    });
   } else if (filters.locationIds) {
     andParts.push({
       OR: [

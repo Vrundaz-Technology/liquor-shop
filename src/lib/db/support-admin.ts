@@ -1,7 +1,9 @@
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { SAMS_ORG_ID, resolveLocationOrganizationId } from "@/lib/db/organization";
-import { routeSupportTicket } from "@/lib/support/routing";
+import { routeSupportTicket, SUPPORT_STAFF_STATUS_LABELS } from "@/lib/support/routing";
+import { addColumnIfMissing } from "@/lib/db/schema-guard";
 import type {
+  SupportAttachment,
   SupportCategory,
   SupportMessage,
   SupportTicket,
@@ -52,6 +54,7 @@ export async function ensureSupportSchema() {
       INDEX support_messages_ticket_idx (ticket_id)
     ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci
   `);
+  await addColumnIfMissing("support_messages", "attachments", "JSON NULL");
   ready = true;
 }
 
@@ -81,8 +84,46 @@ type MessageRow = {
   author_name: string;
   author_role: string;
   body: string;
+  attachments?: unknown;
   created_at: Date | string;
 };
+
+type TicketListRow = TicketRow & {
+  last_body?: string | null;
+  message_count?: number | bigint | null;
+};
+
+export function parseSupportAttachments(value: unknown): SupportAttachment[] {
+  let raw = value;
+  if (typeof raw === "string") {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return [];
+    }
+  }
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== "object") return null;
+      const row = item as Record<string, unknown>;
+      const url = typeof row.url === "string" ? row.url : "";
+      if (!url.startsWith("/uploads/") || url.length > 300) return null;
+      return {
+        url,
+        name: typeof row.name === "string" && row.name.trim() ? row.name.trim().slice(0, 191) : "Attachment",
+        type: typeof row.type === "string" ? row.type.slice(0, 80) : "application/octet-stream",
+        size: Math.max(0, Number(row.size) || 0),
+      } satisfies SupportAttachment;
+    })
+    .filter((item): item is SupportAttachment => Boolean(item))
+    .slice(0, 5);
+}
+
+function attachmentsJson(attachments?: SupportAttachment[] | null) {
+  const clean = parseSupportAttachments(attachments ?? []);
+  return clean.length ? JSON.stringify(clean) : null;
+}
 
 function iso(value: Date | string) {
   return value instanceof Date ? value.toISOString() : String(value);
@@ -97,10 +138,14 @@ export function mapSupportMessage(row: MessageRow): SupportMessage {
     authorRole: row.author_role as SupportMessage["authorRole"],
     body: row.body,
     createdAt: iso(row.created_at),
+    attachments: parseSupportAttachments(row.attachments),
   };
 }
 
-export function mapSupportTicket(row: TicketRow, messages: SupportMessage[] = []): SupportTicket {
+export function mapSupportTicket(
+  row: TicketRow & { last_body?: string | null; message_count?: number | bigint | null },
+  messages: SupportMessage[] = [],
+): SupportTicket {
   return {
     id: row.id,
     organizationId: row.organization_id,
@@ -119,6 +164,8 @@ export function mapSupportTicket(row: TicketRow, messages: SupportMessage[] = []
     createdAt: iso(row.created_at),
     updatedAt: iso(row.updated_at),
     messages,
+    lastMessagePreview: row.last_body?.trim() || undefined,
+    messageCount: row.message_count != null ? Number(row.message_count) : undefined,
   };
 }
 
@@ -138,6 +185,7 @@ export async function createSupportTicket(input: {
   orderId?: string | null;
   locationId?: string | null;
   priority?: SupportTicket["priority"];
+  attachments?: SupportAttachment[];
 }): Promise<SupportTicket> {
   if (!isDbConfigured()) throw new Error("Database is not configured.");
   await ensureSupportSchema();
@@ -190,13 +238,14 @@ export async function createSupportTicket(input: {
 
   await prisma.$executeRawUnsafe(
     `INSERT INTO support_messages
-      (id, ticket_id, author_user_id, author_name, author_role, body, created_at)
-     VALUES (?,?,?,?, 'customer', ?, NOW(3))`,
+      (id, ticket_id, author_user_id, author_name, author_role, body, attachments, created_at)
+     VALUES (?,?,?,?, 'customer', ?, ?, NOW(3))`,
     messageId,
     id,
     input.user.id,
     input.user.name,
     input.body.trim(),
+    attachmentsJson(input.attachments),
   );
 
   return getSupportTicketById(id, { forUserId: input.user.id });
@@ -248,8 +297,14 @@ function assertStaffCanSeeTicket(actor: UserProfile, row: TicketRow) {
 export async function listCustomerTickets(userId: string): Promise<SupportTicket[]> {
   if (!isDbConfigured()) return [];
   await ensureSupportSchema();
-  const rows = await prisma.$queryRawUnsafe<TicketRow[]>(
-    `SELECT * FROM support_tickets WHERE user_id = ? ORDER BY updated_at DESC LIMIT 50`,
+  const rows = await prisma.$queryRawUnsafe<TicketListRow[]>(
+    `SELECT t.*,
+            (SELECT m.body FROM support_messages m WHERE m.ticket_id = t.id ORDER BY m.created_at DESC LIMIT 1) AS last_body,
+            (SELECT COUNT(*) FROM support_messages m WHERE m.ticket_id = t.id) AS message_count
+     FROM support_tickets t
+     WHERE t.user_id = ?
+     ORDER BY t.updated_at DESC
+     LIMIT 50`,
     userId,
   );
   return rows.map((row) => mapSupportTicket(row));
@@ -332,6 +387,7 @@ export async function addSupportMessage(input: {
   author: UserProfile;
   body: string;
   asStaff?: boolean;
+  attachments?: SupportAttachment[];
 }): Promise<SupportTicket> {
   if (!isDbConfigured()) throw new Error("Database is not configured.");
   await ensureSupportSchema();
@@ -349,14 +405,15 @@ export async function addSupportMessage(input: {
   const role = input.asStaff ? "staff" : "customer";
   await prisma.$executeRawUnsafe(
     `INSERT INTO support_messages
-      (id, ticket_id, author_user_id, author_name, author_role, body, created_at)
-     VALUES (?,?,?,?,?,?, NOW(3))`,
+      (id, ticket_id, author_user_id, author_name, author_role, body, attachments, created_at)
+     VALUES (?,?,?,?,?,?,?, NOW(3))`,
     messageId,
     input.ticketId,
     input.author.id,
     input.author.name,
     role,
-    input.body.trim(),
+    input.body.trim() || (input.attachments?.length ? "Sent an attachment." : ""),
+    attachmentsJson(input.attachments),
   );
 
   const nextStatus =
@@ -387,7 +444,8 @@ export async function updateSupportTicket(input: {
 }): Promise<SupportTicket> {
   if (!isDbConfigured()) throw new Error("Database is not configured.");
   await ensureSupportSchema();
-  await getSupportTicketById(input.ticketId, { actor: input.actor });
+  const current = await getSupportTicketById(input.ticketId, { actor: input.actor });
+  const previousStatus = current.status;
 
   const sets: string[] = ["updated_at = NOW(3)"];
   const params: unknown[] = [];
@@ -408,6 +466,19 @@ export async function updateSupportTicket(input: {
     `UPDATE support_tickets SET ${sets.join(", ")} WHERE id = ?`,
     ...params,
   );
+
+  if (input.status && input.status !== previousStatus) {
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO support_messages
+        (id, ticket_id, author_user_id, author_name, author_role, body, attachments, created_at)
+       VALUES (?,?,?,?, 'system', ?, NULL, NOW(3))`,
+      `msg-${crypto.randomUUID()}`,
+      input.ticketId,
+      input.actor.id,
+      input.actor.name,
+      `Status changed from ${SUPPORT_STAFF_STATUS_LABELS[previousStatus]} to ${SUPPORT_STAFF_STATUS_LABELS[input.status]}.`,
+    );
+  }
 
   return getSupportTicketById(input.ticketId, { actor: input.actor });
 }

@@ -7,6 +7,13 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** JSON.stringify cannot serialize BigInt (MySQL INT/BIGINT via Prisma raw). */
+export function jsonSafe<T>(value: T): T {
+  return JSON.parse(
+    JSON.stringify(value, (_key, v) => (typeof v === "bigint" ? Number(v) : v)),
+  ) as T;
+}
+
 /** Shared dark native <select> styles — prefer NativeSelect so the chevron arrow is shown. */
 export const nativeSelectClass =
   "appearance-none rounded-sm border border-white/10 bg-(--bg-elevated) px-3 py-2.5 text-sm text-cream outline-none transition scheme-dark hover:border-white/20 focus:border-(--gold)/45 [&_option]:bg-(--bg-elevated) [&_option]:text-cream";

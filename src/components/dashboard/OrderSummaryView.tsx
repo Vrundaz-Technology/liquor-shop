@@ -14,11 +14,12 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
+import { OrderChargeLines, OrderRewardsCard } from "@/components/orders/OrderCharges";
 import { getLocationById } from "@/data/locations";
 import { getProductById } from "@/data/products";
-import { pricingFromLocation } from "@/lib/fulfillment-pricing";
 import { cn, formatPrice } from "@/lib/utils";
 import { buildTrackingSteps } from "@/lib/commerce/order-tracking";
+import { orderPaymentCopy } from "@/lib/commerce/payments";
 import type { Order } from "@/types";
 
 export type SummaryOrder = Order & {
@@ -95,13 +96,6 @@ function activitySteps(order: Order) {
   }));
 }
 
-function paymentCopy(order: Order) {
-  if (order.status === "cancelled") return "Payment reversed / cancelled";
-  if (order.fulfillment === "pos") return "Paid at register";
-  if (order.status === "delivered") return "Paid · Order complete";
-  return "Payment captured at checkout";
-}
-
 type Props = {
   order: SummaryOrder;
   onBack: () => void;
@@ -112,9 +106,6 @@ type Props = {
 export function OrderSummaryView({ order, onBack, actions }: Props) {
   const backRef = useRef<HTMLButtonElement>(null);
   const location = getLocationById(order.locationId);
-  const pricing = pricingFromLocation(location);
-  const subtotal = order.items.reduce((sum, item) => sum + item.price * item.quantity, 0);
-  const tax = Math.round(subtotal * pricing.taxRate * 100) / 100;
   const bottles = bottleCount(order);
   const address = formatAddress(order);
   const phone = order.delivery?.phone;
@@ -135,7 +126,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
             type="button"
             ref={backRef}
             onClick={onBack}
-            className="inline-flex min-h-10 items-center gap-2 text-sm text-muted transition hover:text-cream print:hidden"
+            className="inline-flex min-h-10 cursor-pointer items-center gap-2 text-sm text-muted transition hover:text-cream print:hidden"
           >
             <ArrowLeft size={16} />
             Back to orders
@@ -155,7 +146,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
         <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
           <div className="min-w-0">
             <p className="text-[10px] uppercase tracking-[0.22em] text-gold">Order summary</p>
-            <h2 className="mt-1 font-display text-3xl text-cream wrap-break-word sm:text-4xl">
+            <h2 className="mt-1 text-2xl font-medium tracking-tight text-cream wrap-break-word sm:text-3xl">
               {order.id}
             </h2>
             <p className="mt-2 text-sm text-muted">
@@ -297,6 +288,8 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
             </ol>
           </section>
 
+          <OrderRewardsCard order={order} />
+
           {actions ? (
             <section className="border border-white/10 bg-white/[0.02] p-4 sm:p-5 print:hidden">
               <p className="mb-3 text-[10px] uppercase tracking-[0.18em] text-gold">
@@ -317,7 +310,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
               </p>
               <p className="mt-1 text-xs text-muted">{order.id}</p>
             </div>
-            <p className="font-display text-xl tabular-nums text-gold sm:text-2xl">
+            <p className="font-price text-xl text-gold sm:text-2xl">
               {formatPrice(order.total)}
             </p>
           </div>
@@ -357,21 +350,8 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
             })}
           </ul>
 
-          <div className="mt-5 space-y-2.5 border-t border-white/10 pt-4 text-sm">
-            <div className="flex justify-between text-muted">
-              <span>Subtotal</span>
-              <span className="tabular-nums text-cream">{formatPrice(subtotal)}</span>
-            </div>
-            <div className="flex justify-between text-muted">
-              <span>Tax (est. {(pricing.taxRate * 100).toFixed(2)}%)</span>
-              <span className="tabular-nums text-cream">{formatPrice(tax)}</span>
-            </div>
-            <div className="flex items-end justify-between gap-3 border-t border-white/10 pt-3">
-              <span className="text-[10px] uppercase tracking-[0.16em] text-muted">Total</span>
-              <span className="font-display text-3xl tabular-nums text-gold">
-                {formatPrice(order.total)}
-              </span>
-            </div>
+          <div className="mt-5 border-t border-white/10 pt-4">
+            <OrderChargeLines order={order} />
           </div>
 
           <div
@@ -385,7 +365,7 @@ export function OrderSummaryView({ order, onBack, actions }: Props) {
             )}
           >
             <CheckCircle2 size={16} className="mt-0.5 shrink-0" />
-            <span>{paymentCopy(order)}</span>
+            <span>{orderPaymentCopy(order)}</span>
           </div>
         </aside>
       </div>

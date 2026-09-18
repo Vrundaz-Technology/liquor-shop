@@ -13,7 +13,7 @@ import { categories as seedCategories } from "@/data/categories";
 import { products as seedProducts } from "@/data/products";
 import { locations as seedLocations } from "@/data/locations";
 import { events as seedEvents, reviews as seedReviews, demoUser } from "@/data/events";
-import { getCouponDiscount, resolvePromotionDiscount } from "@/lib/commerce";
+import { resolvePromotionDiscount } from "@/lib/commerce";
 import {
   loyaltyDiscountFromPoints,
 } from "@/lib/commerce/cart-pricing";
@@ -33,7 +33,9 @@ import {
 } from "@/lib/db/organization";
 import { initialOrderStatus, availableStock } from "@/lib/commerce/order-status";
 import * as loyaltyDb from "@/lib/db/loyalty";
-import { syncOrganizationCustomer } from "@/lib/db/crm";
+import { reverseOrganizationCustomer, syncOrganizationCustomer } from "@/lib/db/crm";
+import { recordChargeTx, refundRemainingInTx, ensurePaymentSchema } from "@/lib/db/payments";
+import { providerForMethod, type ShopPaymentMethod } from "@/lib/commerce/payments";
 
 import { moneyNumber } from "@/lib/db/money";
 
@@ -299,7 +301,8 @@ export async function fetchReviewsForProduct(productId: string) {
   return rows.map(mapReview);
 }
 
-export async function fetchInventoryState() {
+export async function fetchInventoryState(opts?: { includeCost?: boolean }) {
+  const includeCost = opts?.includeCost === true;
   if (!isDbConfigured()) {
     const stocks: Record<string, number> = {};
     const reserved: Record<string, number> = {};
@@ -367,12 +370,12 @@ export async function fetchInventoryState() {
   const hidden: Record<string, boolean> = {};
   for (const row of rows) {
     const key = `${row.location_id}:${row.product_id}`;
-    stocks[key] = row.on_hand;
-    reserved[key] = row.reserved ?? 0;
+    stocks[key] = Number(row.on_hand);
+    reserved[key] = Number(row.reserved ?? 0);
     prices[key] = {
       basePrice: row.base_price == null ? null : moneyNumber(row.base_price),
       salePrice: row.sale_price == null ? null : moneyNumber(row.sale_price),
-      costPrice: row.cost_price == null ? null : moneyNumber(row.cost_price),
+      costPrice: includeCost && row.cost_price != null ? moneyNumber(row.cost_price) : null,
       promoPrice: row.promo_price == null ? null : moneyNumber(row.promo_price),
     };
     if (row.hidden) hidden[key] = true;
@@ -457,7 +460,9 @@ export async function fetchUserByEmail(email: string): Promise<UserProfile | nul
     },
   });
   if (!row) return null;
-  const orders = await Promise.all(row.orders.map((order) => hydrateOrderDelivery(mapOrder(order))));
+  const orders = await loyaltyDb.attachLoyaltyToOrders(
+    await Promise.all(row.orders.map((order) => hydrateOrderDelivery(mapOrder(order)))),
+  );
   return attachProfileExtras(mapUser(row, orders));
 }
 
@@ -487,7 +492,9 @@ export async function fetchUserById(id: string): Promise<UserProfile | null> {
     },
   });
   if (!row) return null;
-  const orders = await Promise.all(row.orders.map((order) => hydrateOrderDelivery(mapOrder(order))));
+  const orders = await loyaltyDb.attachLoyaltyToOrders(
+    await Promise.all(row.orders.map((order) => hydrateOrderDelivery(mapOrder(order)))),
+  );
   return attachProfileExtras(mapUser(row, orders));
 }
 
@@ -1373,6 +1380,51 @@ async function ensureCustomer(
   });
 }
 
+function orderActivitySummary(input: {
+  isPos: boolean;
+  order: Order;
+  paymentMethod?: string;
+  walkIn: boolean;
+  customerName: string;
+}) {
+  const method = input.paymentMethod || (input.isPos ? "cash" : "online");
+  const who = input.walkIn ? "walk-in" : input.customerName;
+  const coupon = input.order.couponCode ? ` · ${input.order.couponCode}` : "";
+  if (input.isPos) {
+    return `POS ${method} ${input.order.fulfillment} ${input.order.id} · $${input.order.total.toFixed(2)} · ${who}`;
+  }
+  return `Placed ${input.order.fulfillment} order ${input.order.id} · $${input.order.total.toFixed(2)}${coupon}`;
+}
+
+function orderActivityChanges(input: {
+  order: Order;
+  customerName?: string;
+  loyaltyPointsUsed: number;
+  loyaltyPointsEarned: number;
+  cashierName?: string;
+}) {
+  const rows: { field: string; from?: unknown; to?: unknown }[] = [
+    { field: "created", to: input.order.id },
+    { field: "fulfillment", to: input.order.fulfillment },
+    { field: "total", to: `$${input.order.total.toFixed(2)}` },
+    { field: "items", to: input.order.items.length },
+    { field: "payment", to: input.order.paymentMethod ?? "online" },
+  ];
+  if (input.customerName) rows.push({ field: "customer", to: input.customerName });
+  if (input.order.couponCode) rows.push({ field: "coupon", to: input.order.couponCode });
+  if ((input.order.discountAmount ?? 0) > 0) {
+    rows.push({ field: "discount", to: `$${input.order.discountAmount!.toFixed(2)}` });
+  }
+  if (input.loyaltyPointsUsed > 0) {
+    rows.push({ field: "loyalty redeemed", to: input.loyaltyPointsUsed });
+  }
+  if (input.loyaltyPointsEarned > 0) {
+    rows.push({ field: "loyalty earned", to: input.loyaltyPointsEarned });
+  }
+  if (input.cashierName) rows.push({ field: "cashier", to: input.cashierName });
+  return rows;
+}
+
 export async function placeOrder(input: {
   email: string;
   name: string;
@@ -1384,6 +1436,8 @@ export async function placeOrder(input: {
   coupon?: string | null;
   loyaltyPointsRedeem?: number;
   delivery?: DeliveryAddress;
+  /** POS tender. Online checkout is always `online` and is not taken from the client. */
+  paymentMethod?: ShopPaymentMethod;
   /** When set, activity log uses this actor (e.g. POS cashier) instead of the customer. */
   activityActorUserId?: string;
   activityAction?: "order.placed" | "pos.sale";
@@ -1396,6 +1450,7 @@ export async function placeOrder(input: {
   await ensureInventoryVisibilityColumn();
   await ensureLocationPricingSchema();
   await ensureOrganizationSchema();
+  await ensurePaymentSchema();
 
   const organizationId =
     (await resolveLocationOrganizationId(input.locationId)) ?? SAMS_ORG_ID;
@@ -1447,11 +1502,21 @@ export async function placeOrder(input: {
       };
     });
 
-    let isFirstOrder: boolean | undefined;
-    if (input.userId) {
-      const prior = await tx.order.count({ where: { userId: input.userId } });
-      isFirstOrder = prior === 0;
-    }
+    const user = await ensureCustomer(tx, {
+      email: input.email,
+      name: input.name,
+      userId: input.userId,
+      preferredBranchId: input.locationId,
+    });
+
+    const prior = await tx.order.count({
+      where: {
+        userId: user.id,
+        organizationId,
+        status: { not: "cancelled" },
+      },
+    });
+    const isFirstOrder = prior === 0;
 
     const promo = await resolvePromotionDiscount({
       code: input.coupon,
@@ -1460,10 +1525,10 @@ export async function placeOrder(input: {
       locationId: input.locationId,
       items: promoItems,
       isFirstOrder,
+      userId: user.id,
+      db: tx,
     });
-    const promoDiscount =
-      promo?.discount ??
-      (input.coupon ? getCouponDiscount(input.coupon, subtotal) : 0);
+    const promoDiscount = promo?.discount ?? 0;
 
     let loyaltyDiscount = 0;
     let loyaltyPointsUsed = 0;
@@ -1473,7 +1538,7 @@ export async function placeOrder(input: {
       if (!program?.active) {
         throw new Error("Loyalty redemptions are not available right now.");
       }
-      const orgBalance = await loyaltyDb.getOrgLoyaltyBalance(organizationId, input.userId);
+      const orgBalance = await loyaltyDb.getOrgLoyaltyBalance(organizationId, user.id);
       const rate = program.redeemRate ?? 0.02;
       const maxDiscount = Math.max(0, subtotal - promoDiscount);
       const rewards = Array.isArray(program.rewards)
@@ -1498,6 +1563,13 @@ export async function placeOrder(input: {
       Math.random() * 900 + 100,
     )}`;
     const status = initialOrderStatus(input.fulfillment) as Order["status"];
+    const paymentMethod: ShopPaymentMethod =
+      input.fulfillment === "pos" || input.activityAction === "pos.sale"
+        ? input.paymentMethod === "card" || input.paymentMethod === "other"
+          ? input.paymentMethod
+          : "cash"
+        : "online";
+    const paymentProvider = providerForMethod(input.fulfillment, paymentMethod);
     const order: Order = {
       id: orderId,
       date: new Date().toISOString().slice(0, 10),
@@ -1509,6 +1581,9 @@ export async function placeOrder(input: {
       discountAmount: discount,
       deliveryFee: shipping,
       paymentStatus: "paid",
+      paymentMethod,
+      paymentProvider,
+      refundedAmount: 0,
       fulfillment: input.fulfillment,
       locationId: input.locationId,
       organizationId,
@@ -1524,19 +1599,7 @@ export async function placeOrder(input: {
       promotionId: promo?.id,
     };
 
-    const user = await ensureCustomer(tx, {
-      email: input.email,
-      name: input.name,
-      userId: input.userId,
-      preferredBranchId: input.locationId,
-    });
-
-    if (status === "completed" || input.fulfillment === "pos") {
-      await deductOrderStockTx(tx, input.locationId, input.items, order.id);
-    } else {
-      await reserveOrderStockTx(tx, input.locationId, input.items, order.id);
-    }
-
+    // Create the order first so inventory_ledger.order_id can satisfy the FK.
     await tx.order.create({
       data: {
         id: order.id,
@@ -1564,6 +1627,22 @@ export async function placeOrder(input: {
         },
       },
     });
+
+    await recordChargeTx(tx, {
+      orderId: order.id,
+      organizationId,
+      locationId: input.locationId,
+      fulfillment: input.fulfillment,
+      total: order.total,
+      method: paymentMethod,
+      actorUserId: input.activityActorUserId ?? user.id,
+    });
+
+    if (status === "completed" || input.fulfillment === "pos") {
+      await deductOrderStockTx(tx, input.locationId, input.items, order.id);
+    } else {
+      await reserveOrderStockTx(tx, input.locationId, input.items, order.id);
+    }
 
     return {
       order,
@@ -1628,11 +1707,13 @@ export async function placeOrder(input: {
     });
   }
 
-  await syncOrganizationCustomer({
-    organizationId: result.organizationId,
-    userId: result.userId,
-    orderTotal: result.order.total,
-  });
+  if (!skipEarn) {
+    await syncOrganizationCustomer({
+      organizationId: result.organizationId,
+      userId: result.userId,
+      orderTotal: result.order.total,
+    });
+  }
 
   await recordActivity({
     actorUserId: input.activityActorUserId ?? result.userId,
@@ -1640,22 +1721,33 @@ export async function placeOrder(input: {
     entityType: "order",
     entityId: result.order.id,
     locationId: result.order.locationId,
-    summary:
-      input.activityAction === "pos.sale"
-        ? `POS ${result.order.fulfillment} sale ${result.order.id} for $${result.order.total.toFixed(2)}`
-        : `Placed ${result.order.fulfillment} order ${result.order.id} for $${result.order.total.toFixed(2)}`,
+    summary: orderActivitySummary({
+      isPos: input.activityAction === "pos.sale",
+      order: result.order,
+      paymentMethod: result.order.paymentMethod,
+      walkIn: Boolean(input.activityMetadata?.walkIn),
+      customerName: input.name,
+    }),
     metadata: activityChanges(
-      [
-        { field: "created", to: result.order.id },
-        { field: "fulfillment", to: result.order.fulfillment },
-        { field: "total", to: `$${result.order.total.toFixed(2)}` },
-        { field: "items", to: result.order.items.length },
-      ],
+      orderActivityChanges({
+        order: result.order,
+        customerName: input.activityMetadata?.walkIn ? "Walk-in" : input.name,
+        loyaltyPointsUsed: result.loyaltyPointsUsed,
+        loyaltyPointsEarned: loyalty.points,
+        cashierName:
+          typeof input.activityMetadata?.cashierName === "string"
+            ? input.activityMetadata.cashierName
+            : undefined,
+      }),
       {
         itemCount: result.order.items.length,
         fulfillment: result.order.fulfillment,
         total: result.order.total,
         customerUserId: result.userId,
+        coupon: result.order.couponCode,
+        discount: result.order.discountAmount ?? 0,
+        loyaltyPointsUsed: result.loyaltyPointsUsed,
+        loyaltyPointsEarned: loyalty.points,
         ...input.activityMetadata,
       },
     ),
@@ -1725,7 +1817,11 @@ export async function placeOrder(input: {
   }
 
   return {
-    order: result.order,
+    order: {
+      ...result.order,
+      loyaltyPointsUsed: result.loyaltyPointsUsed || undefined,
+      loyaltyPointsEarned: loyalty.points || undefined,
+    },
     userId: result.userId,
     loyaltyPoints: loyalty.balance,
   };
@@ -1784,11 +1880,13 @@ export async function placePosOrder(input: {
     coupon: input.coupon,
     loyaltyPointsRedeem: customerUserId ? input.loyaltyPointsRedeem : undefined,
     delivery: input.delivery,
+    paymentMethod: input.paymentMethod ?? "cash",
     activityActorUserId: staff.id,
     activityAction: "pos.sale",
     activityMetadata: {
       paymentMethod: input.paymentMethod ?? "cash",
       walkIn,
+      customerName,
       customerPhone: input.customerPhone ?? null,
       cashierId: staff.id,
       cashierName: staff.name,
@@ -1829,18 +1927,19 @@ export async function createOrder(userId: string, order: Order) {
   return order;
 }
 
-const CANCELLABLE_STATUSES = new Set([
+const CUSTOMER_CANCELLABLE_STATUSES = new Set([
   "new",
   "accepted",
   "preparing",
+  "processing",
+]);
+
+const STAFF_CANCELLABLE_STATUSES = new Set([
+  ...CUSTOMER_CANCELLABLE_STATUSES,
   "ready",
   "assigned",
   "out_for_delivery",
   "ready_for_pickup",
-  "completed",
-  // legacy
-  "processing",
-  "shipped",
 ]);
 
 export async function cancelOrder(
@@ -1853,15 +1952,20 @@ export async function cancelOrder(
   },
 ) {
   if (!isDbConfigured()) return null;
+  await ensurePaymentSchema();
 
   const ownerUserId = opts?.asStaffForOwnerId ?? actorUserId;
+
+  const cancellable = opts?.asStaffForOwnerId
+    ? STAFF_CANCELLABLE_STATUSES
+    : CUSTOMER_CANCELLABLE_STATUSES;
 
   const cancelled = await prisma.$transaction(async (tx) => {
     const order = await tx.order.findFirst({
       where: { id: orderId, userId: ownerUserId },
       include: { items: true },
     });
-    if (!order || !CANCELLABLE_STATUSES.has(order.status)) return null;
+    if (!order || !cancellable.has(order.status)) return null;
     const previousStatus = order.status;
 
     await tx.order.update({
@@ -1917,14 +2021,27 @@ export async function cancelOrder(
       );
     }
 
+    const payment = await refundRemainingInTx(tx, {
+      orderId,
+      actorUserId,
+      reason: "Order cancelled",
+      idempotencyKey: `refund:${orderId}:cancel`,
+    });
+
+    const mapped = mapOrder({
+      ...order,
+      status: "cancelled",
+      driverId: null,
+      deliveryStatus: order.fulfillment === "delivery" ? "unassigned" : order.deliveryStatus,
+    });
+    mapped.paymentStatus = payment.paymentStatus;
+    mapped.refundedAmount = moneyNumber(order.total) - payment.remaining;
+
     return {
-      order: mapOrder({
-        ...order,
-        status: "cancelled",
-        driverId: null,
-        deliveryStatus: order.fulfillment === "delivery" ? "unassigned" : order.deliveryStatus,
-      }),
+      order: mapped,
       previousStatus,
+      organizationId: order.organizationId,
+      userId: order.userId,
     };
   });
 
@@ -1946,14 +2063,39 @@ export async function cancelOrder(
         ? `${who} cancelled order ${cancelled.order.id}`
         : `Cancelled order ${cancelled.order.id}`,
       metadata: activityChanges(
-        [{ field: "status", from: cancelled.previousStatus, to: "cancelled" }],
+        [
+          { field: "status", from: cancelled.previousStatus, to: "cancelled" },
+          {
+            field: "refund",
+            to: `$${(cancelled.order.refundedAmount ?? cancelled.order.total).toFixed(2)}`,
+          },
+        ],
         {
           total: cancelled.order.total,
           fulfillment: cancelled.order.fulfillment,
           staff: Boolean(opts?.asStaffForOwnerId),
+          paymentStatus: cancelled.order.paymentStatus,
         },
       ),
     });
+    const orgId = cancelled.organizationId ?? SAMS_ORG_ID;
+    try {
+      await reverseOrganizationCustomer({
+        organizationId: orgId,
+        userId: cancelled.userId,
+      });
+    } catch (error) {
+      console.error("[cancelOrder] CRM reverse failed", error);
+    }
+    try {
+      await loyaltyDb.reverseLoyaltyForCancelledOrder({
+        organizationId: orgId,
+        userId: cancelled.userId,
+        orderId: cancelled.order.id,
+      });
+    } catch (error) {
+      console.error("[cancelOrder] loyalty reverse failed", error);
+    }
   }
 
   return cancelled?.order ?? null;
@@ -2007,8 +2149,11 @@ export async function fetchBootstrapPayload(opts?: { includeReviews?: boolean })
     : [];
 
   return {
-    products,
-    locations,
+    products: products.map(({ costPrice: _cost, ...product }) => product),
+    locations: locations.map((location) => ({
+      ...location,
+      inventory: location.inventory.map(({ costPrice: _cost, ...row }) => row),
+    })),
     categories,
     events,
     reviews,

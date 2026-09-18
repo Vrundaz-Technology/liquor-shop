@@ -10,6 +10,7 @@ import { PanelLoading } from "@/components/dashboard/DashboardLoading";
 import { AccessDenied } from "@/components/dashboard/AccessDenied";
 import { useUserStore } from "@/store/user";
 import { isDbConnected } from "@/lib/runtime-data";
+import { useServerConnection } from "@/hooks/useServerConnection";
 import { apiAssignDelivery, apiFetchDeliveries, apiSendDeliveryToShipday, apiUpdateDeliveryStatus } from "@/lib/api-mutations";
 import { drivers as seedDrivers } from "@/data/drivers";
 import { demoUser } from "@/data/events";
@@ -187,10 +188,12 @@ function DeliveriesQueuePanel() {
   const [busy, setBusy] = useState<string | null>(null);
   const [viewMode, setViewMode] = usePersistedViewMode(DELIVERIES_VIEW_KEY, "cards");
   const { sortKey, sortDir, toggleSort } = useTableSort<SortKey>("status", "asc", ["status"]);
+  const { loaded, connected } = useServerConnection();
 
   const load = async () => {
+    if (!loaded) return;
     setLoading(true);
-    if (!isDbConnected()) {
+    if (!connected) {
       const fallback = demoUser.orders
         .filter((order) => order.fulfillment === "delivery" && order.status !== "cancelled")
         .map((order) => enrich(order));
@@ -228,11 +231,11 @@ function DeliveriesQueuePanel() {
   useEffect(() => {
     void load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [loaded, connected]);
 
   useEffect(() => {
-    if (!isDbConnected()) setDrivers(localDrivers);
-  }, [localDrivers]);
+    if (loaded && !connected) setDrivers(localDrivers);
+  }, [localDrivers, loaded, connected]);
 
   const canAdvanceOrder = (order: Order) => {
     if (canManage) return true;

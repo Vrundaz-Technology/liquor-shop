@@ -129,10 +129,11 @@ export const useUserStore = create<UserState>()((set, get) => ({
   },
   hydrateSession: async () => {
     // Optimistic UI from last session so header never flashes "Sign in".
+    // Do not apply preferredBranchId here — that overwrites the persisted
+    // "Shopping at" store (Waterfront) with the account default (Downtown).
     if (hasAuthHint()) {
       const sketched = profileFromSketch();
       if (sketched) {
-        syncPreferredBranch(sketched);
         set({ ...applyAuth(true, sketched), authReady: false });
       }
     }
@@ -142,7 +143,6 @@ export const useUserStore = create<UserState>()((set, get) => ({
       if (!getClientAccessToken()) {
         const refreshed = await refreshSession();
         if (refreshed?.user) {
-          syncPreferredBranch(refreshed.user);
           set({ ...applyAuth(true, refreshed.user), authReady: true });
           return;
         }
@@ -154,7 +154,6 @@ export const useUserStore = create<UserState>()((set, get) => ({
       }
 
       const { user } = await apiMe();
-      syncPreferredBranch(user);
       set({ ...applyAuth(true, user), authReady: true });
     } catch {
       clearClientAccessToken();

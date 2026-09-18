@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { cancelOrder, fetchInventoryState, placeOrder, StockConflictError } from "@/lib/db/queries";
+import { PromotionUsageLimitError } from "@/lib/commerce/promotions";
+import { PaymentError, refundOrder } from "@/lib/db/payments";
 import {
   countUnreadNewOrders,
   listStoreOrders,
@@ -11,6 +13,7 @@ import { getRequestUser, requirePermission, requireUser } from "@/lib/auth/requi
 import { hasPermission } from "@/lib/auth/permissions";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import type { Order } from "@/types";
+import { jsonSafe } from "@/lib/utils";
 
 export async function GET(request: Request) {
   try {
@@ -72,13 +75,16 @@ export async function POST(request: Request) {
       userId: actor?.id,
     });
     const inventory = await fetchInventoryState();
-    return NextResponse.json({ ...result, inventory }, { status: 201 });
+    return NextResponse.json(jsonSafe({ ...result, inventory }), { status: 201 });
   } catch (error) {
     if (error instanceof StockConflictError) {
       return NextResponse.json(
         { error: error.message, shortfalls: error.shortfalls },
         { status: 409 },
       );
+    }
+    if (error instanceof PromotionUsageLimitError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
     }
     if (error instanceof Error) {
       const known = [
@@ -118,6 +124,33 @@ export async function PATCH(request: Request) {
 
     const action = parsed.data.action ?? "cancel";
 
+    if (action === "refund") {
+      if (!hasPermission(user, "orders.manage")) {
+        return NextResponse.json({ error: "Order management is not allowed." }, { status: 403 });
+      }
+      try {
+        const refund = await refundOrder({
+          orderId: parsed.data.orderId,
+          actor: user,
+          amount: parsed.data.amount,
+          reason: parsed.data.reason,
+          restock: parsed.data.restock,
+          idempotencyKey: parsed.data.idempotencyKey,
+        });
+        const orders = await listStoreOrders(user, { q: parsed.data.orderId, limit: 40 });
+        const order = orders.find((row) => row.id === parsed.data.orderId);
+        const inventory = await fetchInventoryState();
+        return NextResponse.json(jsonSafe({ order, refund, inventory }));
+      } catch (err) {
+        if (err instanceof PaymentError) {
+          return NextResponse.json({ error: err.message }, { status: 400 });
+        }
+        const message = err instanceof Error ? err.message : "Failed to refund order.";
+        const status = message.includes("do not have") ? 403 : 500;
+        return NextResponse.json({ error: message }, { status });
+      }
+    }
+
     if (action === "status") {
       if (!hasPermission(user, "orders.manage")) {
         return NextResponse.json({ error: "Order management is not allowed." }, { status: 403 });
@@ -155,7 +188,7 @@ export async function PATCH(request: Request) {
           );
         }
         const inventory = await fetchInventoryState();
-        return NextResponse.json({ order, inventory });
+        return NextResponse.json(jsonSafe({ order, inventory }));
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to cancel order.";
         const status = message.includes("do not have") ? 403 : 500;
@@ -171,7 +204,7 @@ export async function PATCH(request: Request) {
       );
     }
     const inventory = await fetchInventoryState();
-    return NextResponse.json({ order, inventory });
+    return NextResponse.json(jsonSafe({ order, inventory }));
   } catch (error) {
     console.error("[PATCH /api/orders]", error);
     return NextResponse.json({ error: "Failed to update order." }, { status: 500 });

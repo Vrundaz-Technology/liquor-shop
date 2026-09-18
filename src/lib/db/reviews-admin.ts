@@ -358,7 +358,7 @@ export async function listStaffReviews(filter: {
     const like = `%${filter.q.trim()}%`;
     params.push(like, like, like, like);
   }
-  const limit = Math.min(200, Math.max(1, filter.limit ?? 80));
+  const limit = Math.min(500, Math.max(1, filter.limit ?? 80));
   params.push(limit);
   const rows = await prisma.$queryRawUnsafe<ReviewRow[]>(
     `SELECT * FROM platform_reviews

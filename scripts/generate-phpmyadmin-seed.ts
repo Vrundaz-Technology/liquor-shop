@@ -17,6 +17,7 @@ import {
   demoOwner,
   demoAccounts,
 } from "../src/data/events";
+import { loyaltyTestCustomers } from "../src/data/loyalty-test-customers";
 import { drivers } from "../src/data/drivers";
 import type { Order, Product, StoreLocation, UserProfile } from "../src/types";
 
@@ -643,7 +644,8 @@ DELETE FROM \`role_definitions\`;
     ),
   );
 
-  parts.push(`\n-- Demo users (${demoAccounts.length}) — password: ${DEMO_PASSWORD}\n`);
+  const seedUsers = [...demoAccounts, ...loyaltyTestCustomers];
+  parts.push(`\n-- Demo users (${seedUsers.length}) — password: ${DEMO_PASSWORD}\n`);
   parts.push(
     insertRaw(
       "users",
@@ -666,7 +668,7 @@ DELETE FROM \`role_definitions\`;
         "created_at",
         "updated_at",
       ],
-      demoAccounts.map((account) => userValues(account, passwordHash)),
+      seedUsers.map((account) => userValues(account, passwordHash)),
     ),
   );
 

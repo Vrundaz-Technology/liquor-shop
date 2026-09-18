@@ -99,6 +99,7 @@ function displayRules(rules: PromotionRules): string {
     parts.push(`buy ${rules.buyQty ?? 2} get ${rules.getQty ?? 1}`);
   }
   if (rules.firstOrderOnly) parts.push("first order only");
+  if (rules.maxUsesPerUser) parts.push(`${rules.maxUsesPerUser}× per customer`);
   if (rules.daysOfWeek?.length) parts.push(`days: ${rules.daysOfWeek.join(",")}`);
   if (rules.startTime || rules.endTime) {
     parts.push(`hours: ${rules.startTime ?? "00:00"}–${rules.endTime ?? "23:59"}`);
@@ -118,6 +119,7 @@ function normalizeRules(rules: PromotionRules) {
     buyQty: rules.buyQty ?? null,
     getQty: rules.getQty ?? null,
     firstOrderOnly: Boolean(rules.firstOrderOnly),
+    maxUsesPerUser: rules.maxUsesPerUser ?? null,
     daysOfWeek: [...(rules.daysOfWeek ?? [])].sort((x, y) => x - y),
     startTime: rules.startTime ?? null,
     endTime: rules.endTime ?? null,
@@ -201,6 +203,8 @@ export function diffPromotionSnapshots(
       created.push({ field: "min spend", to: displayMoney(after.minSubtotal) });
     }
     created.push({ field: "scope", to: displayScope(after.scope) });
+    created.push({ field: "stackable", to: after.stackable ? "Yes" : "No" });
+    created.push({ field: "priority", to: after.priority });
     if (after.locationId) {
       created.push({ field: "location", to: displayLocation(after.locationId) });
     }

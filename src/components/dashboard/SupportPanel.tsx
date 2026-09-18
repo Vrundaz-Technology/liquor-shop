@@ -1,22 +1,30 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { ArrowLeft, Headphones, Send } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { SearchInput } from "@/components/ui/SearchInput";
 import { Select } from "@/components/ui/Select";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { ConnectionNotice } from "@/components/dashboard/ConnectionNotice";
+import { SupportAttachmentField } from "@/components/support/SupportAttachments";
+import { SupportThread } from "@/components/support/SupportThread";
 import { hasPermission } from "@/lib/auth/permissions";
 import { accessibleLocations } from "@/lib/auth/location-access";
+import { dashboardPath } from "@/lib/dashboard/routes";
 import { getAllLocations, getLocationById } from "@/data/locations";
 import {
   SUPPORT_CATEGORIES,
   SUPPORT_CATEGORY_LABELS,
+  SUPPORT_ROUTE_LABELS,
+  SUPPORT_STAFF_STATUS_LABELS,
+  SUPPORT_STATUS_STYLES,
 } from "@/lib/support/routing";
 import { useUserStore } from "@/store/user";
 import { cn } from "@/lib/utils";
 import type {
+  SupportAttachment,
   SupportCategory,
   SupportRouteScope,
   SupportTicket,
@@ -56,6 +64,7 @@ export function SupportPanel() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [detail, setDetail] = useState<SupportTicket | null>(null);
   const [reply, setReply] = useState("");
+  const [replyAttachments, setReplyAttachments] = useState<SupportAttachment[]>([]);
   const [busy, setBusy] = useState(false);
   const [detailLoading, setDetailLoading] = useState(false);
   const [error, setError] = useState("");
@@ -113,6 +122,7 @@ export function SupportPanel() {
   const openTicket = async (id: string) => {
     setSelectedId(id);
     setReply("");
+    setReplyAttachments([]);
     setMsg("");
     setError("");
     setDetailLoading(true);
@@ -132,7 +142,7 @@ export function SupportPanel() {
 
   const sendReply = async (e: FormEvent) => {
     e.preventDefault();
-    if (!detail || !reply.trim()) return;
+    if (!detail || (!reply.trim() && !replyAttachments.length)) return;
     setBusy(true);
     setMsg("");
     try {
@@ -143,12 +153,14 @@ export function SupportPanel() {
           action: "reply",
           ticketId: detail.id,
           body: reply.trim(),
+          attachments: replyAttachments,
         }),
       });
       const data = (await res.json()) as { ticket?: SupportTicket; error?: string };
       if (!res.ok) throw new Error(data.error ?? "Reply failed.");
       setDetail(data.ticket ?? null);
       setReply("");
+      setReplyAttachments([]);
       setMsg("Reply sent.");
       void load();
     } catch (err) {
@@ -201,7 +213,8 @@ export function SupportPanel() {
                 </span>
               </div>
               <p className="mt-1 text-xs text-muted">
-                {ticket.id} · {SUPPORT_CATEGORY_LABELS[ticket.category]} · {ticket.status}
+                {ticket.id} · {SUPPORT_CATEGORY_LABELS[ticket.category]} ·{" "}
+                {SUPPORT_STAFF_STATUS_LABELS[ticket.status]}
                 {store ? ` · ${store.shortName}` : ""}
               </p>
               <p className="mt-1 text-xs text-muted">
@@ -241,13 +254,40 @@ export function SupportPanel() {
           </button>
           <div>
             <p className="text-[10px] uppercase tracking-[0.14em] text-gold">
-              {detail.id} · {detail.routeScope}
+              {detail.id} · {SUPPORT_ROUTE_LABELS[detail.routeScope]}
             </p>
-            <h3 className="mt-1 font-display text-2xl text-cream">{detail.subject}</h3>
+            <div className="mt-1 flex flex-wrap items-start justify-between gap-2">
+              <h3 className="font-display text-2xl text-cream">{detail.subject}</h3>
+              <span
+                className={cn(
+                  "inline-flex rounded-sm border px-2 py-0.5 text-[10px] uppercase tracking-[0.12em]",
+                  SUPPORT_STATUS_STYLES[detail.status],
+                )}
+              >
+                {SUPPORT_STAFF_STATUS_LABELS[detail.status]}
+              </span>
+            </div>
+            <p className="mt-2 text-xs text-muted">
+              {SUPPORT_CATEGORY_LABELS[detail.category]}
+              {detail.locationId
+                ? ` · ${getLocationById(detail.locationId)?.shortName ?? detail.locationId}`
+                : ""}
+              {detail.orderId ? ` · ${detail.orderId}` : ""}
+            </p>
             <p className="mt-1 text-xs text-muted">
-              {SUPPORT_CATEGORY_LABELS[detail.category]} · {detail.status}
-              {detail.routeReason ? ` · ${detail.routeReason}` : ""}
+              {detail.customerName} · {detail.customerEmail}
             </p>
+            {detail.orderId ? (
+              <Link
+                href={dashboardPath("orders", { orderId: detail.orderId })}
+                className="mt-2 inline-block text-xs text-gold hover:underline"
+              >
+                Open related order
+              </Link>
+            ) : null}
+            {detail.routeReason ? (
+              <p className="mt-2 text-xs text-muted">{detail.routeReason}</p>
+            ) : null}
           </div>
 
           {canManage ? (
@@ -259,44 +299,29 @@ export function SupportPanel() {
                   variant={detail.status === s ? "primary" : "secondary"}
                   onClick={() => void setTicketStatus(s)}
                 >
-                  {s}
+                  {SUPPORT_STAFF_STATUS_LABELS[s]}
                 </Button>
               ))}
             </div>
           ) : null}
 
-          <div className="max-h-80 space-y-3 overflow-y-auto border-t border-white/10 pt-4">
-            {(detail.messages ?? []).map((m) => (
-              <div
-                key={m.id}
-                className={cn(
-                  "rounded-sm border px-3 py-2 text-sm",
-                  m.authorRole === "staff"
-                    ? "border-(--gold)/25 bg-(--gold)/5"
-                    : "border-white/10 bg-black/30",
-                )}
-              >
-                <p className="text-[10px] uppercase tracking-[0.12em] text-muted">
-                  {m.authorName} · {m.authorRole} ·{" "}
-                  {new Date(m.createdAt).toLocaleString()}
-                </p>
-                <p className="mt-1 whitespace-pre-wrap text-cream">{m.body}</p>
-              </div>
-            ))}
-            {!(detail.messages ?? []).length ? (
-              <p className="text-sm text-muted">No messages yet.</p>
-            ) : null}
+          <div className="max-h-80 overflow-y-auto border-t border-white/10 pt-4">
+            <SupportThread messages={detail.messages} viewer="staff" />
           </div>
 
           {canManage && detail.status !== "closed" ? (
-            <form onSubmit={(e) => void sendReply(e)} className="space-y-2">
+            <form onSubmit={(e) => void sendReply(e)} className="space-y-3">
               <textarea
                 value={reply}
                 onChange={(e) => setReply(e.target.value)}
                 rows={3}
                 placeholder="Reply to customer…"
                 className="w-full rounded-sm border border-white/10 bg-black/30 px-3 py-2 text-sm text-cream outline-none focus:border-(--gold)/40"
-                required
+              />
+              <SupportAttachmentField
+                value={replyAttachments}
+                onChange={setReplyAttachments}
+                disabled={busy}
               />
               <Button type="submit" size="sm" loading={busy}>
                 <Send size={14} />
@@ -311,7 +336,7 @@ export function SupportPanel() {
 
   return (
     <div className="space-y-6">
-      <ConnectionNotice />
+      <ConnectionNotice feature="manage support tickets" />
       {trends ? (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
           {[
