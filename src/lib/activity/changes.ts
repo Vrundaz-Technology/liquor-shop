@@ -146,7 +146,6 @@ function fieldLabel(key: string) {
     restocked: "restock",
     remaining: "remaining",
     amount: "amount",
-    reason: "reason",
   };
   return map[key] ?? key.replace(/([A-Z])/g, " $1").replace(/_/g, " ").toLowerCase();
 }
