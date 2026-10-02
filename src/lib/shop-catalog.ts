@@ -1,7 +1,7 @@
 import type { Product } from "@/types";
 import { searchProducts } from "@/lib/search";
 import { estimateDeliveryEta, haversineMiles, kmToMiles } from "@/lib/geo";
-import { getAllLocations, getLocationById } from "@/data/locations";
+import { getLocationById, getPublicLocations, isLocationPublic } from "@/data/locations";
 
 export type ShopSort =
   | "popular"
@@ -93,7 +93,10 @@ export function filterAndSortProducts(
     customerLng?: number | null;
   },
 ): Product[] {
-  const storeId = filters.storeId && filters.storeId !== "all" ? filters.storeId : opts.branchId;
+  const requested = filters.storeId && filters.storeId !== "all" ? filters.storeId : opts.branchId;
+  const storeId = isLocationPublic(getLocationById(requested))
+    ? requested
+    : (getPublicLocations()[0]?.id ?? requested);
   const q = filters.q?.trim() ?? "";
 
   let list = products.filter((p) => !opts.isHidden(storeId, p.id));
@@ -149,7 +152,7 @@ export function filterAndSortProducts(
     opts.customerLat != null &&
     opts.customerLng != null
   ) {
-    const eligibleStoreIds = getAllLocations()
+    const eligibleStoreIds = getPublicLocations()
       .filter((loc) => {
         if (!loc.deliveryAvailable) return false;
         const miles = haversineMiles(

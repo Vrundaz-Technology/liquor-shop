@@ -4,7 +4,7 @@ import { SmartImage } from "@/components/ui/SmartImage";
 import Link from "next/link";
 import { useSyncExternalStore } from "react";
 import { usePublicEvents } from "@/hooks/useRuntimeEvents";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import {
   isRuntimeDataLoaded,
   subscribeRuntimeCatalog,
@@ -34,7 +34,7 @@ function useCatalogLoaded() {
 export function EventsListing() {
   const loaded = useCatalogLoaded();
   const events = usePublicEvents();
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
 
   return (
     <div className="mx-auto max-w-7xl px-3 py-10 sm:px-4 sm:py-14 md:px-8 md:py-16">

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS `locations` (
   `services` JSON NOT NULL,
   `parking` TEXT NOT NULL,
   `pickup_available` TINYINT(1) NOT NULL,
+  `active` TINYINT(1) NOT NULL DEFAULT 1,
   `delivery_available` TINYINT(1) NOT NULL DEFAULT 1,
   `delivery_radius_km` DOUBLE NOT NULL,
   `delivery_fee` DOUBLE NOT NULL DEFAULT 12.5,

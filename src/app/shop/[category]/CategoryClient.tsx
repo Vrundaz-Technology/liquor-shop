@@ -23,7 +23,7 @@ import {
   uniqueTypes,
   type ShopFilters,
 } from "@/lib/shop-catalog";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 
 export function CategoryPage() {
   const params = useParams<{ category: string }>();
@@ -48,7 +48,7 @@ export function CategoryPage() {
   });
 
   const branchId = useBranchStore((s) => s.branchId);
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
   const customerLng = useBranchStore((s) => s.customerLng);

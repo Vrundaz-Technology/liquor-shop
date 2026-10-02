@@ -34,7 +34,14 @@ export async function POST(request: Request) {
     const { user, error } = await requireUser();
     if (error) return error;
 
-    const parsed = bodySchema.safeParse(await request.json());
+    let payload: unknown = null;
+    try {
+      const raw = await request.text();
+      payload = raw.trim() ? JSON.parse(raw) : null;
+    } catch {
+      return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
+    }
+    const parsed = bodySchema.safeParse(payload);
     if (!parsed.success) {
       return NextResponse.json({ error: "Invalid payload." }, { status: 400 });
     }

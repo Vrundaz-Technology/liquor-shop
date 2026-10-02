@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import type { Product } from "@/types";
 import { AbbrTooltip } from "@/components/ui/AbbrTooltip";
@@ -42,6 +42,7 @@ export function BottleCarousel({
   const activeRef = useRef(0);
   const resumeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [manualPause, setManualPause] = useState(false);
+  const reduceMotion = useReducedMotion();
 
   activeRef.current = active;
 
@@ -240,7 +241,7 @@ export function BottleCarousel({
           }}
           className="absolute left-2 top-1/2 z-60 -translate-y-1/2 rounded-full border border-white/20 bg-black/70 p-3 text-cream backdrop-blur transition hover:border-[var(--gold)]/60 hover:text-gold md:left-6"
         >
-          <ChevronLeft size={22} />
+          <ChevronLeft size={22} aria-hidden />
         </button>
         <button
           type="button"
@@ -252,7 +253,7 @@ export function BottleCarousel({
           }}
           className="absolute right-2 top-1/2 z-60 -translate-y-1/2 rounded-full border border-white/20 bg-black/70 p-3 text-cream backdrop-blur transition hover:border-[var(--gold)]/60 hover:text-gold md:right-6"
         >
-          <ChevronRight size={22} />
+          <ChevronRight size={22} aria-hidden />
         </button>
       </div>
 
@@ -260,17 +261,17 @@ export function BottleCarousel({
         <AnimatePresence mode="wait">
           <motion.div
             key={current.id}
-            initial={{ opacity: 0, y: 12 }}
+            initial={reduceMotion ? false : { opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -8 }}
-            transition={{ duration: 0.3 }}
+            exit={reduceMotion ? undefined : { opacity: 0, y: -8 }}
+            transition={{ duration: reduceMotion ? 0 : 0.3 }}
           >
             <Link
               href={`/products/${current.slug}`}
               className="break-words font-display text-lg uppercase tracking-[0.06em] text-white transition hover:text-gold sm:text-xl md:text-2xl"
             >
               <span className="block sm:inline">{current.brand}</span>
-              <span className="mx-2 hidden text-white/30 sm:inline">/</span>
+              <span className="mx-2 hidden text-muted sm:inline">/</span>
               <span className="mt-1 block font-normal normal-case tracking-normal text-cream sm:mt-0 sm:inline sm:uppercase sm:tracking-[0.06em]">
                 {current.name.replace(current.brand, "").trim() || current.name}
               </span>
@@ -297,10 +298,15 @@ export function BottleCarousel({
               aria-label={`Show ${p.name}`}
               aria-current={i === active}
               onClick={() => goTo(i, true)}
-              className={`h-1.5 rounded-full transition-all ${
-                i === active ? "w-8 bg-[var(--gold)]" : "w-1.5 bg-white/25 hover:bg-white/50"
-              }`}
-            />
+              className="inline-flex h-6 min-w-6 items-center justify-center rounded-full"
+            >
+              <span
+                aria-hidden
+                className={`block h-1.5 rounded-full transition-all ${
+                  i === active ? "w-8 bg-[var(--gold)]" : "w-1.5 bg-white/50"
+                }`}
+              />
+            </button>
           ))}
         </div>
       </div>

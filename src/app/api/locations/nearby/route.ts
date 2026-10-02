@@ -13,7 +13,9 @@ export async function GET(request: Request) {
   }
 
   try {
-    const locations = await fetchAllLocations({ inventoryMode: "featured" });
+    const locations = (await fetchAllLocations({ inventoryMode: "featured" })).filter(
+      (loc) => loc.active !== false,
+    );
     const result = await findStoresForZip(zip.slice(0, 5), locations);
     return NextResponse.json({
       ok: true,

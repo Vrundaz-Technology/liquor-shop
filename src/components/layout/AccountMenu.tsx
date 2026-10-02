@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { AnimatePresence, motion } from "framer-motion";
-import { Bell, ChevronDown, LayoutDashboard, LogOut, UserRound } from "lucide-react";
+import { Bell, ChevronDown, Headphones, LayoutDashboard, LogOut, MapPin, Package, UserRound } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { Tooltip } from "@/components/ui/Tooltip";
@@ -98,6 +98,7 @@ export function AccountMenu({
                 {isStaff ? "Dashboard" : "Account"}
               </Link>
               {isStaff ? (
+                <>
                 <Link
                   href="/dashboard/notifications"
                   role="menuitem"
@@ -112,7 +113,88 @@ export function AccountMenu({
                   <Bell size={14} className="shrink-0 opacity-80" />
                   Notifications
                 </Link>
-              ) : null}
+                <Link
+                  href="/account"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    onAccount ? "bg-(--gold)/15 text-gold" : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <UserRound size={14} className="shrink-0 opacity-80" />
+                  My account
+                </Link>
+                <Link
+                  href="/track"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    pathname.startsWith("/track")
+                      ? "bg-(--gold)/15 text-gold"
+                      : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <MapPin size={14} className="shrink-0 opacity-80" />
+                  Track order
+                </Link>
+                <Link
+                  href="/support"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    pathname.startsWith("/support")
+                      ? "bg-(--gold)/15 text-gold"
+                      : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <Headphones size={14} className="shrink-0 opacity-80" />
+                  Support
+                </Link>
+                </>
+              ) : (
+                <>
+                <Link
+                  href="/account?tab=orders"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(itemClass, "text-cream hover:bg-white/10")}
+                >
+                  <Package size={14} className="shrink-0 opacity-80" />
+                  Orders
+                </Link>
+                <Link
+                  href="/track"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    pathname.startsWith("/track")
+                      ? "bg-(--gold)/15 text-gold"
+                      : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <MapPin size={14} className="shrink-0 opacity-80" />
+                  Track order
+                </Link>
+                <Link
+                  href="/support"
+                  role="menuitem"
+                  onClick={() => onOpenChange(false)}
+                  className={cn(
+                    itemClass,
+                    pathname.startsWith("/support")
+                      ? "bg-(--gold)/15 text-gold"
+                      : "text-cream hover:bg-white/10",
+                  )}
+                >
+                  <Headphones size={14} className="shrink-0 opacity-80" />
+                  Support
+                </Link>
+                </>
+              )}
               <button
                 type="button"
                 role="menuitem"

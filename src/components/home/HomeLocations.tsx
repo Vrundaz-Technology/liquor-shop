@@ -10,7 +10,7 @@ import {
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 
 const EASE = "cubic-bezier(0.22, 1, 0.36, 1)";
 
@@ -259,7 +259,7 @@ function StoreCard({
 }
 
 export function HomeLocations() {
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const hero = locations[0]?.heroImage ?? "/store/downtown-maison.jpg";
 
   return (

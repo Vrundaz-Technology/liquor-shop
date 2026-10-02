@@ -122,6 +122,7 @@ model Location {
   parking             String
   pickupAvailable     Boolean  @map("pickup_available")
   deliveryAvailable         Boolean  @default(true) @map("delivery_available")
+  active                    Boolean  @default(true)
   deliveryRadiusKm          Float    @map("delivery_radius_km")
   deliveryFee               Decimal  @default(12.50) @map("delivery_fee") @db.Decimal(12, 2)
   deliveryFreeMinimum       Decimal  @default(150.00) @map("delivery_free_minimum") @db.Decimal(12, 2)

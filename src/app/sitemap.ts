@@ -45,9 +45,11 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
     ...categories.map((c) => entry(`${base}/shop/${c.slug}`, "weekly", 0.7)),
     ...products.map((p) => entry(`${base}/products/${p.slug}`, "weekly", 0.8)),
     ...products.map((p) => entry(`${base}/ar/${p.slug}`, "monthly", 0.6)),
-    ...locations.map((l) => entry(`${base}/locations/${l.slug}`, "monthly", 0.6)),
+    ...locations
+      .filter((l) => l.active !== false)
+      .map((l) => entry(`${base}/locations/${l.slug}`, "monthly", 0.6)),
     ...events
-      .filter((e) => e.active !== false)
+      .filter((e) => e.active !== false && locations.find((l) => l.id === e.locationId)?.active !== false)
       .map((e) => entry(`${base}/events/${e.slug}`, "weekly", 0.6)),
   ];
 }

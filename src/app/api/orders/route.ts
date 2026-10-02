@@ -92,6 +92,7 @@ export async function POST(request: Request) {
         "Delivery address is required",
         "Signed-in account is not available",
         "Location not found",
+        "This store is not available for online orders.",
         "Unknown product",
         "is not available at this store",
       ];

@@ -201,12 +201,33 @@ export function getAllLocations() {
   return runtimeData().getRuntimeLocations();
 }
 
+export function isLocationPublic(location: StoreLocation | undefined | null) {
+  if (!location) return false;
+  const flag = location.active as unknown;
+  return flag !== false && flag !== 0 && flag !== "0";
+}
+
+/** Public storefront — inactive stores stay hidden. */
+export function getPublicLocations() {
+  return getAllLocations().filter(isLocationPublic);
+}
+
 export function getLocationBySlug(slug: string) {
   return getAllLocations().find((l) => l.slug === slug);
 }
 
+export function getPublicLocationBySlug(slug: string) {
+  const loc = getLocationBySlug(slug);
+  return isLocationPublic(loc) ? loc : undefined;
+}
+
 export function getLocationById(id: string) {
   return getAllLocations().find((l) => l.id === id);
+}
+
+export function getPublicLocationById(id: string) {
+  const loc = getLocationById(id);
+  return isLocationPublic(loc) ? loc : undefined;
 }
 
 /** Catalog row (promo / featured / seed count). Live on-hand is `useInventoryStore`. */

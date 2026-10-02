@@ -79,9 +79,10 @@ export function AvailableOffersList({
     <div>
       <button
         type="button"
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className="flex min-h-11 w-full items-center justify-between gap-2 text-left"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
+        aria-controls="available-offers-list"
       >
         <span className="text-[11px] text-muted">Available offers</span>
         <span className="text-[11px] text-gold">
@@ -98,7 +99,12 @@ export function AvailableOffersList({
         ) : offers.length === 0 && !offersQuery.isLoading ? (
           <p className="mt-2 text-[11px] text-muted">No store coupons are available for this bag.</p>
         ) : (
-          <ul className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-0.5">
+          <ul
+            id="available-offers-list"
+            tabIndex={0}
+            aria-label="Available offers"
+            className="mt-2 max-h-56 space-y-2 overflow-y-auto pr-0.5 outline-none focus-visible:ring-1 focus-visible:ring-(--gold)/40"
+          >
             {offers.map((offer) => {
               const applied = active === offer.code;
               return (

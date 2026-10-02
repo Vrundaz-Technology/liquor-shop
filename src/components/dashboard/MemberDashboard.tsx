@@ -45,6 +45,7 @@ import { cn } from "@/lib/utils";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { NativeSelect } from "@/components/ui/NativeSelect";
 import { Tooltip } from "@/components/ui/Tooltip";
+import { SearchInput } from "@/components/ui/SearchInput";
 
 function panelLoading(label: string) {
   return (
@@ -352,6 +353,7 @@ export function MemberDashboard() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarReady, setSidebarReady] = useState(false);
+  const [navQuery, setNavQuery] = useState("");
   const router = useRouter();
   const pathname = usePathname();
   const tabs = useMemo(
@@ -495,8 +497,20 @@ export function MemberDashboard() {
 
   const renderNav = (opts?: { onNavigate?: () => void; collapsed?: boolean }) => {
     const collapsed = Boolean(opts?.collapsed);
+    const q = navQuery.trim().toLowerCase();
     return (
       <nav className="flex min-h-0 flex-1 flex-col" aria-label="Dashboard sections">
+        {!collapsed ? (
+          <div className="shrink-0 px-3 pt-3">
+            <SearchInput
+              value={navQuery}
+              onChange={setNavQuery}
+              placeholder="Find a page…"
+              aria-label="Find a dashboard page"
+              inputClassName="h-10"
+            />
+          </div>
+        ) : null}
         <div
           className={cn(
             "min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain py-4",
@@ -504,9 +518,14 @@ export function MemberDashboard() {
           )}
         >
           {TAB_GROUPS.map((group) => {
-            const items = tabs.filter(
-              (tab) => tab.group === group.id && tab.id !== "profile",
-            );
+            const items = tabs.filter((tab) => {
+              if (tab.group !== group.id || tab.id === "profile") return false;
+              if (!q) return true;
+              return (
+                tab.label.toLowerCase().includes(q) ||
+                tab.description.toLowerCase().includes(q)
+              );
+            });
             if (!items.length) return null;
             return (
               <div key={group.id}>
@@ -584,6 +603,14 @@ export function MemberDashboard() {
               </div>
             );
           })}
+          {q &&
+          !tabs.some(
+            (tab) =>
+              tab.id !== "profile" &&
+              (tab.label.toLowerCase().includes(q) || tab.description.toLowerCase().includes(q)),
+          ) ? (
+            <p className="px-2.5 py-3 text-sm text-muted">No pages match “{navQuery.trim()}”.</p>
+          ) : null}
         </div>
 
         <div className={cn("shrink-0 border-t border-white/10", collapsed ? "p-2" : "p-3")}>

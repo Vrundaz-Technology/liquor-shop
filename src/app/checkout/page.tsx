@@ -11,7 +11,7 @@ import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { getPriceForLocation } from "@/data/locations";
 import { getProductById } from "@/data/products";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import { analyzeCartAvailability } from "@/lib/cart-availability";
 import { useInventoryStore } from "@/store/inventory";
 import type { DeliveryAddress, Order } from "@/types";
@@ -206,7 +206,7 @@ export default function CheckoutPage() {
   const branchId = useBranchStore((s) => s.branchId);
   /** Cart lock wins over the global branch so checkout cannot sell from another store. */
   const fulfillStoreId = fulfillmentLocationId ?? branchId;
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
   const customerLng = useBranchStore((s) => s.customerLng);

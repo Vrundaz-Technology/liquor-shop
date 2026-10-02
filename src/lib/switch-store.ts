@@ -3,19 +3,25 @@
 import { useBranchStore } from "@/store/branch";
 import { useCartStore } from "@/store/cart";
 import { useCartFeedbackStore } from "@/store/cart-feedback";
-import { getLocationById } from "@/data/locations";
+import { getLocationById, isLocationPublic } from "@/data/locations";
+import { isStaffRole, useUserStore } from "@/store/user";
 
 /**
  * Switch shopping store and keep the cart fulfillable by one location.
  * Removes lines the new store cannot cover — one order = one store.
  */
 export function switchShoppingStore(locationId: string) {
+  const store = getLocationById(locationId);
+  const { isLoggedIn, profile } = useUserStore.getState();
+  if (!(isLoggedIn && isStaffRole(profile)) && !isLocationPublic(store)) {
+    return { removed: 0 };
+  }
+
   const prev = useBranchStore.getState().branchId;
   if (prev === locationId) return { removed: 0 };
 
   useBranchStore.getState().setBranch(locationId);
   const { removed } = useCartStore.getState().reconcileToLocation(locationId);
-  const store = getLocationById(locationId);
 
   if (removed > 0) {
     useCartFeedbackStore.getState().notifyWarning(

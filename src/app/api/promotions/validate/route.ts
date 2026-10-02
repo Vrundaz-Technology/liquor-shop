@@ -6,6 +6,7 @@ import { COUPONS, getCouponDiscount } from "@/lib/commerce";
 import { prisma } from "@/lib/db/prisma";
 import { getRequestUser } from "@/lib/auth/require";
 import { isStaffRole } from "@/lib/auth/roles";
+import { fetchLocationById } from "@/lib/db/queries";
 
 function parseItems(raw: string | null): ReturnType<typeof parsePromoLineItems> {
   if (!raw) return undefined;
@@ -55,15 +56,17 @@ export async function GET(request: Request) {
     const shopperId = user && !isStaffRole(user) ? user.id : undefined;
 
     if (isDbConfigured()) {
-      const organizationId = locationId
-        ? ((await resolveLocationOrganizationId(locationId)) ?? SAMS_ORG_ID)
+      const store = locationId ? await fetchLocationById(locationId).catch(() => undefined) : undefined;
+      const publicLocationId = store && store.active !== false ? locationId : undefined;
+      const organizationId = publicLocationId
+        ? ((await resolveLocationOrganizationId(publicLocationId)) ?? SAMS_ORG_ID)
         : SAMS_ORG_ID;
       const isFirstOrder = await resolveFirstOrder(shopperId, organizationId);
       const promo = await resolvePromotionDiscount({
         code: code || null,
         subtotal,
         organizationId,
-        locationId,
+        locationId: publicLocationId,
         items,
         isFirstOrder,
         userId: shopperId,

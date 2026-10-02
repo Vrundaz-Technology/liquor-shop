@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 import {
   ArrowLeft,
@@ -22,7 +23,7 @@ import { Button } from "@/components/ui/Button";
 import { ActiveFiltersBar } from "@/components/ui/ActiveFiltersBar";
 import { getLocationById } from "@/data/locations";
 import { getProductById } from "@/data/products";
-import { dashboardPath } from "@/lib/dashboard/routes";
+import { dashboardPath, parseDashboardPath } from "@/lib/dashboard/routes";
 import { hasPermission } from "@/lib/auth/permissions";
 import { useUserStore } from "@/store/user";
 import { formatOrderPlaced } from "@/lib/commerce/order-tracking";
@@ -232,12 +233,25 @@ function storeLabel(order: Pick<UsageOrder, "storeName" | "locationId">) {
 }
 
 export function PromotionsPerformancePanel() {
+  const router = useRouter();
+  const pathname = usePathname();
+  const selectedPromoId = parseDashboardPath(pathname).promotionsPromoId;
+  const setSelectedPromoId = useCallback(
+    (id: string | null) => {
+      router.push(
+        id
+          ? dashboardPath("promotions", { performance: true, promoId: id })
+          : dashboardPath("promotions", { performance: true }),
+        { scroll: false },
+      );
+    },
+    [router],
+  );
   const [datePreset, setDatePreset] = useState<DatePreset>("all");
   const [promoId, setPromoId] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const [sort, setSort] = useState<SortOption>("spent");
-  const [selectedPromoId, setSelectedPromoId] = useState<string | null>(null);
   const canViewOrders = hasPermission(useUserStore((s) => s.profile), "orders.view");
   const { sortKey, sortDir, toggleSort } = useTableSort<
     "name" | "type" | "status" | "customers" | "orders" | "spent" | "discount" | "avg" | "lastUsed"

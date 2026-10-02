@@ -19,28 +19,45 @@ type Props = {
   className?: string;
 };
 
+function listFocusable(root: HTMLElement) {
+  return Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
+    (el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true",
+  );
+}
+
 export function Modal({ open, title, subtitle, onClose, children, footer, className }: Props) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     if (!open) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const root = dialogRef.current;
-    const focusable = root
-      ? Array.from(root.querySelectorAll<HTMLElement>(FOCUSABLE)).filter(
-          (el) => !el.hasAttribute("disabled"),
-        )
-      : [];
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    (focusable[0] ?? root)?.focus();
+    if (root && !root.contains(previouslyFocused)) {
+      const focusable = listFocusable(root);
+      const initial =
+        focusable.find((el) => {
+          if (el.tagName === "TEXTAREA" || el.tagName === "SELECT") return true;
+          if (el.tagName !== "INPUT") return false;
+          const type = (el as HTMLInputElement).type;
+          return type !== "file" && type !== "hidden" && type !== "checkbox";
+        }) ??
+        focusable.find((el) => el.getAttribute("aria-label") !== "Close") ??
+        root;
+      initial.focus();
+    }
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onClose();
+        onCloseRef.current();
         return;
       }
-      if (event.key !== "Tab" || focusable.length === 0) return;
+      if (event.key !== "Tab" || !root) return;
+      const focusable = listFocusable(root);
+      if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
       if (event.shiftKey && document.activeElement === first) {
@@ -57,7 +74,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
       document.removeEventListener("keydown", onKey);
       previouslyFocused?.focus();
     };
-  }, [open, onClose]);
+  }, [open]);
 
   if (!open || typeof document === "undefined") return null;
 
@@ -67,7 +84,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
         type="button"
         className="absolute inset-0 bg-black/75"
         aria-label="Close dialog"
-        onClick={onClose}
+        onClick={() => onCloseRef.current()}
       />
       <div
         ref={dialogRef}
@@ -89,7 +106,7 @@ export function Modal({ open, title, subtitle, onClose, children, footer, classN
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => onCloseRef.current()}
             className="inline-flex min-h-11 min-w-11 shrink-0 items-center justify-center rounded-sm text-muted transition hover:bg-white/5 hover:text-cream"
             aria-label="Close"
           >

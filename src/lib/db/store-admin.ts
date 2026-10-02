@@ -1,4 +1,4 @@
-import { ensureLocationPricingSchema, mapLocationPricing } from "@/lib/db/location-pricing";
+import { asBool, ensureLocationPricingSchema, mapLocationPricing } from "@/lib/db/location-pricing";
 import { ensureInventoryVisibilityColumn } from "@/lib/db/inventory-visibility";
 import { DEFAULT_FULFILLMENT_PRICING } from "@/lib/fulfillment-pricing";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
@@ -22,12 +22,20 @@ const DEFAULT_HOURS = [
 const DEFAULT_HERO = "/store/downtown-maison.jpg";
 
 let eventSchemaReady = false;
+let locationSchemaReady = false;
 
 /** Ensures events.active exists for older databases without a full migrate. */
 export async function ensureEventSchema() {
   if (!isDbConfigured() || eventSchemaReady) return;
   await addColumnIfMissing("events", "active", "BOOLEAN NOT NULL DEFAULT true");
   eventSchemaReady = true;
+}
+
+/** Ensures locations.active exists so stores can be hidden from the storefront. */
+export async function ensureLocationSchema() {
+  if (!isDbConfigured() || locationSchemaReady) return;
+  await addColumnIfMissing("locations", "active", "BOOLEAN NOT NULL DEFAULT true");
+  locationSchemaReady = true;
 }
 
 export const EVENT_TYPES = ["wine-tasting", "whiskey-tasting", "launch", "festival"] as const;
@@ -92,6 +100,7 @@ export type LocationInput = {
   gallery?: string[];
   lat?: number;
   lng?: number;
+  active?: boolean;
 };
 
 function galleryUrls(value: unknown): string[] {
@@ -117,6 +126,7 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
   await ensureInventoryVisibilityColumn();
   await ensureOrganizationSchema();
   await ensureDispatchSchema();
+  await ensureLocationSchema();
 
   const shortName = input.shortName.trim();
   const name = input.name.trim() || `Sam's Discount Liquor — ${shortName}`;
@@ -189,12 +199,15 @@ export async function createStoreLocation(actor: UserProfile, input: LocationInp
     dispatchPolicy: "internal_first",
   });
 
+  const active = input.active !== false;
+  await prisma.$executeRaw`UPDATE locations SET active = ${active} WHERE id = ${id}`;
+
   const row = await prisma.location.findUnique({
     where: { id },
     include: { inventory: true },
   });
   if (!row) return { error: "Location was created but could not be loaded.", status: 500 as const };
-  const location = mapLocation(row);
+  const location = mapLocation({ ...row, active });
   await recordActivity({
     actorUserId: actor.id,
     action: "location.created",
@@ -228,8 +241,13 @@ export async function updateStoreLocation(
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
   await ensureDispatchSchema();
+  await ensureLocationSchema();
   const existing = await prisma.location.findUnique({ where: { id: locationId } });
   if (!existing) return { error: "Location not found.", status: 404 as const };
+  const existingActiveRows = await prisma.$queryRaw<{ active: boolean }[]>`
+    SELECT active FROM locations WHERE id = ${locationId}
+  `;
+  const existingActive = asBool(existingActiveRows[0]?.active, true);
 
   const shortName = input.shortName?.trim() ?? existing.shortName;
   const slug =
@@ -281,12 +299,15 @@ export async function updateStoreLocation(
     } as never,
   });
 
+  const nextActive = input.active ?? existingActive;
+  await prisma.$executeRaw`UPDATE locations SET active = ${nextActive} WHERE id = ${locationId}`;
+
   const row = await prisma.location.findUnique({
     where: { id: locationId },
     include: { inventory: true },
   });
   if (!row) return { error: "Location not found.", status: 404 as const };
-  const location = mapLocation(row);
+  const location = mapLocation({ ...row, active: nextActive });
   const yesNo = (v: boolean) => (v ? "Yes" : "No");
   const money = (n: number | null | undefined) =>
     n == null ? "(none)" : `$${Number(n).toFixed(2)}`;
@@ -300,6 +321,11 @@ export async function updateStoreLocation(
     { field: "phone", from: existing.phone, to: location.phone },
     { field: "email", from: existing.email, to: location.email },
     { field: "description", from: existing.description, to: location.description },
+    {
+      field: "active",
+      from: yesNo(existingActive),
+      to: yesNo(location.active !== false),
+    },
     {
       field: "pickupAvailable",
       from: yesNo(existing.pickupAvailable),
@@ -530,7 +556,7 @@ export async function updateStoreEvent(
   const existingActiveRows = await prisma.$queryRaw<{ active: boolean }[]>`
     SELECT active FROM events WHERE id = ${eventId}
   `;
-  const existingActive = existingActiveRows[0]?.active ?? true;
+  const existingActive = asBool(existingActiveRows[0]?.active, true);
   const nextActive = input.active !== undefined ? input.active : existingActive;
 
   const row = await prisma.event.update({

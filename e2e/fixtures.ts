@@ -36,4 +36,5 @@ export async function signIn(page: Page, email: string, password = DEMO.password
   await page.locator("#login-email").fill(email);
   await page.locator("#login-password").fill(password);
   await page.getByRole("button", { name: "Sign in" }).click();
+  await page.waitForURL(/\/(dashboard|account)(\/|$)/, { timeout: 30_000 });
 }

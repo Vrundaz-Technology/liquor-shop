@@ -12,7 +12,7 @@ import {
   type ReactNode,
 } from "react";
 import { MapPin, Phone, Clock, Car } from "lucide-react";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import type { StoreLocation } from "@/types";
 import { cn, publicFulfillmentSummary, publicStoreServices } from "@/lib/utils";
 
@@ -370,7 +370,7 @@ function LocationCard({ loc, index }: { loc: StoreLocation; index: number }) {
 }
 
 export function LocationsShowcase() {
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const [activeBranch, setActiveBranch] = useState<string | null>(null);
 
   const focusStore = useCallback((id: string) => {

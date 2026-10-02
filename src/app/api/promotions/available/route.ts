@@ -5,6 +5,7 @@ import { isDbConfigured } from "@/lib/db/prisma";
 import { prisma } from "@/lib/db/prisma";
 import { getRequestUser } from "@/lib/auth/require";
 import { isStaffRole } from "@/lib/auth/roles";
+import { fetchLocationById } from "@/lib/db/queries";
 
 async function resolveFirstOrder(
   userId: string | undefined,
@@ -38,14 +39,16 @@ export async function GET(request: Request) {
   try {
     const user = await getRequestUser();
     const shopperId = user && !isStaffRole(user) ? user.id : undefined;
-    const organizationId = locationId
-      ? ((await resolveLocationOrganizationId(locationId)) ?? SAMS_ORG_ID)
+    const store = locationId ? await fetchLocationById(locationId).catch(() => undefined) : undefined;
+    const publicLocationId = store && store.active !== false ? locationId : undefined;
+    const organizationId = publicLocationId
+      ? ((await resolveLocationOrganizationId(publicLocationId)) ?? SAMS_ORG_ID)
       : SAMS_ORG_ID;
     const isFirstOrder = await resolveFirstOrder(shopperId, organizationId);
 
     const coupons = await listCustomerCoupons({
       organizationId,
-      locationId,
+      locationId: publicLocationId,
       subtotal,
       items,
       isFirstOrder,

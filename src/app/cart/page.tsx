@@ -10,7 +10,7 @@ import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { getProductById } from "@/data/products";
 import { getPriceForLocation } from "@/data/locations";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import { analyzeCartAvailability } from "@/lib/cart-availability";
 import { useInventoryStore } from "@/store/inventory";
 import { calculateShipping, calculateTax, formatPrice, amountUntilFreeDelivery, publicFulfillmentSummary, cn } from "@/lib/utils";
@@ -65,7 +65,7 @@ export default function CartPage() {
     })),
   );
   const branchId = useBranchStore((s) => s.branchId);
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
   const customerLng = useBranchStore((s) => s.customerLng);

@@ -13,6 +13,7 @@
     "test:watch": "vitest",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "test:a11y": "playwright test e2e/a11y.spec.ts",
     "generate:bottles": "node scripts/generate-bottles-gltf.mjs",
     "fetch:product-images": "node scripts/fetch-product-images.mjs",
     "fetch:market-images": "node scripts/fetch-market-images.mjs",
@@ -63,6 +64,7 @@
     "zustand": "^5.0.14"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@eslint/eslintrc": "^3",
     "@gltf-transform/core": "^4.4.1",
     "@playwright/test": "^1.55.0",

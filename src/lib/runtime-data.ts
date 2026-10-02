@@ -68,7 +68,10 @@ export function hydrateRuntimeData(payload: {
   dbConnected?: boolean;
 }) {
   products = payload.products;
-  locations = payload.locations;
+  locations = payload.locations.map((location) => ({
+    ...location,
+    active: location.active !== false,
+  }));
   categories = payload.categories;
   events = payload.events.map((event) => ({
     ...event,

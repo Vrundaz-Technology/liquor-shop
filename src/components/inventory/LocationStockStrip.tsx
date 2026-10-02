@@ -4,7 +4,7 @@ import { useMemo } from "react";
 import { useBranchStore } from "@/store/branch";
 import { useInventoryStore } from "@/store/inventory";
 import { getCatalogStock } from "@/lib/inventory";
-import { getAllLocations } from "@/data/locations";
+import { getPublicLocations } from "@/data/locations";
 import { stockByLocation } from "@/lib/cart-availability";
 import { useClientMounted } from "@/hooks/useHydratedInventory";
 import { switchShoppingStore } from "@/lib/switch-store";
@@ -31,7 +31,7 @@ export function LocationStockStrip({
 
   const rows = useMemo(() => {
     if (!mounted) {
-      return getAllLocations().map((location) => ({
+      return getPublicLocations().map((location) => ({
         location,
         stock: getCatalogStock(location.id, productId),
       }));

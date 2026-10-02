@@ -27,7 +27,7 @@ import { addToCart } from "@/lib/add-to-cart";
 import { useBranchStore } from "@/store/branch";
 import { useInventoryStore } from "@/store/inventory";
 import { useCatalogStore } from "@/store/catalog";
-import { getPriceForLocation, getAllLocations } from "@/data/locations";
+import { getPriceForLocation, getAllLocations, getPublicLocations } from "@/data/locations";
 import { LOW_STOCK_THRESHOLD } from "@/lib/inventory";
 import { OtherBranchStock } from "@/components/inventory/OtherBranchStock";
 import { LocationStockStrip } from "@/components/inventory/LocationStockStrip";
@@ -781,7 +781,9 @@ export function VirtualStoreExperience() {
       : 0,
   );
   const branchId = useBranchStore((s) => s.branchId);
-  const branch = getAllLocations().find((l) => l.id === branchId) ?? getAllLocations()[0];
+  const catalog = getPublicLocations();
+  const branch =
+    catalog.find((l) => l.id === branchId) ?? catalog[0] ?? getAllLocations()[0];
   const getAvailable = useInventoryStore((s) => s.getAvailable);
   const isHidden = useInventoryStore((s) => s.isHidden);
   const inventoryRevision = useInventoryStore((s) => s.revision);

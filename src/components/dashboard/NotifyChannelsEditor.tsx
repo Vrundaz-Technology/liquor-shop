@@ -31,6 +31,7 @@ function ChannelPill({
       type="button"
       role="switch"
       aria-checked={checked}
+      aria-label={`${title} ${checked ? "on" : "off"}`}
       onClick={() => onChange(!checked)}
       className={cn(
         "inline-flex min-h-11 items-center gap-2 rounded-sm border px-3 py-2 text-sm transition",

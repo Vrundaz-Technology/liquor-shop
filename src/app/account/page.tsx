@@ -32,7 +32,7 @@ import { AvatarUpload } from "@/components/ui/AvatarUpload";
 import { Select } from "@/components/ui/Select";
 import { LoyaltyMemberCard } from "@/components/dashboard/LoyaltyMemberCard";
 import { UserAvatar } from "@/components/ui/UserAvatar";
-import { getAllLocations } from "@/data/locations";
+import { getPublicLocations } from "@/data/locations";
 import { getCategories } from "@/data/categories";
 import { cn } from "@/lib/utils";
 import {
@@ -296,7 +296,7 @@ export default function AccountPage() {
   const reorderItems = useCartStore((s) => s.reorderItems);
   const setFulfillment = useCartStore((s) => s.setFulfillment);
   const enrich = useDeliveryStore((s) => s.enrich);
-  const stores = getAllLocations();
+  const stores = getPublicLocations();
   const categories = getCategories();
 
   const [tab, setTab] = useState<TabId>(() => {

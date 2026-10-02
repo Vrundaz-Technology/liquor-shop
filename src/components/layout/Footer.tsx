@@ -44,11 +44,6 @@ export function Footer() {
                 Events
               </Link>
             </li>
-            <li>
-              <Link href="/prototype" className="hover:text-[var(--cream)]">
-                Client Prototype
-              </Link>
-            </li>
           </ul>
         </div>
         <div>
@@ -81,6 +76,13 @@ export function Footer() {
                 Support
               </Link>
             </li>
+            {showDashboard ? (
+              <li>
+                <Link href="/prototype" className="hover:text-[var(--cream)]">
+                  Client Prototype
+                </Link>
+              </li>
+            ) : null}
           </ul>
         </div>
         <div>

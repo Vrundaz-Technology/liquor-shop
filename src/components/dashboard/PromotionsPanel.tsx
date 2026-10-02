@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertCircle, BadgePercent, BarChart3, Pencil, Plus, Trash2 } from "lucide-react";
 import { apiFetch } from "@/lib/api-client";
@@ -19,6 +20,7 @@ import {
   tableWrapClass,
   useTableSort,
 } from "@/components/ui/SortableTh";
+import { dashboardPath, parseDashboardPath } from "@/lib/dashboard/routes";
 import { cn, nativeSelectClass } from "@/lib/utils";
 import { categories as shopCategories } from "@/data/categories";
 import { getAllLocations } from "@/data/locations";
@@ -107,7 +109,8 @@ const fieldErrorClass = cn(
   nativeSelectClass,
   "mt-1.5 w-full border-(--danger)/55 bg-(--danger)/5 focus:border-(--danger)/70",
 );
-const labelClass = "block text-[10px] uppercase tracking-[0.16em] text-muted";
+const labelClass =
+  "block text-[10px] uppercase tracking-[0.16em] text-muted [word-spacing:0.35em]";
 
 function FieldError({ message }: { message?: string }) {
   if (!message) return null;
@@ -262,11 +265,13 @@ function ActiveSwitch({
   disabled,
   onChange,
   label = "Active",
+  compact,
 }: {
   active: boolean;
   disabled?: boolean;
   onChange: () => void;
   label?: string;
+  compact?: boolean;
 }) {
   return (
     <button
@@ -277,10 +282,14 @@ function ActiveSwitch({
       disabled={disabled}
       onClick={onChange}
       className={cn(
-        "group inline-flex items-center gap-2.5 rounded-md border px-2.5 py-1.5 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--gold)/40",
-        active
-          ? "border-emerald-500/40 bg-emerald-500/[0.08] hover:border-emerald-400/55 hover:bg-emerald-500/[0.12]"
-          : "border-white/12 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]",
+        "group inline-flex shrink-0 items-center transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-(--gold)/40",
+        compact
+          ? "rounded-full"
+          : "gap-2.5 rounded-md border px-2.5 py-1.5",
+        !compact &&
+          (active
+            ? "border-emerald-500/40 bg-emerald-500/[0.08] hover:border-emerald-400/55 hover:bg-emerald-500/[0.12]"
+            : "border-white/12 bg-white/[0.03] hover:border-white/20 hover:bg-white/[0.05]"),
         disabled && "cursor-wait opacity-60",
       )}
     >
@@ -297,25 +306,39 @@ function ActiveSwitch({
           )}
         />
       </span>
-      <span
-        className={cn(
-          "min-w-[4.25rem] text-[10px] font-semibold uppercase tracking-[0.16em]",
-          active ? "text-emerald-100" : "text-muted",
-        )}
-      >
-        {active ? "Active" : "Inactive"}
-      </span>
+      {!compact ? (
+        <span
+          className={cn(
+            "min-w-[4.25rem] text-[10px] font-semibold uppercase tracking-[0.16em]",
+            active ? "text-emerald-100" : "text-muted",
+          )}
+        >
+          {active ? "Active" : "Inactive"}
+        </span>
+      ) : null}
     </button>
   );
 }
 
 export function PromotionsPanel() {
   const qc = useQueryClient();
+  const router = useRouter();
+  const pathname = usePathname();
   const profile = useUserStore((s) => s.profile);
   const stores = accessibleLocations(profile, getAllLocations());
   const defaultLocationId = stores[0]?.id ?? "";
-
-  const [section, setSection] = useState<"promotions" | "performance">("promotions");
+  const section = parseDashboardPath(pathname).promotionsSection;
+  const setSection = useCallback(
+    (next: "promotions" | "performance") => {
+      router.push(
+        next === "performance"
+          ? dashboardPath("promotions", { performance: true })
+          : dashboardPath("promotions"),
+        { scroll: false },
+      );
+    },
+    [router],
+  );
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState<FormState>(() => emptyForm(defaultLocationId));
@@ -1207,7 +1230,9 @@ export function PromotionsPanel() {
 
           <div className="flex flex-col gap-3 rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/20 px-3.5 py-3.5 sm:col-span-2 sm:flex-row sm:items-center sm:justify-between">
             <div className="min-w-0">
-              <p className="text-[10px] uppercase tracking-[0.16em] text-gold">Offer status</p>
+              <p className="text-[10px] uppercase tracking-[0.16em] text-gold [word-spacing:0.35em]">
+                Offer status
+              </p>
               <p className="mt-1 text-xs leading-relaxed text-muted">
                 {form.active
                   ? "Live — customers can use this offer when schedule rules match."
@@ -1221,42 +1246,74 @@ export function PromotionsPanel() {
             />
           </div>
 
-          <label className="flex min-h-11 items-center gap-2 text-sm text-cream sm:col-span-2">
-            <input
-              type="checkbox"
-              checked={form.firstOrderOnly}
-              onChange={(e) => setForm({ ...form, firstOrderOnly: e.target.checked })}
-              className="size-4 accent-(--gold)"
-            />
-            First-order only
-          </label>
-          <label className="sm:col-span-2">
-            <span className={labelClass}>Uses per customer</span>
-            <input
-              type="number"
-              min={1}
-              max={99}
-              inputMode="numeric"
-              placeholder="Unlimited"
-              value={form.maxUsesPerUser}
-              onChange={(e) => setForm({ ...form, maxUsesPerUser: e.target.value })}
-              onBlur={() => markTouched("maxUsesPerUser")}
-              className={show("maxUsesPerUser") ? fieldErrorClass : fieldClass}
-            />
-            <FieldError message={show("maxUsesPerUser")} />
-            <p className="mt-1.5 text-xs text-muted">
-              Leave blank for no limit. Example: 2 means each shopper can redeem this offer twice.
-            </p>
-          </label>
-          <label className="flex min-h-11 items-center gap-2 text-sm text-cream sm:col-span-2">
-            <input
-              type="checkbox"
-              checked={form.stackable}
-              onChange={(e) => setForm({ ...form, stackable: e.target.checked })}
-              className="size-4 accent-(--gold)"
-            />
-            Stackable (free delivery can combine with a product discount)
-          </label>
+          <div className="overflow-hidden rounded-sm border border-white/10 bg-gradient-to-b from-white/[0.04] to-black/20 sm:col-span-2">
+            <div className="border-b border-white/10 px-3.5 py-3">
+              <p className="text-[10px] uppercase tracking-[0.16em] text-gold [word-spacing:0.35em]">
+                Redemption rules
+              </p>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Who can redeem this offer, how often, and whether it combines with another promotion.
+              </p>
+            </div>
+
+            <div className="flex items-start justify-between gap-4 border-b border-white/8 px-3.5 py-3.5">
+              <div className="min-w-0">
+                <p className="text-sm text-cream">First order only</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  New customers only — applies to their first purchase.
+                </p>
+              </div>
+              <ActiveSwitch
+                compact
+                active={form.firstOrderOnly}
+                onChange={() => setForm((f) => ({ ...f, firstOrderOnly: !f.firstOrderOnly }))}
+                label="First order only"
+              />
+            </div>
+
+            <div className="border-b border-white/8 px-3.5 py-3.5">
+              <label htmlFor="promo-max-uses" className="text-sm text-cream">
+                Uses per customer
+              </label>
+              <p className="mt-1 text-xs leading-relaxed text-muted">
+                Leave blank for unlimited. Example: 2 lets each shopper redeem this offer twice.
+              </p>
+              <div className="mt-3 flex max-w-xs items-center gap-2.5">
+                <input
+                  id="promo-max-uses"
+                  type="number"
+                  min={1}
+                  max={99}
+                  inputMode="numeric"
+                  placeholder="Unlimited"
+                  value={form.maxUsesPerUser}
+                  onChange={(e) => setForm({ ...form, maxUsesPerUser: e.target.value })}
+                  onBlur={() => markTouched("maxUsesPerUser")}
+                  className={cn(
+                    show("maxUsesPerUser") ? fieldErrorClass : fieldClass,
+                    "mt-0",
+                  )}
+                />
+                <span className="shrink-0 text-xs text-muted">per shopper</span>
+              </div>
+              <FieldError message={show("maxUsesPerUser")} />
+            </div>
+
+            <div className="flex items-start justify-between gap-4 px-3.5 py-3.5">
+              <div className="min-w-0">
+                <p className="text-sm text-cream">Stack with other offers</p>
+                <p className="mt-1 text-xs leading-relaxed text-muted">
+                  Free delivery can combine with a product discount on the same order.
+                </p>
+              </div>
+              <ActiveSwitch
+                compact
+                active={form.stackable}
+                onChange={() => setForm((f) => ({ ...f, stackable: !f.stackable }))}
+                label="Stack with other offers"
+              />
+            </div>
+          </div>
 
           {save.error ? (
             <p className="sm:col-span-2 text-sm text-(--danger)">

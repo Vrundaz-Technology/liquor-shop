@@ -36,4 +36,18 @@ describe("dashboard notifications route", () => {
     expect(route.section).toBe("customers");
     expect(route.customerId).toBe("cust-123");
   });
+
+  it("keeps promotions on the performance path", () => {
+    const route = parseDashboardPath("/dashboard/promotions/performance");
+    expect(route.section).toBe("promotions");
+    expect(route.promotionsSection).toBe("performance");
+    expect(route.promotionsPromoId).toBeNull();
+  });
+
+  it("keeps an offer usage path after refresh", () => {
+    const route = parseDashboardPath("/dashboard/promotions/performance/promo-gold");
+    expect(route.section).toBe("promotions");
+    expect(route.promotionsSection).toBe("performance");
+    expect(route.promotionsPromoId).toBe("promo-gold");
+  });
 });

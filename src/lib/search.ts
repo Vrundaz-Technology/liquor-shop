@@ -34,6 +34,34 @@ export function searchProducts(query: string, limit = 12): Product[] {
   return fuse.search(query, opts).map((r) => r.item);
 }
 
+export type SearchPage = {
+  href: string;
+  label: string;
+  description: string;
+  keywords: string;
+};
+
+const PAGES: SearchPage[] = [
+  { href: "/shop", label: "Collections", description: "Browse bottles and brands", keywords: "shop collections bottles buy catalog" },
+  { href: "/virtual-store", label: "Virtual Store", description: "Walk the showroom", keywords: "virtual store ar 3d showroom" },
+  { href: "/locations", label: "Locations", description: "Stores, pickup, and delivery", keywords: "store location hours address pickup delivery zip" },
+  { href: "/events", label: "Events", description: "Tastings and in-store events", keywords: "events tasting class" },
+  { href: "/track", label: "Track order", description: "Look up delivery status", keywords: "track tracking order delivery shipment eta" },
+  { href: "/support", label: "Support", description: "Help, tickets, and order issues", keywords: "support help contact ticket refund damaged" },
+  { href: "/cart", label: "Cart", description: "Review items before checkout", keywords: "cart bag checkout" },
+  { href: "/wishlist", label: "Wishlist", description: "Saved bottles", keywords: "wishlist favorites saved" },
+  { href: "/account", label: "Account", description: "Orders, profile, and loyalty", keywords: "account orders profile loyalty" },
+  { href: "/login", label: "Sign in", description: "Member and staff login", keywords: "login signin sign in account" },
+];
+
+export function searchPages(query: string, limit = 6): SearchPage[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return [];
+  return PAGES.filter((page) =>
+    `${page.label} ${page.description} ${page.keywords}`.toLowerCase().includes(q),
+  ).slice(0, limit);
+}
+
 export function searchAll(query: string) {
   const productResults = searchProducts(query, 8);
   const categoryResults = getCategories().filter(
@@ -41,5 +69,5 @@ export function searchAll(query: string) {
       c.name.toLowerCase().includes(query.toLowerCase()) ||
       c.tagline.toLowerCase().includes(query.toLowerCase()),
   );
-  return { products: productResults, categories: categoryResults };
+  return { products: productResults, categories: categoryResults, pages: searchPages(query) };
 }

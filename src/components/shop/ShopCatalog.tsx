@@ -25,7 +25,7 @@ import {
   type ShopFilters,
 } from "@/lib/shop-catalog";
 import { DEFAULT_SHOP_FILTERS, parseShopFilters, shopFiltersToSearchParams } from "@/lib/shop-url";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 
 export function ShopCatalog() {
   const router = useRouter();
@@ -40,7 +40,7 @@ export function ShopCatalog() {
   );
 
   const catalogRevision = useCatalogStore((s) => s.revision);
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const branchId = useBranchStore((s) => s.branchId);
   const customerZip = useBranchStore((s) => s.customerZip);
   const customerLat = useBranchStore((s) => s.customerLat);
@@ -258,6 +258,16 @@ export function ShopCatalog() {
                 : filters.maxDeliveryMinutes
                   ? " Try a wider delivery window or find your store by ZIP."
                   : " Try another brand, category, or clear filters."}
+              <span className="mt-4 block">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => setFilters({ ...DEFAULT_SHOP_FILTERS })}
+                >
+                  Clear filters
+                </Button>
+              </span>
             </p>
           )}
 

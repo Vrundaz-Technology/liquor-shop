@@ -2,7 +2,7 @@
 
 import { getCategories } from "@/data/categories";
 import { Select } from "@/components/ui/Select";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import {
   DELIVERY_TIME_OPTIONS,
   SIZE_OPTIONS,
@@ -43,7 +43,7 @@ export function ShopFiltersPanel({
   const patch = (partial: Partial<ShopFilters>) => onChange({ ...value, ...partial });
   const minPrice = value.minPrice ?? 0;
   const maxPrice = value.maxPrice ?? 5000;
-  const stores = useRuntimeLocations();
+  const stores = usePublicLocations();
 
   return (
     <div className={cn("space-y-4", className)}>

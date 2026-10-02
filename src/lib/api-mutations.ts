@@ -603,6 +603,7 @@ export async function apiCreateLocation(input: {
   description?: string;
   pickupAvailable?: boolean;
   deliveryAvailable?: boolean;
+  active?: boolean;
   deliveryFee?: number;
   deliveryFreeMinimum?: number;
   minimumOrderAmount?: number;
@@ -634,6 +635,7 @@ export async function apiPatchLocation(
     description: string;
     pickupAvailable: boolean;
     deliveryAvailable?: boolean;
+    active?: boolean;
     deliveryFee?: number;
     deliveryFreeMinimum?: number;
     minimumOrderAmount?: number;

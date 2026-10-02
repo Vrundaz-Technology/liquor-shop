@@ -55,7 +55,14 @@ export async function POST(request: Request) {
     return tooManyRequests(limited.retryAfter, "Too many re-send attempts. Try again shortly.");
   }
 
-  const parsed = postSchema.safeParse(await request.json());
+  let payload: unknown = null;
+  try {
+    const raw = await request.text();
+    payload = raw.trim() ? JSON.parse(raw) : null;
+  } catch {
+    return NextResponse.json({ error: "Invalid re-send payload." }, { status: 400 });
+  }
+  const parsed = postSchema.safeParse(payload);
   if (!parsed.success) {
     return NextResponse.json({ error: "Invalid re-send payload." }, { status: 400 });
   }

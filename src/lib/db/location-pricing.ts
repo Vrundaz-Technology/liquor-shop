@@ -56,7 +56,7 @@ export function mapLocationPricing(row: LocationPricingRow | Record<string, unkn
   };
 }
 
-function asBool(value: unknown, fallback: boolean) {
+export function asBool(value: unknown, fallback: boolean) {
   if (value === false || value === 0 || value === "0") return false;
   if (value === true || value === 1 || value === "1") return true;
   return fallback;

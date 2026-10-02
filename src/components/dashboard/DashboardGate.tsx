@@ -1,14 +1,17 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { useUserStore } from "@/store/user";
 import { hasPermission } from "@/lib/auth/permissions";
 import { Button } from "@/components/ui/Button";
 import { DashboardLoading } from "@/components/dashboard/DashboardLoading";
 
 export function DashboardGate({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const { isLoggedIn, profile, authReady } = useUserStore();
   const canOpenDashboard = isLoggedIn && hasPermission(profile, "dashboard.access");
+  const loginHref = `/login?next=${encodeURIComponent(pathname || "/dashboard")}`;
 
   if (!authReady) {
     return (
@@ -34,7 +37,7 @@ export function DashboardGate({ children }: { children: React.ReactNode }) {
             activity.
           </p>
           <div className="mt-8 flex flex-col items-center gap-3 sm:flex-row sm:justify-center">
-            <Link href="/login?next=/dashboard">
+            <Link href={loginHref}>
               <Button size="lg">Sign in</Button>
             </Link>
             <Link href="/shop" className="text-sm text-gold hover:underline">

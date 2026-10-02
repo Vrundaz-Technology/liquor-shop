@@ -1,4 +1,4 @@
-import { getAllLocations } from "@/data/locations";
+import { getPublicLocations } from "@/data/locations";
 import {
   estimateDeliveryEta,
   formatMiles,
@@ -57,7 +57,7 @@ export async function geocodeUsZip(zip: string): Promise<GeoPoint | null> {
 /** Match stores by ZIP prefix / exact ZIP when geocoding fails. */
 export function storesMatchingZipFallback(
   zip: string,
-  stores: StoreLocation[] = getAllLocations(),
+  stores: StoreLocation[] = getPublicLocations(),
 ): NearbyStore[] {
   const clean = zip.trim().replace(/\s+/g, "").slice(0, 5);
   if (!/^\d{5}$/.test(clean)) return [];
@@ -91,7 +91,7 @@ export function findNearbyStores(
   opts?: { maxMiles?: number; requireDelivery?: boolean; stores?: StoreLocation[] },
 ): NearbyStore[] {
   const maxMiles = opts?.maxMiles ?? 40;
-  const catalog = opts?.stores ?? getAllLocations();
+  const catalog = opts?.stores ?? getPublicLocations();
   const rows: NearbyStore[] = catalog.map((store) => {
     const miles = haversineMiles(point, { lat: store.lat, lng: store.lng });
     const radiusMi = kmToMiles(store.deliveryRadiusKm || 0);
@@ -129,7 +129,7 @@ export async function findStoresForZip(
   stores: NearbyStore[];
   source: "geo" | "zip-fallback";
 }> {
-  const catalog = stores ?? getAllLocations();
+  const catalog = stores ?? getPublicLocations();
   const point = await geocodeUsZip(zip);
   if (point) {
     return { point, stores: findNearbyStores(point, { stores: catalog }), source: "geo" };

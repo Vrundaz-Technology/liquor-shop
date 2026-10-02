@@ -427,6 +427,7 @@ export const locationWriteSchema = z.object({
   description: z.string().trim().max(4000).optional(),
   pickupAvailable: z.boolean().optional(),
   deliveryAvailable: z.boolean().optional(),
+  active: z.boolean().optional(),
   deliveryRadiusKm: z
     .number()
     .finite()

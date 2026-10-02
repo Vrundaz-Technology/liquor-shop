@@ -18,6 +18,7 @@ import {
   loyaltyDiscountFromPoints,
 } from "@/lib/commerce/cart-pricing";
 import { calculateShipping, calculateTax } from "@/lib/fulfillment-pricing";
+import { asBool } from "@/lib/db/location-pricing";
 import { ensureLocationPricingSchema, mapLocationPricing } from "@/lib/db/location-pricing";
 import { ensureInventoryVisibilityColumn } from "@/lib/db/inventory-visibility";
 import type { Prisma } from "@prisma/client";
@@ -113,6 +114,8 @@ export async function fetchAllLocations(opts?: { inventoryMode?: "full" | "featu
   }
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
+  const { ensureLocationSchema } = await import("@/lib/db/store-admin");
+  await ensureLocationSchema();
   const rows = await prisma.location.findMany({
     include: {
       inventory:
@@ -122,29 +125,45 @@ export async function fetchAllLocations(opts?: { inventoryMode?: "full" | "featu
     },
     orderBy: { name: "asc" },
   });
-  return rows.map(mapLocation);
+  const flags = await prisma.$queryRaw<{ id: string; active: boolean }[]>`
+    SELECT id, active FROM locations
+  `;
+  const activeById = new Map(flags.map((row) => [row.id, row.active]));
+  return rows.map((row) => mapLocation({ ...row, active: activeById.get(row.id) ?? true }));
 }
 
 export async function fetchLocationBySlug(slug: string) {
   if (!isDbConfigured()) return seedLocations.find((l) => l.slug === slug);
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
+  const { ensureLocationSchema } = await import("@/lib/db/store-admin");
+  await ensureLocationSchema();
   const row = await prisma.location.findUnique({
     where: { slug },
     include: { inventory: true },
   });
-  return row ? mapLocation(row) : undefined;
+  if (!row) return undefined;
+  const flags = await prisma.$queryRaw<{ active: boolean }[]>`
+    SELECT active FROM locations WHERE id = ${row.id}
+  `;
+  return mapLocation({ ...row, active: flags[0]?.active ?? true });
 }
 
 export async function fetchLocationById(id: string) {
   if (!isDbConfigured()) return seedLocations.find((l) => l.id === id);
   await ensureLocationPricingSchema();
   await ensureInventoryVisibilityColumn();
+  const { ensureLocationSchema } = await import("@/lib/db/store-admin");
+  await ensureLocationSchema();
   const row = await prisma.location.findUnique({
     where: { id },
     include: { inventory: true },
   });
-  return row ? mapLocation(row) : undefined;
+  if (!row) return undefined;
+  const flags = await prisma.$queryRaw<{ active: boolean }[]>`
+    SELECT active FROM locations WHERE id = ${id}
+  `;
+  return mapLocation({ ...row, active: flags[0]?.active ?? true });
 }
 
 export async function fetchCategories() {
@@ -1309,7 +1328,13 @@ export async function bookEventSeats(eventId: string, qty: number, actorUserId?:
   const flags = await prisma.$queryRaw<{ active: boolean }[]>`
     SELECT active FROM events WHERE id = ${eventId}
   `;
-  if (flags[0]?.active === false) return false;
+  if (!asBool(flags[0]?.active, true)) return false;
+  const { ensureLocationSchema } = await import("@/lib/db/store-admin");
+  await ensureLocationSchema();
+  const storeFlags = await prisma.$queryRaw<{ active: boolean }[]>`
+    SELECT active FROM locations WHERE id = ${event.locationId}
+  `;
+  if (!asBool(storeFlags[0]?.active, true)) return false;
   const result = await prisma.event.updateMany({
     where: { id: eventId, seatsAvailable: { gte: qty } },
     data: { seatsAvailable: { decrement: qty } },
@@ -1461,6 +1486,14 @@ export async function placeOrder(input: {
       include: { inventory: true },
     });
     if (!location) throw new Error("Location not found.");
+    const { ensureLocationSchema } = await import("@/lib/db/store-admin");
+    await ensureLocationSchema();
+    const storeFlags = await prisma.$queryRaw<{ active: boolean }[]>`
+      SELECT active FROM locations WHERE id = ${input.locationId}
+    `;
+    if (!asBool(storeFlags[0]?.active, true)) {
+      throw new Error("This store is not available for online orders.");
+    }
     const pricing = mapLocationPricing(location);
     if (input.fulfillment === "delivery" && !pricing.deliveryAvailable) {
       throw new Error("Delivery is not available from this store.");

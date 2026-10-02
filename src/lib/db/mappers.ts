@@ -8,7 +8,7 @@ import type {
   StoreLocation,
   UserProfile,
 } from "@/types";
-import { mapLocationPricing } from "@/lib/db/location-pricing";
+import { asBool, mapLocationPricing } from "@/lib/db/location-pricing";
 import { mapDispatchSettings } from "@/lib/db/dispatch-settings";
 import { moneyNumber, moneyOptional } from "@/lib/db/money";
 import type {
@@ -146,6 +146,7 @@ export function mapLocation(row: DbLocationRow): StoreLocation {
     services: asStringArray(row.services),
     parking: row.parking,
     pickupAvailable: row.pickupAvailable,
+    active: asBool((row as { active?: unknown }).active, true),
     ...mapLocationPricing(row),
     deliveryRadiusKm: row.deliveryRadiusKm,
     ...mapDispatchSettings(row as Record<string, unknown>),
@@ -176,7 +177,7 @@ export function mapEvent(row: DbEvent & { active?: boolean | null }): EventItem 
     seatsAvailable: row.seatsAvailable,
     image: row.image,
     hosts: asStringArray(row.hosts),
-    active: row.active !== false,
+    active: asBool(row.active, true),
   };
 }
 

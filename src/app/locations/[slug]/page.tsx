@@ -7,7 +7,7 @@ type Props = { params: Promise<{ slug: string }> };
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const loc = await fetchLocationBySlug(slug).catch(() => undefined);
-  if (!loc) {
+  if (!loc || loc.active === false) {
     return { title: "Location", robots: { index: false, follow: true } };
   }
   return {

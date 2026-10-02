@@ -15,6 +15,7 @@ export default defineConfig({
     baseURL,
     trace: "on-first-retry",
     screenshot: "only-on-failure",
+    ...(process.env.PW_CHANNEL === "chrome" ? { channel: "chrome" as const } : {}),
   },
   projects: [{ name: "chromium", use: { ...devices["Desktop Chrome"] } }],
   webServer: process.env.PLAYWRIGHT_BASE_URL

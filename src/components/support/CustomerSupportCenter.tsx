@@ -16,7 +16,7 @@ import {
   SUPPORT_STATUS_STYLES,
   routeSupportTicket,
 } from "@/lib/support/routing";
-import { getAllLocations, getLocationById } from "@/data/locations";
+import { getLocationById, getPublicLocations } from "@/data/locations";
 import { useBranchStore } from "@/store/branch";
 import { useUserStore } from "@/store/user";
 import { cn, formatPrice } from "@/lib/utils";
@@ -59,7 +59,7 @@ export function CustomerSupportCenter({
 }: Props) {
   const { isLoggedIn, profile } = useUserStore();
   const branchId = useBranchStore((s) => s.branchId);
-  const stores = getAllLocations();
+  const stores = getPublicLocations();
 
   const [view, setView] = useState<View>(() => (defaultOrderId ? "compose" : "inbox"));
   const [tickets, setTickets] = useState<SupportTicket[]>([]);
@@ -218,12 +218,31 @@ export function CustomerSupportCenter({
 
   if (!isLoggedIn) {
     return (
-      <p className="text-sm text-muted">
-        <Link href="/login?next=/account?tab=support" className="text-gold hover:underline">
-          Sign in
-        </Link>{" "}
-        to open a support ticket.
-      </p>
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="rounded-sm border border-white/10 p-4">
+          <p className="text-sm text-cream">Need help with an order?</p>
+          <p className="mt-1 text-xs text-muted">
+            Sign in to open a ticket. You can also look up a delivery without an account.
+          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <Link href="/login?next=/support">
+              <Button size="sm">Sign in</Button>
+            </Link>
+            <Link href="/track" className="text-sm text-gold hover:underline">
+              Track order
+            </Link>
+          </div>
+        </div>
+        <div className="rounded-sm border border-white/10 p-4">
+          <p className="text-sm text-cream">Find a store</p>
+          <p className="mt-1 text-xs text-muted">
+            Hours, pickup, and delivery radius for every location.
+          </p>
+          <Link href="/locations" className="mt-4 inline-block text-sm text-gold hover:underline">
+            View locations
+          </Link>
+        </div>
+      </div>
     );
   }
 

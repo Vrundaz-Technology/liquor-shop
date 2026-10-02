@@ -1,4 +1,4 @@
-import { getAllLocations, getLocationById } from "@/data/locations";
+import { getAllLocations, getLocationById, getPublicLocationById, getPublicLocations } from "@/data/locations";
 import { getProductById, products } from "@/data/products";
 import { getLiveStock } from "@/store/inventory";
 import type { CartItem, Product, StoreLocation } from "@/types";
@@ -47,15 +47,19 @@ export function locationCoversCart(
 export function findLocationsCoveringCart(
   items: Pick<CartItem, "productId" | "quantity">[],
 ) {
-  if (!items.length) return getAllLocations();
-  return getAllLocations().filter((loc) => locationCoversCart(items, loc.id));
+  if (!items.length) return getPublicLocations();
+  return getPublicLocations().filter((loc) => locationCoversCart(items, loc.id));
 }
 
 export function analyzeCartAvailability(
   items: CartItem[],
   branchId: string,
 ): CartAvailability {
-  const branch = getLocationById(branchId) ?? getAllLocations()[0];
+  const branch =
+    getPublicLocationById(branchId) ??
+    getPublicLocations()[0] ??
+    getLocationById(branchId) ??
+    getAllLocations()[0];
 
   const lines: CartLineAvailability[] = items
     .map((item) => {
@@ -81,7 +85,7 @@ export function analyzeCartAvailability(
   const fullCoverageLocation =
     covering.find((l) => l.id === branchId) ?? covering[0] ?? null;
 
-  const betterLocations: LocationCoverage[] = getAllLocations()
+  const betterLocations: LocationCoverage[] = getPublicLocations()
     .map((loc) => {
       let availableCount = 0;
       let missingCount = 0;
@@ -128,7 +132,7 @@ export type LocationStock = {
 
 /** Stock count for one bottle at every branch (including 0). */
 export function stockByLocation(productId: string): LocationStock[] {
-  return getAllLocations().map((location) => ({
+  return getPublicLocations().map((location) => ({
     location,
     stock: getAvailableStock(location.id, productId),
   }));

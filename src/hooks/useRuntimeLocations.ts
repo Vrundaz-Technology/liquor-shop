@@ -1,7 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
-import { getAllLocations } from "@/data/locations";
+import { getAllLocations, getPublicLocations } from "@/data/locations";
 import {
   getRuntimeCatalogRevision,
   subscribeRuntimeCatalog,
@@ -23,4 +23,21 @@ function locationsSnapshot(): StoreLocation[] {
 /** Live store list — updates when bootstrap loads or dashboard add/edit/remove runs. */
 export function useRuntimeLocations() {
   return useSyncExternalStore(subscribeRuntimeCatalog, locationsSnapshot, locationsSnapshot);
+}
+
+let publicCacheRev = -1;
+let publicCache: StoreLocation[] = getPublicLocations();
+
+function publicLocationsSnapshot(): StoreLocation[] {
+  const rev = getRuntimeCatalogRevision();
+  if (rev !== publicCacheRev) {
+    publicCacheRev = rev;
+    publicCache = getPublicLocations();
+  }
+  return publicCache;
+}
+
+/** Active stores only — for the shop, map, checkout, and store finder. */
+export function usePublicLocations() {
+  return useSyncExternalStore(subscribeRuntimeCatalog, publicLocationsSnapshot, publicLocationsSnapshot);
 }

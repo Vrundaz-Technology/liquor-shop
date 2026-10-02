@@ -380,15 +380,20 @@ export const demoAdmin: UserProfile = {
 
 export const demoAccounts: UserProfile[] = [demoUser, demoOwner, demoStaff, demoAdmin];
 
+import { getLocationById, isLocationPublic } from "@/data/locations";
 import { runtimeData } from "@/lib/runtime-data-bridge";
 
 export function getAllEvents() {
   return runtimeData().getRuntimeEvents();
 }
 
-/** Public listings — inactive events stay hidden. */
+/** Public listings — inactive events and events at hidden stores stay hidden. */
 export function getPublicEvents() {
-  return getAllEvents().filter((e) => e.active !== false);
+  return getAllEvents().filter((e) => {
+    if (e.active === false) return false;
+    const store = getLocationById(e.locationId);
+    return !store || isLocationPublic(store);
+  });
 }
 
 export function getReviewsForProduct(productId: string) {
@@ -400,6 +405,5 @@ export function getEventBySlug(slug: string) {
 }
 
 export function getPublicEventBySlug(slug: string) {
-  const event = getEventBySlug(slug);
-  return event && event.active !== false ? event : undefined;
+  return getPublicEvents().find((e) => e.slug === slug);
 }

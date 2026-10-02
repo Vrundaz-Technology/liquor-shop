@@ -46,6 +46,7 @@ export function AbbrTooltip({
     <span className={cn("inline-flex items-baseline gap-1", className)}>
       <Tooltip content={meaning}>
         <abbr
+          aria-label={meaning}
           className={cn(
             "cursor-default no-underline underline decoration-dotted decoration-current/40 underline-offset-2",
             abbrClassName,

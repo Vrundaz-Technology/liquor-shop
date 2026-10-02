@@ -6,8 +6,10 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart,
+  Headphones,
   MapPin,
   Menu,
+  PackageSearch,
   Search,
   ShoppingBag,
   Store,
@@ -24,7 +26,7 @@ import { accessibleLocations } from "@/lib/auth/location-access";
 import { switchShoppingStore } from "@/lib/switch-store";
 import { shopHref } from "@/lib/shop-url";
 import { formatPrice } from "@/lib/utils";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations, useRuntimeLocations } from "@/hooks/useRuntimeLocations";
 import { AccountMenu } from "@/components/layout/AccountMenu";
 import { UserAvatar } from "@/components/ui/UserAvatar";
 import { StoreFinder } from "@/components/store/StoreFinder";
@@ -55,6 +57,7 @@ export function Header() {
   const [results, setResults] = useState<{
     products: Product[];
     categories: ReturnType<typeof getCategories>;
+    pages: { href: string; label: string; description: string }[];
   } | null>(null);
   const count = useCartStore((s) => s.items.reduce((n, i) => n + i.quantity, 0));
   const cartBump = useCartFeedbackStore((s) => s.bump);
@@ -66,7 +69,9 @@ export function Header() {
     (s) => s.isLoggedIn && isStaffRole(s.profile),
   );
   const logout = useUserStore((s) => s.logout);
-  const locations = useRuntimeLocations();
+  const allLocations = useRuntimeLocations();
+  const publicLocations = usePublicLocations();
+  const locations = isLoggedIn && isStaff ? allLocations : publicLocations;
   const branchOptions =
     isLoggedIn && isStaff ? accessibleLocations(profile, locations) : locations;
   const branch =
@@ -103,6 +108,12 @@ export function Header() {
     if (options.some((loc) => loc.id === branchId)) return;
     if (options[0]) switchShoppingStore(options[0].id);
   }, [branchId, isLoggedIn, isStaff, profile]);
+
+  useEffect(() => {
+    if (isStaff) return;
+    if (branchOptions.some((loc) => loc.id === branchId)) return;
+    if (branchOptions[0]) switchShoppingStore(branchOptions[0].id);
+  }, [branchId, branchOptions, isStaff]);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 24);
@@ -285,6 +296,24 @@ export function Header() {
               <span className="sr-only">Search</span>
             </button>
             </Tooltip>
+            <Tooltip content="Track order">
+            <Link
+              href="/track"
+              className="hidden min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5 lg:inline-flex"
+            >
+              <PackageSearch size={18} />
+              <span className="sr-only">Track order</span>
+            </Link>
+            </Tooltip>
+            <Tooltip content="Support">
+            <Link
+              href="/support"
+              className="hidden min-h-11 min-w-11 items-center justify-center rounded-sm text-[var(--cream)] hover:bg-white/5 lg:inline-flex"
+            >
+              <Headphones size={18} />
+              <span className="sr-only">Support</span>
+            </Link>
+            </Tooltip>
             <Tooltip content="Wishlist">
             <Link
               href="/wishlist"
@@ -296,9 +325,11 @@ export function Header() {
             </Tooltip>
             {!authReady && !isLoggedIn ? (
               <span
+                role="status"
                 className="inline-flex h-9 w-9 shrink-0 animate-pulse rounded-sm bg-white/10 sm:h-10 sm:w-10"
-                aria-label="Checking account"
-              />
+              >
+                <span className="sr-only">Checking account</span>
+              </span>
             ) : isLoggedIn ? (
               <AccountMenu
                 open={accountOpen}
@@ -459,6 +490,26 @@ export function Header() {
               </div>
               {results && (
                 <div className="glass mt-2 max-h-[min(60vh,calc(100dvh-9rem))] overflow-y-auto p-3 sm:p-4">
+                  {(results.pages?.length ?? 0) > 0 && (
+                    <div className="mb-4">
+                      <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-[var(--gold)]">
+                        Pages
+                      </p>
+                      {(results.pages ?? []).map((page) => (
+                        <Link
+                          key={page.href}
+                          href={page.href}
+                          onClick={() => setSearchOpen(false)}
+                          className="block py-2 text-sm text-[var(--cream)] hover:text-[var(--gold)]"
+                        >
+                          {page.label}
+                          <span className="mt-0.5 block text-xs text-[var(--muted)]">
+                            {page.description}
+                          </span>
+                        </Link>
+                      ))}
+                    </div>
+                  )}
                   {results.categories.length > 0 && (
                     <div className="mb-4">
                       <p className="mb-2 text-[10px] uppercase tracking-[0.2em] text-[var(--gold)]">
@@ -501,7 +552,7 @@ export function Header() {
                       View all results in shop
                     </Link>
                   ) : null}
-                  {!results.products.length && !results.categories.length && (
+                  {!results.products.length && !results.categories.length && !(results.pages?.length) && (
                     <p className="text-sm text-[var(--muted)]">No matches found.</p>
                   )}
                 </div>
@@ -545,6 +596,24 @@ export function Header() {
                   {item.label}
                 </Link>
               ))}
+              <Link
+                href="/track"
+                className={cn(
+                  "font-display text-[1.75rem] leading-tight text-[var(--cream)] sm:text-3xl md:text-4xl",
+                  pathname.startsWith("/track") && "text-[var(--gold)]",
+                )}
+              >
+                Track order
+              </Link>
+              <Link
+                href="/support"
+                className={cn(
+                  "font-display text-[1.75rem] leading-tight text-[var(--cream)] sm:text-3xl md:text-4xl",
+                  pathname.startsWith("/support") && "text-[var(--gold)]",
+                )}
+              >
+                Support
+              </Link>
               <Link
                 href="/wishlist"
                 className="font-display text-[1.75rem] leading-tight text-[var(--cream)] sm:text-3xl md:text-4xl"

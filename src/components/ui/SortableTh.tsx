@@ -63,6 +63,7 @@ export function SortableTh<K extends string>({
   const active = sortKey === column;
   return (
     <th
+      aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
       className={cn(
         "px-4 py-3 font-medium whitespace-nowrap",
         align === "right" && "text-right",
@@ -72,6 +73,7 @@ export function SortableTh<K extends string>({
       <button
         type="button"
         onClick={() => onSort(column)}
+        aria-label={`Sort by ${label}${active ? `, ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
         className={cn(
           "inline-flex items-center gap-1.5 cursor-pointer whitespace-nowrap uppercase tracking-[inherit] transition-colors",
           align === "right" && "ml-auto",
@@ -87,12 +89,12 @@ export function SortableTh<K extends string>({
         )}
         {active ? (
           sortDir === "asc" ? (
-            <ArrowUp size={11} strokeWidth={2.25} className="shrink-0 text-gold" />
+            <ArrowUp size={11} strokeWidth={2.25} className="shrink-0 text-gold" aria-hidden />
           ) : (
-            <ArrowDown size={11} strokeWidth={2.25} className="shrink-0 text-gold" />
+            <ArrowDown size={11} strokeWidth={2.25} className="shrink-0 text-gold" aria-hidden />
           )
         ) : (
-          <ArrowUpDown size={11} strokeWidth={2} className="shrink-0 opacity-45" />
+          <ArrowUpDown size={11} strokeWidth={2} className="shrink-0 opacity-45" aria-hidden />
         )}
       </button>
     </th>
@@ -121,6 +123,8 @@ export function MobileSortBar<K extends string>({
             key={col.key}
             type="button"
             onClick={() => onSort(col.key)}
+            aria-pressed={active}
+            aria-label={`Sort by ${col.label}${active ? `, ${sortDir === "asc" ? "ascending" : "descending"}` : ""}`}
             className={cn(
               "inline-flex min-h-10 shrink-0 items-center gap-1.5 border px-3 py-2 text-[11px] uppercase tracking-[0.14em] transition-colors",
               active
@@ -131,12 +135,12 @@ export function MobileSortBar<K extends string>({
             {col.label}
             {active ? (
               sortDir === "asc" ? (
-                <ArrowUp size={12} className="text-gold" />
+                <ArrowUp size={12} className="text-gold" aria-hidden />
               ) : (
-                <ArrowDown size={12} className="text-gold" />
+                <ArrowDown size={12} className="text-gold" aria-hidden />
               )
             ) : (
-              <ArrowUpDown size={12} className="opacity-40" />
+              <ArrowUpDown size={12} className="opacity-40" aria-hidden />
             )}
           </button>
         );

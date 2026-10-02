@@ -209,6 +209,8 @@ export type StoreLocation = {
   parking: string;
   pickupAvailable: boolean;
   deliveryAvailable: boolean;
+  /** When false, hidden from public store listings, picker, and events. */
+  active?: boolean;
   /** Own drivers may take orders from this store. */
   internalDeliveryEnabled?: boolean;
   /** Staff may send this store's deliveries to Shipday. */

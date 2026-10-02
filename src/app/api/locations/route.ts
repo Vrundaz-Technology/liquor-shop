@@ -6,21 +6,26 @@ import {
   deleteStoreLocation,
   updateStoreLocation,
 } from "@/lib/db/store-admin";
-import { requirePermission } from "@/lib/auth/require";
+import { getRequestUser, requirePermission } from "@/lib/auth/require";
+import { hasPermission } from "@/lib/auth/permissions";
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const actor = await getRequestUser();
+    const canSeeHidden = Boolean(actor && hasPermission(actor, "locations.view"));
     const slug = searchParams.get("slug");
     if (slug) {
       const location = await fetchLocationBySlug(slug);
-      if (!location) {
+      if (!location || (!canSeeHidden && location.active === false)) {
         return NextResponse.json({ error: "Location not found." }, { status: 404 });
       }
       return NextResponse.json({ location });
     }
     const locations = await fetchAllLocations();
-    return NextResponse.json({ locations });
+    return NextResponse.json({
+      locations: canSeeHidden ? locations : locations.filter((loc) => loc.active !== false),
+    });
   } catch (error) {
     console.error("[GET /api/locations]", error);
     return NextResponse.json({ error: "Failed to fetch locations." }, { status: 500 });

@@ -189,6 +189,8 @@ export function dashboardPath(
     drivers?: boolean;
     settings?: boolean;
     categories?: boolean;
+    performance?: boolean;
+    promoId?: string;
   },
 ): string {
   if (section === "orders" && opts?.orderId) {
@@ -206,6 +208,11 @@ export function dashboardPath(
   if (section === "inventory" && opts?.categories) {
     return "/dashboard/inventory/categories";
   }
+  if (section === "promotions" && opts?.performance) {
+    return opts.promoId
+      ? `/dashboard/promotions/performance/${encodeURIComponent(opts.promoId)}`
+      : "/dashboard/promotions/performance";
+  }
   return DASHBOARD_SECTION_PATHS[section];
 }
 
@@ -215,6 +222,8 @@ export type ParsedDashboardRoute = {
   customerId: string | null;
   deliveriesSection: "deliveries" | "drivers" | "settings";
   inventoryView: "stock" | "categories";
+  promotionsSection: "promotions" | "performance";
+  promotionsPromoId: string | null;
 };
 
 export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
@@ -229,6 +238,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
     };
   }
 
@@ -239,6 +250,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
     };
   }
 
@@ -249,6 +262,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       customerId: rest[0] ? decodeURIComponent(rest[0]) : null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
     };
   }
 
@@ -260,6 +275,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       deliveriesSection:
         rest[0] === "drivers" ? "drivers" : rest[0] === "settings" ? "settings" : "deliveries",
       inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
     };
   }
 
@@ -270,6 +287,21 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: rest[0] === "categories" ? "categories" : "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
+    };
+  }
+
+  if (segment === "promotions") {
+    return {
+      section: "promotions",
+      orderId: null,
+      customerId: null,
+      deliveriesSection: "deliveries",
+      inventoryView: "stock",
+      promotionsSection: rest[0] === "performance" ? "performance" : "promotions",
+      promotionsPromoId:
+        rest[0] === "performance" && rest[1] ? decodeURIComponent(rest[1]) : null,
     };
   }
 
@@ -281,6 +313,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       customerId: null,
       deliveriesSection: "deliveries",
       inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
     };
   }
 
@@ -290,6 +324,8 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     customerId: null,
     deliveriesSection: "deliveries",
     inventoryView: "stock",
+    promotionsSection: "promotions",
+    promotionsPromoId: null,
   };
 }
 
@@ -301,6 +337,7 @@ export function legacyTabToPath(
   if (!tab) return null;
   if (tab === "drivers") return dashboardPath("deliveries", { drivers: true });
   if (tab === "categories") return dashboardPath("inventory", { categories: true });
+  if (tab === "performance") return dashboardPath("promotions", { performance: true });
   if (!isDashboardSection(tab)) return "/dashboard";
 
   if (tab === "orders") {
@@ -309,6 +346,9 @@ export function legacyTabToPath(
   }
   if (tab === "deliveries" && searchParams?.get("section") === "drivers") {
     return dashboardPath("deliveries", { drivers: true });
+  }
+  if (tab === "promotions" && searchParams?.get("section") === "performance") {
+    return dashboardPath("promotions", { performance: true });
   }
   return dashboardPath(tab);
 }

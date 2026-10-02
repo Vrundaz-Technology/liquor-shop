@@ -1,23 +1,48 @@
 import { NextResponse } from "next/server";
-import { bookEventSeats, fetchEventBySlug, fetchEvents, fetchInventoryState } from "@/lib/db/queries";
+import { bookEventSeats, fetchAllLocations, fetchEventBySlug, fetchEvents, fetchInventoryState } from "@/lib/db/queries";
 import { bookSeatsSchema, eventPatchSchema, eventWriteSchema } from "@/lib/db/validators";
 import { getRequestUser, requirePermission } from "@/lib/auth/require";
+import { hasPermission } from "@/lib/auth/permissions";
 import { createStoreEvent, deleteStoreEvent, updateStoreEvent } from "@/lib/db/store-admin";
 import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
+import { asBool } from "@/lib/db/location-pricing";
+
+function isEventPublic(
+  event: { active?: boolean; locationId: string },
+  stores: { id: string; active?: boolean }[],
+) {
+  if (!asBool(event.active, true)) return false;
+  const store = stores.find((loc) => loc.id === event.locationId);
+  return asBool(store?.active, true);
+}
 
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
+    const actor = await getRequestUser();
+    const canSeeHidden = Boolean(actor && hasPermission(actor, "events.view"));
     const slug = searchParams.get("slug");
     if (slug) {
       const event = await fetchEventBySlug(slug);
       if (!event) {
         return NextResponse.json({ error: "Event not found." }, { status: 404 });
       }
+      if (!canSeeHidden) {
+        const stores = await fetchAllLocations();
+        if (!isEventPublic(event, stores)) {
+          return NextResponse.json({ error: "Event not found." }, { status: 404 });
+        }
+      }
       return NextResponse.json({ event });
     }
     const events = await fetchEvents();
-    return NextResponse.json({ events });
+    if (canSeeHidden) {
+      return NextResponse.json({ events });
+    }
+    const stores = await fetchAllLocations();
+    return NextResponse.json({
+      events: events.filter((event) => isEventPublic(event, stores)),
+    });
   } catch (error) {
     console.error("[GET /api/events]", error);
     return NextResponse.json({ error: "Failed to fetch events." }, { status: 500 });

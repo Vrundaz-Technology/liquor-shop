@@ -4,7 +4,7 @@ import { notFound, useParams } from "next/navigation";
 import { SmartImage } from "@/components/ui/SmartImage";
 import { getAllProducts } from "@/data/products";
 import { usePublicEvents } from "@/hooks/useRuntimeEvents";
-import { useRuntimeLocations } from "@/hooks/useRuntimeLocations";
+import { usePublicLocations } from "@/hooks/useRuntimeLocations";
 import { ProductCard } from "@/components/product/ProductCard";
 import { Button } from "@/components/ui/Button";
 import Link from "next/link";
@@ -18,7 +18,7 @@ import type { PlatformReview } from "@/types";
 
 export function LocationDetailPage() {
   const { slug } = useParams<{ slug: string }>();
-  const locations = useRuntimeLocations();
+  const locations = usePublicLocations();
   const loc = useMemo(() => locations.find((l) => l.slug === slug), [locations, slug]);
   const publicEvents = usePublicEvents();
   const catalogRevision = useCatalogStore((s) => s.revision);
