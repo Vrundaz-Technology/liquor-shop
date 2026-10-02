@@ -583,11 +583,11 @@ function AnalyticsBody({
                       </p>
                       <p className="mt-0.5 truncate text-[11px] text-muted">
                         {row.brand}
-                        <span className="text-white/25"> · </span>
+                        <span className="text-white/50"> · </span>
                         {row.locationName}
                         {row.reserved > 0 ? (
                           <>
-                            <span className="text-white/25"> · </span>
+                            <span className="text-white/50"> · </span>
                             {row.reserved} reserved
                           </>
                         ) : null}

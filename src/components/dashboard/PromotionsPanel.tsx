@@ -959,7 +959,7 @@ export function PromotionsPanel() {
 
           <label className={labelClass}>
             Coupon code
-            <span className="ml-1 normal-case tracking-normal text-white/35">(optional)</span>
+            <span className="ml-1 normal-case tracking-normal text-white/50">(optional)</span>
             <input
               placeholder="e.g. SAMS10"
               value={form.code}
@@ -1061,7 +1061,7 @@ export function PromotionsPanel() {
                       "mt-1.5 block normal-case tracking-normal text-[11px] tabular-nums",
                       hint.tone === "live" && "font-medium text-gold",
                       hint.tone === "warn" && "text-amber-200/80",
-                      hint.tone === "muted" && "text-white/35",
+                      hint.tone === "muted" && "text-white/50",
                     )}
                   >
                     {hint.text}
@@ -1135,7 +1135,7 @@ export function PromotionsPanel() {
               className={show("priority") ? fieldErrorClass : fieldClass}
             />
             <FieldError message={show("priority")} />
-            <span className="mt-1.5 block normal-case tracking-normal text-[11px] text-white/35">
+            <span className="mt-1.5 block normal-case tracking-normal text-[11px] text-white/50">
               Higher number wins within the same scope.
             </span>
           </label>

@@ -274,7 +274,8 @@ export const placeOrderSchema = z
           quantity: z.number().int().positive().max(99),
         }),
       )
-      .min(1),
+      .min(1)
+      .max(100),
   })
   .superRefine((data, ctx) => {
     if (data.fulfillment === "delivery" && !data.delivery) {

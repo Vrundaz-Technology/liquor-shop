@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
 import { parsePromoLineItems, PromotionUsageLimitError, resolvePromotionDiscount } from "@/lib/commerce/promotions";
 import { SAMS_ORG_ID, resolveLocationOrganizationId } from "@/lib/db/organization";
 import { isDbConfigured } from "@/lib/db/prisma";
@@ -34,6 +35,9 @@ async function resolveFirstOrder(
  * - With `auto=1` (no code): auto-apply best code-less offer
  */
 export async function GET(request: Request) {
+  // Throttle coupon guessing.
+  const limited = rateLimit(`promo-validate:${clientIp(request)}`, { limit: 60, windowMs: 60_000 });
+  if (!limited.ok) return tooManyRequests(limited.retryAfter);
   const { searchParams } = new URL(request.url);
   const code = searchParams.get("code")?.trim().toUpperCase() ?? "";
   const auto = searchParams.get("auto") === "1";

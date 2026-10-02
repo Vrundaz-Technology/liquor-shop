@@ -742,7 +742,7 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
               className={cn(
                 "mx-auto inline-flex min-h-11 min-w-11 items-center justify-center rounded-sm border transition sm:mb-0.5 sm:mx-0 sm:self-end",
                 needsTwoStores
-                  ? "cursor-not-allowed border-white/10 text-white/30"
+                  ? "cursor-not-allowed border-white/10 text-white/50"
                   : "border-white/10 text-gold hover:border-(--gold)/40 hover:bg-(--gold)/10",
               )}
             >
@@ -926,14 +926,14 @@ export function TransfersPanel({ locations }: { locations: StoreLocation[] }) {
                   Enter a quantity between 1 and {Math.max(available, 1)}.
                 </span>
               ) : productId && available > 0 ? (
-                <span className="mt-1.5 block normal-case tracking-normal text-[11px] text-white/35">
+                <span className="mt-1.5 block normal-case tracking-normal text-[11px] text-white/50">
                   Max {available} from {nameFor(fromLocationId)}.
                 </span>
               ) : null}
             </label>
             <label className="block text-[10px] uppercase tracking-[0.16em] text-muted">
               Notes
-              <span className="ml-1 normal-case tracking-normal text-white/35">(optional)</span>
+              <span className="ml-1 normal-case tracking-normal text-white/50">(optional)</span>
               <input
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}

@@ -1034,7 +1034,7 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
       {/* Filters toolbar */}
       <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
         <SearchInput
-          className="min-w-0 flex-1"
+          className="min-w-[12rem] flex-1"
           inputClassName="h-10"
           value={query}
           onChange={setQuery}
@@ -1353,10 +1353,10 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                     <div className="min-w-0">
                       <p className="flex items-center gap-2 truncate text-[15px] font-medium text-cream">
                         {order.unreadForMe ? (
-                          <span
-                            className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--gold)"
-                            aria-label="Unread"
-                          />
+                          <span className="inline-flex shrink-0 items-center">
+                            <span className="h-1.5 w-1.5 rounded-full bg-(--gold)" aria-hidden />
+                            <span className="sr-only">Unread</span>
+                          </span>
                         ) : null}
                         {order.customerName}
                       </p>
@@ -1707,10 +1707,10 @@ export function OrdersPanel({ locationId, onLocationChange, locations }: Props) 
                       >
                         <p className="flex items-center gap-2 truncate font-medium text-cream">
                           {order.unreadForMe ? (
-                            <span
-                              className="h-1.5 w-1.5 shrink-0 rounded-full bg-(--gold)"
-                              aria-label="Unread"
-                            />
+                            <span className="inline-flex shrink-0 items-center">
+                              <span className="h-1.5 w-1.5 rounded-full bg-(--gold)" aria-hidden />
+                              <span className="sr-only">Unread</span>
+                            </span>
                           ) : null}
                           <span className="truncate">{order.customerName}</span>
                         </p>

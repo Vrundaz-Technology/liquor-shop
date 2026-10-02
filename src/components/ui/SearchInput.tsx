@@ -73,7 +73,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(
             ref={ref}
             {...sharedProps}
             className={cn(
-              "w-full h-11 rounded-sm border border-white/10 bg-white/5 pl-9 text-base text-cream outline-none placeholder:text-muted focus:border-(--gold)/40 sm:text-sm [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden",
+              "w-full h-11 rounded-sm border border-white/10 bg-white/5 pl-9 text-base text-cream outline-none placeholder:text-muted focus:border-(--gold)/40 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold) sm:text-sm [&::-webkit-search-cancel-button]:hidden [&::-webkit-search-decoration]:hidden",
               value ? "pr-9" : "pr-3",
               inputClassName,
             )}

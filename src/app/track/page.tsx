@@ -18,7 +18,7 @@ type TrackResponse = {
   error?: string;
 };
 
-export function TrackOrderForm() {
+function TrackOrderForm() {
   const searchParams = useSearchParams();
   const [code, setCode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -28,7 +28,7 @@ export function TrackOrderForm() {
   const lookup = async (q: string) => {
     const value = q.trim();
     if (!value) {
-      setError("Enter your tracking code (e.g. SDL-12345678) or order ID.");
+      setError("Enter your tracking code (e.g. SDL-7KQ2M9XH4P) or order ID.");
       return;
     }
     setBusy(true);
@@ -80,7 +80,7 @@ export function TrackOrderForm() {
         <Input
           value={code}
           onChange={(e) => setCode(e.target.value)}
-          placeholder="SDL-######## or ORD-…"
+          placeholder="SDL-… or ORD-…"
           className="flex-1"
           aria-label="Tracking code"
         />

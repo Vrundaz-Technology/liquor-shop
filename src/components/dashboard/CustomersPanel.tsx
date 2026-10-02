@@ -50,8 +50,8 @@ import type {
   CrmCustomer,
   CrmCustomerDetail,
   CustomerSegment,
-} from "@/lib/db/crm";
-import { CUSTOMER_METRIC_GUIDE, CUSTOMER_SEGMENT_GUIDE } from "@/lib/db/crm";
+} from "@/lib/crm-shared";
+import { CUSTOMER_METRIC_GUIDE, CUSTOMER_SEGMENT_GUIDE } from "@/lib/crm-shared";
 
 type SortKey = "customer" | "segment" | "orders" | "spent" | "aov" | "loyalty" | "lastOrder" | "marketing";
 

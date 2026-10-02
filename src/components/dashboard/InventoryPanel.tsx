@@ -1114,7 +1114,7 @@ export function InventoryPanel({
                           abbrClassName="text-white/40"
                         />{" "}
                         {reservedQty}
-                        <span className="mx-1.5 text-white/25">·</span>
+                        <span className="mx-1.5 text-white/50">·</span>
                         <AbbrTooltip
                           term="Avail"
                           abbrClassName="text-white/40"
@@ -1143,7 +1143,7 @@ export function InventoryPanel({
                           onAdd={(qty) => adjust(storeId, product.id, qty, "restock")}
                         />
                       ) : (
-                        <span className="text-[11px] text-white/35">—</span>
+                        <span className="text-[11px] text-white/50">—</span>
                       )}
                     </td>
                     <td className={`${tableCellClass} text-right`}>

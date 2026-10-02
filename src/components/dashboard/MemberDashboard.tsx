@@ -26,6 +26,7 @@ import {
   Users,
   ArrowLeftRight,
   Bell,
+  BookOpen,
   X,
 } from "lucide-react";
 import { useUserStore } from "@/store/user";
@@ -131,10 +132,14 @@ const OverviewAnalyticsPanel = dynamic(
     ),
   { ssr: false, loading: () => panelLoading("analytics") },
 );
+const DocumentationPanel = dynamic(
+  () => import("@/components/dashboard/DocumentationPanel").then((m) => m.DocumentationPanel),
+  { ssr: false, loading: () => panelLoading("documentation") },
+);
 
 type DashboardTab = DashboardSection;
 
-type TabGroup = "operations" | "manage" | "account";
+type TabGroup = "operations" | "manage" | "help" | "account";
 
 const DASHBOARD_TABS: {
   id: DashboardTab;
@@ -273,6 +278,14 @@ const DASHBOARD_TABS: {
     description: "Scheduled background jobs, frequency, and run history.",
   },
   {
+    id: "docs",
+    label: "Documentation",
+    icon: BookOpen,
+    permission: "docs.view",
+    group: "help",
+    description: "How the whole system works, section by section, for owners and admins.",
+  },
+  {
     id: "profile",
     label: "Profile",
     icon: UserRound,
@@ -293,6 +306,7 @@ const DASHBOARD_TABS: {
 const TAB_GROUPS: { id: TabGroup; label: string }[] = [
   { id: "operations", label: "Operations" },
   { id: "manage", label: "Manage" },
+  { id: "help", label: "Help" },
   { id: "account", label: "Account" },
 ];
 
@@ -937,6 +951,8 @@ export function MemberDashboard() {
           <ProfilePanel />
         ) : dashboardTab === "notifications" ? (
           <NotificationsPanel />
+        ) : dashboardTab === "docs" ? (
+          <DocumentationPanel topic={route.docsTopic} />
         ) : (
           <>
             <OverviewAnalyticsPanel

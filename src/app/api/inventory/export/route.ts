@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { hasPermission } from "@/lib/auth/permissions";
 import { requirePermission } from "@/lib/auth/require";
 import { prisma, isDbConfigured } from "@/lib/db/prisma";
 import { ensureOrganizationSchema, actorOrganizationId, SAMS_ORG_ID } from "@/lib/db/organization";
@@ -157,6 +158,9 @@ export async function GET(request: Request) {
   });
 }
 
+const MAX_IMPORT_ROWS = 5000;
+const MAX_IMPORT_BYTES = 5 * 1024 * 1024;
+
 const jsonImportSchema = z.object({
   locationId: z.string().min(1),
   rows: z.array(
@@ -170,7 +174,7 @@ const jsonImportSchema = z.object({
       promoPrice: nullableMoneySchema.optional(),
       hidden: z.boolean().optional(),
     }),
-  ),
+  ).max(MAX_IMPORT_ROWS),
 });
 
 async function resolveProductId(patch: InventoryImportPatch): Promise<string | null> {
@@ -261,6 +265,9 @@ export async function POST(request: Request) {
     if (!(file instanceof File)) {
       return NextResponse.json({ error: "Upload a CSV or Excel file." }, { status: 400 });
     }
+    if (file.size > MAX_IMPORT_BYTES) {
+      return NextResponse.json({ error: "File is too large (5 MB max)." }, { status: 413 });
+    }
     const name = file.name.toLowerCase();
     const buffer = Buffer.from(await file.arrayBuffer());
     if (name.endsWith(".xlsx") || name.endsWith(".xls")) {
@@ -299,6 +306,19 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "No importable rows found in the file." }, { status: 400 });
   }
 
+  if (rows.length > MAX_IMPORT_ROWS) {
+    return NextResponse.json(
+      { error: `Too many rows (${rows.length}). Import at most ${MAX_IMPORT_ROWS} at a time.` },
+      { status: 413 },
+    );
+  }
+  // Raising on-hand through an import is a restock, which has its own permission.
+  if (rows.some((row) => row.onHand !== undefined) && !hasPermission(auth.user, "inventory.restock")) {
+    return NextResponse.json(
+      { error: "Importing on-hand counts requires the Restock permission." },
+      { status: 403 },
+    );
+  }
   const result = await applyImportRows(locationId, rows);
   const inventory = await fetchInventoryState();
 

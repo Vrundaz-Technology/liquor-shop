@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "prebuild": "prisma migrate deploy",
-    "build": "next build --turbopack",
-    "build:only": "next build --turbopack",
+    "build": "next build",
+    "build:only": "next build",
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",

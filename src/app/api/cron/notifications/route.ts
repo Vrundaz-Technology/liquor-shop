@@ -1,12 +1,15 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { executeCronJob } from "@/lib/cron/execute";
 import { getCronJob } from "@/lib/cron/catalog";
 
 function authorizeCron(request: Request) {
   const secret = process.env.CRON_SECRET;
-  if (!secret) return true;
-  const auth = request.headers.get("authorization") ?? "";
-  return auth === `Bearer ${secret}`;
+  // Never leave the scheduler endpoint open in production.
+  if (!secret) return process.env.NODE_ENV !== "production";
+  const given = Buffer.from(request.headers.get("authorization") ?? "");
+  const expected = Buffer.from(`Bearer ${secret}`);
+  return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
 async function handle(request: Request) {

@@ -13,7 +13,7 @@ import { categories as seedCategories } from "@/data/categories";
 import { products as seedProducts } from "@/data/products";
 import { locations as seedLocations } from "@/data/locations";
 import { events as seedEvents, reviews as seedReviews, demoUser } from "@/data/events";
-import { resolvePromotionDiscount } from "@/lib/commerce";
+import { resolvePromotionDiscount } from "@/lib/commerce/promotions";
 import {
   loyaltyDiscountFromPoints,
 } from "@/lib/commerce/cart-pricing";
@@ -37,6 +37,20 @@ import * as loyaltyDb from "@/lib/db/loyalty";
 import { reverseOrganizationCustomer, syncOrganizationCustomer } from "@/lib/db/crm";
 import { recordChargeTx, refundRemainingInTx, ensurePaymentSchema } from "@/lib/db/payments";
 import { providerForMethod, type ShopPaymentMethod } from "@/lib/commerce/payments";
+import { randomBytes } from "node:crypto";
+
+/**
+ * Public delivery tracking code. The code alone unlocks the tracking page, so it
+ * must be unguessable: 10 chars from a 32-symbol alphabet (~50 bits, CSPRNG).
+ * Ambiguous characters (0/O, 1/I/L) are excluded so codes read well aloud.
+ */
+const TRACKING_ALPHABET = "23456789ABCDEFGHJKMNPQRSTUVWXYZ";
+function newTrackingCode() {
+  const bytes = randomBytes(10);
+  let code = "";
+  for (const byte of bytes) code += TRACKING_ALPHABET[byte % TRACKING_ALPHABET.length];
+  return `SDL-${code}`;
+}
 
 import { moneyNumber } from "@/lib/db/money";
 
@@ -1622,9 +1636,7 @@ export async function placeOrder(input: {
       organizationId,
       tracking:
         input.fulfillment === "delivery"
-          ? `SDL-${Math.floor(Math.random() * 1e8)
-              .toString()
-              .padStart(8, "0")}`
+          ? newTrackingCode()
           : undefined,
       delivery: input.fulfillment === "delivery" ? input.delivery : undefined,
       deliveryStatus: input.fulfillment === "delivery" ? "unassigned" : undefined,

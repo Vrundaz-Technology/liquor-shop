@@ -111,7 +111,7 @@ export function LoyaltyMemberCard({ birthdayValue, onBirthdayChange, className }
           value={birthday}
           onChange={(e) => setBirthday(e.target.value)}
         />
-        <span className="mt-1.5 block text-[11px] text-white/35">
+        <span className="mt-1.5 block text-[11px] text-white/50">
           Claim a birthday bonus once per year on your birthday.
         </span>
       </label>
@@ -178,7 +178,7 @@ export function LoyaltyMemberCard({ birthdayValue, onBirthdayChange, className }
             </Button>
           ) : null}
         </div>
-        <p className="mt-2 text-[11px] leading-relaxed text-white/35">
+        <p className="mt-2 text-[11px] leading-relaxed text-white/50">
           Friends who sign up with your code earn a welcome bonus — you earn referral points when
           they join.
         </p>

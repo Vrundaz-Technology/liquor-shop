@@ -38,12 +38,21 @@ export function rateLimit(
   return { ok: true, retryAfter: 0 };
 }
 
-/** Best-effort client IP from proxy headers (Hostinger/CDN set x-forwarded-for). */
+/**
+ * Client IP for rate-limit keys. The left-most X-Forwarded-For entry is
+ * client-controlled (anyone can send the header), so we take the entry
+ * appended by our own proxy: `TRUSTED_PROXY_HOPS` from the right (default 1).
+ * Vercel's own x-vercel-forwarded-for wins when present.
+ */
 export function clientIp(request: Request): string {
+  const platform = request.headers.get("x-vercel-forwarded-for")?.split(",")[0]?.trim();
+  if (platform) return platform;
   const forwarded = request.headers.get("x-forwarded-for");
   if (forwarded) {
-    const first = forwarded.split(",")[0]?.trim();
-    if (first) return first;
+    const hops = forwarded.split(",").map((part) => part.trim()).filter(Boolean);
+    const trusted = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+    const ip = hops[Math.max(0, hops.length - trusted)];
+    if (ip) return ip;
   }
   return request.headers.get("x-real-ip")?.trim() || "unknown";
 }

@@ -162,6 +162,8 @@ export function ProductDetailPage() {
                   key={img}
                   type="button"
                   onClick={() => setActiveImage(i)}
+                  aria-label={`Show image ${i + 1} of ${product.images.length}`}
+                  aria-pressed={activeImage === i}
                   className={`relative aspect-3/4 bg-white/5 ${
                     activeImage === i ? "ring-1 ring-gold" : ""
                   }`}

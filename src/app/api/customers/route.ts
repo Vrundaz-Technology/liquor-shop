@@ -31,7 +31,7 @@ export async function GET(request: Request) {
   const customers = await listOrganizationCustomers(auth.user, {
     segment: searchParams.get("segment") ?? undefined,
     q: searchParams.get("q") ?? undefined,
-    limit: Number(searchParams.get("limit") ?? 100),
+    limit: Math.min(500, Math.max(1, Math.trunc(Number(searchParams.get("limit") ?? 100)) || 100)),
   });
   return NextResponse.json({ ok: true, customers });
 }

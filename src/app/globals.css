@@ -14,7 +14,7 @@
   --gold-dim: #8a7340;
   --cream: #f3ead7;
   --muted: #9a9488;
-  --placeholder: color-mix(in srgb, var(--cream) 32%, transparent);
+  --placeholder: color-mix(in srgb, var(--cream) 55%, transparent);
   --text: #f5f0e6;
   --danger: #c45c5c;
   --success: #6d9b7a;

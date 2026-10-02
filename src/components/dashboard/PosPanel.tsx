@@ -1614,7 +1614,7 @@ function PosProductCard({
             className={cn(
               "flex min-h-10 min-w-10 cursor-pointer items-center justify-center rounded-full touch-manipulation transition sm:h-9 sm:min-h-9 sm:w-9 sm:min-w-9",
               out
-                ? "cursor-not-allowed border border-white/10 bg-white/[0.04] text-white/30 shadow-none"
+                ? "cursor-not-allowed border border-white/10 bg-white/[0.04] text-white/50 shadow-none"
                 : "border border-transparent bg-gradient-to-br from-[#9a8048] via-[#d4b56e] to-[#f0d48a] text-[#0a0a0a] shadow-[0_0_16px_rgba(201,169,98,0.35)] ring-1 ring-[#f0d48a]/30 hover:brightness-110 active:scale-95",
             )}
           >

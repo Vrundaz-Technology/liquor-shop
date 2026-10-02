@@ -54,6 +54,7 @@ export function LandingHero() {
   const spotlight = useMotionTemplate`radial-gradient(720px circle at ${x}% ${y}%, rgba(201,169,98,0.16), transparent 48%)`;
 
   useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
     const ctx = gsap.context(() => {
       const tl = gsap.timeline({ defaults: { ease: "power3.out" } });
       tl.fromTo(

@@ -18,7 +18,8 @@ export type DashboardSection =
   | "loyalty"
   | "deliveries"
   | "profile"
-  | "notifications";
+  | "notifications"
+  | "docs";
 
 export const DASHBOARD_SECTION_PATHS: Record<DashboardSection, string> = {
   overview: "/dashboard",
@@ -39,6 +40,7 @@ export const DASHBOARD_SECTION_PATHS: Record<DashboardSection, string> = {
   deliveries: "/dashboard/deliveries",
   profile: "/dashboard/profile",
   notifications: "/dashboard/notifications",
+  docs: "/dashboard/docs",
 };
 
 const SECTION_BY_SEGMENT: Record<string, DashboardSection> = {
@@ -59,6 +61,7 @@ const SECTION_BY_SEGMENT: Record<string, DashboardSection> = {
   deliveries: "deliveries",
   profile: "profile",
   notifications: "notifications",
+  docs: "docs",
 };
 
 export const DASHBOARD_SECTION_META: {
@@ -175,6 +178,12 @@ export const DASHBOARD_SECTION_META: {
     permission: "dashboard.access",
     description: "Sounds and read behaviour for this device, plus your staff inbox.",
   },
+  {
+    id: "docs",
+    label: "Documentation",
+    permission: "docs.view",
+    description: "How the whole system works, section by section, for owners and admins.",
+  },
 ];
 
 export function isDashboardSection(value: string | null | undefined): value is DashboardSection {
@@ -191,8 +200,12 @@ export function dashboardPath(
     categories?: boolean;
     performance?: boolean;
     promoId?: string;
+    docsTopic?: string;
   },
 ): string {
+  if (section === "docs" && opts?.docsTopic) {
+    return `/dashboard/docs/${encodeURIComponent(opts.docsTopic)}`;
+  }
   if (section === "orders" && opts?.orderId) {
     return `/dashboard/orders/${encodeURIComponent(opts.orderId)}`;
   }
@@ -224,6 +237,7 @@ export type ParsedDashboardRoute = {
   inventoryView: "stock" | "categories";
   promotionsSection: "promotions" | "performance";
   promotionsPromoId: string | null;
+  docsTopic: string | null;
 };
 
 export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
@@ -240,6 +254,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -252,6 +267,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -264,6 +280,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -277,6 +294,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -289,6 +307,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: rest[0] === "categories" ? "categories" : "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -302,6 +321,20 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       promotionsSection: rest[0] === "performance" ? "performance" : "promotions",
       promotionsPromoId:
         rest[0] === "performance" && rest[1] ? decodeURIComponent(rest[1]) : null,
+      docsTopic: null,
+    };
+  }
+
+  if (segment === "docs") {
+    return {
+      section: "docs",
+      orderId: null,
+      customerId: null,
+      deliveriesSection: "deliveries",
+      inventoryView: "stock",
+      promotionsSection: "promotions",
+      promotionsPromoId: null,
+      docsTopic: rest[0] ? decodeURIComponent(rest[0]) : null,
     };
   }
 
@@ -315,6 +348,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
       inventoryView: "stock",
       promotionsSection: "promotions",
       promotionsPromoId: null,
+      docsTopic: null,
     };
   }
 
@@ -326,6 +360,7 @@ export function parseDashboardPath(pathname: string): ParsedDashboardRoute {
     inventoryView: "stock",
     promotionsSection: "promotions",
     promotionsPromoId: null,
+    docsTopic: null,
   };
 }
 

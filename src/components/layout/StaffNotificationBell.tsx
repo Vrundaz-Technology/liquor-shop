@@ -227,9 +227,9 @@ export function StaffNotificationBell({
               </p>
             ) : !items.length ? (
               <div className="flex flex-col items-center px-3.5 py-10 text-center">
-                <Bell size={28} className="text-white/25" aria-hidden />
+                <Bell size={28} className="text-white/50" aria-hidden />
                 <p className="mt-3 text-sm text-muted">No notifications</p>
-                <p className="mt-1 max-w-[16rem] text-xs text-white/35">
+                <p className="mt-1 max-w-[16rem] text-xs text-white/50">
                   New orders, stock transfers, and support tickets will show up here.
                 </p>
               </div>
@@ -271,7 +271,7 @@ export function StaffNotificationBell({
                           <span className="mt-1 block line-clamp-2 text-xs leading-relaxed text-muted">
                             {item.body}
                           </span>
-                          <span className="mt-1.5 block text-[11px] text-white/35">
+                          <span className="mt-1.5 block text-[11px] text-white/50">
                             {formatStaffNotificationWhen(item.createdAt)}
                           </span>
                         </span>

@@ -7,7 +7,13 @@ function keyFromSecret(secret: string) {
 }
 
 function material() {
-  return process.env.AUTH_SECRET || "liquor-shop-dev-auth-secret-2026";
+  const secret = process.env.AUTH_SECRET;
+  if (secret) return secret;
+  // Never encrypt stored API keys with a key that ships in the source code.
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("AUTH_SECRET must be set to encrypt or decrypt stored secrets.");
+  }
+  return "liquor-shop-dev-auth-secret-2026";
 }
 
 /** Encrypt a short secret (API keys). Empty input returns empty string. */

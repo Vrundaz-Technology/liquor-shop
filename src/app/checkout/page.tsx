@@ -104,7 +104,7 @@ const pickupSchema = z.object({
 });
 
 const fieldClass =
-  "!min-h-11 h-11 py-2.5 px-3 text-sm placeholder:not-italic placeholder:text-white/25";
+  "!min-h-11 h-11 py-2.5 px-3 text-sm placeholder:not-italic placeholder:text-white/50";
 const fieldErrorClass = "border-red-400/50";
 
 type CheckoutField =
@@ -151,7 +151,7 @@ function Field({
       <span className="flex items-baseline justify-between gap-2">
         <span>{label}</span>
         {hint ? (
-          <span className={`truncate text-[10px] ${invalid ? "text-red-300/80" : "text-white/30"}`}>
+          <span className={`truncate text-[10px] ${invalid ? "text-red-300/80" : "text-white/50"}`}>
             {hint}
           </span>
         ) : null}
@@ -858,7 +858,7 @@ export default function CheckoutPage() {
                         {ok ? "In stock" : `${cover.unavailable.length} missing`}
                       </span>
                     ) : (
-                      <span className="text-[10px] text-white/35">{loc.city}</span>
+                      <span className="text-[10px] text-white/50">{loc.city}</span>
                     )}
                   </button>
                 );
@@ -1007,7 +1007,7 @@ export default function CheckoutPage() {
           ) : null}
 
           <Section title="Payment">
-            <p className="mb-3 text-[11px] text-white/35">
+            <p className="mb-3 text-[11px] text-white/50">
               Demo checkout — card details stay in your browser and are never sent to our servers.
               Test card 4242. Live card processing (Stripe or Square) will replace this step.
             </p>

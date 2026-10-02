@@ -24,4 +24,11 @@ describe("permissions", () => {
     expect(effectivePermissions(subject)).toContain("promotions.manage");
     expect(effectivePermissions(subject)).not.toContain("inventory.adjust");
   });
+
+  it("shows documentation to owners and admins only by default", () => {
+    expect(hasPermission("owner", "docs.view")).toBe(true);
+    expect(hasPermission("admin", "docs.view")).toBe(true);
+    expect(hasPermission("staff", "docs.view")).toBe(false);
+    expect(hasPermission({ role: "staff", permissionGrants: ["docs.view"] }, "docs.view")).toBe(true);
+  });
 });

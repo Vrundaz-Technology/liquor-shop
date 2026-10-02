@@ -11,6 +11,7 @@ import {
   useRef,
   useState,
   type ChangeEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactElement,
   type ReactNode,
   type SelectHTMLAttributes,
@@ -64,6 +65,12 @@ function collectOptions(node: ReactNode, into: OptionItem[]) {
 /**
  * Themed dropdown that keeps the native &lt;select&gt; API (value / onChange / &lt;option&gt; children)
  * but never uses the OS popup — so highlights match the dark/gold dashboard theme.
+ *
+ * Implements the WAI-ARIA "select-only combobox" pattern: focus stays on the
+ * trigger, options are announced via aria-activedescendant, and Arrow / Home /
+ * End / Enter / Space / Escape / type-ahead all work. `id` and extra attributes
+ * (aria-describedby, aria-invalid, …) land on the visible control, so
+ * `<label htmlFor>` and wrapping `<label>` both name it.
  */
 export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
   function NativeSelect(
@@ -98,9 +105,14 @@ export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
       options.find((option) => option.value === selectedValue) ?? options[0] ?? null;
 
     const [open, setOpen] = useState(false);
+    const [activeIndex, setActiveIndex] = useState(-1);
     const rootRef = useRef<HTMLDivElement>(null);
     const hiddenRef = useRef<HTMLSelectElement>(null);
-    const listId = useId();
+    const listRef = useRef<HTMLUListElement>(null);
+    const typeahead = useRef({ text: "", at: 0 });
+    const baseId = useId();
+    const listId = `${baseId}-list`;
+    const optionId = (index: number) => `${baseId}-opt-${index}`;
 
     useImperativeHandle(ref, () => hiddenRef.current as HTMLSelectElement);
 
@@ -109,16 +121,17 @@ export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
       const onPointer = (event: MouseEvent) => {
         if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
       };
-      const onKey = (event: KeyboardEvent) => {
-        if (event.key === "Escape") setOpen(false);
-      };
       document.addEventListener("mousedown", onPointer);
-      document.addEventListener("keydown", onKey);
-      return () => {
-        document.removeEventListener("mousedown", onPointer);
-        document.removeEventListener("keydown", onKey);
-      };
+      return () => document.removeEventListener("mousedown", onPointer);
     }, [open]);
+
+    // Keep the highlighted option scrolled into view.
+    useEffect(() => {
+      if (!open || activeIndex < 0) return;
+      listRef.current
+        ?.querySelector<HTMLElement>(`[data-index="${activeIndex}"]`)
+        ?.scrollIntoView({ block: "nearest" });
+    }, [open, activeIndex]);
 
     const emitChange = (next: string) => {
       if (!isControlled) setInternal(next);
@@ -139,43 +152,113 @@ export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
       } as ChangeEvent<HTMLSelectElement>);
     };
 
-    void rest;
+    const enabledIndexes = options
+      .map((option, index) => (option.disabled ? -1 : index))
+      .filter((index) => index >= 0);
+    const selectedIndex = options.findIndex((option) => option.value === selectedValue);
+
+    const openList = () => {
+      setActiveIndex(selectedIndex >= 0 ? selectedIndex : (enabledIndexes[0] ?? -1));
+      setOpen(true);
+    };
+
+    const move = (delta: number) => {
+      if (!enabledIndexes.length) return;
+      const pos = enabledIndexes.indexOf(activeIndex);
+      const next =
+        pos < 0
+          ? enabledIndexes[0]!
+          : enabledIndexes[Math.min(enabledIndexes.length - 1, Math.max(0, pos + delta))]!;
+      setActiveIndex(next);
+    };
+
+    const commit = (index: number) => {
+      const option = options[index];
+      if (!option || option.disabled) return;
+      emitChange(option.value);
+      setOpen(false);
+    };
+
+    const onTriggerKeyDown = (event: ReactKeyboardEvent<HTMLButtonElement>) => {
+      if (disabled) return;
+      switch (event.key) {
+        case "ArrowDown":
+        case "ArrowUp":
+          event.preventDefault();
+          if (!open) openList();
+          else move(event.key === "ArrowDown" ? 1 : -1);
+          return;
+        case "Home":
+        case "End":
+          if (!open) return;
+          event.preventDefault();
+          setActiveIndex(
+            (event.key === "Home"
+              ? enabledIndexes[0]
+              : enabledIndexes[enabledIndexes.length - 1]) ?? -1,
+          );
+          return;
+        case "Enter":
+        case " ":
+          event.preventDefault();
+          if (open) commit(activeIndex);
+          else openList();
+          return;
+        case "Escape":
+          if (!open) return;
+          // Close only this list, not a surrounding dialog.
+          event.preventDefault();
+          event.stopPropagation();
+          event.nativeEvent.stopImmediatePropagation();
+          setOpen(false);
+          return;
+        case "Tab":
+          if (open) setOpen(false);
+          return;
+        default: {
+          if (event.key.length !== 1 || event.altKey || event.ctrlKey || event.metaKey) return;
+          const now = Date.now();
+          const buffer = now - typeahead.current.at < 600 ? typeahead.current.text : "";
+          const text = (buffer + event.key).toLowerCase();
+          typeahead.current = { text, at: now };
+          const match = enabledIndexes.find((index) =>
+            options[index]!.label.toLowerCase().startsWith(text),
+          );
+          if (match === undefined) return;
+          if (open) setActiveIndex(match);
+          else emitChange(options[match]!.value);
+        }
+      }
+    };
 
     return (
       <div className={cn("relative min-w-0", wrapperClassName)} ref={rootRef}>
-        <select
-          ref={hiddenRef}
-          id={id}
-          name={name}
-          required={required}
-          disabled={disabled}
-          value={selectedValue}
-          tabIndex={-1}
-          aria-hidden
-          className="pointer-events-none absolute h-px w-px opacity-0"
-          onChange={() => undefined}
-        >
-          {options.map((option) => (
-            <option key={option.value} value={option.value} disabled={option.disabled}>
-              {option.label}
-            </option>
-          ))}
-        </select>
-
+        {/* The visible control comes first so a wrapping <label> or htmlFor names it. */}
         <button
+          {...(rest as Record<string, unknown>)}
           type="button"
+          id={id}
+          role="combobox"
           disabled={disabled}
           aria-haspopup="listbox"
           aria-expanded={open}
           aria-controls={listId}
+          aria-activedescendant={open && activeIndex >= 0 ? optionId(activeIndex) : undefined}
           aria-label={ariaLabel}
           aria-labelledby={ariaLabelledBy}
-          onBlur={onBlur as never}
+          aria-required={required || undefined}
+          onBlur={(event) => {
+            if (!rootRef.current?.contains(event.relatedTarget as Node | null)) setOpen(false);
+            (onBlur as ((e: unknown) => void) | undefined)?.(event);
+          }}
+          onKeyDown={onTriggerKeyDown}
           onClick={() => {
-            if (!disabled) setOpen((v) => !v);
+            if (disabled) return;
+            if (open) setOpen(false);
+            else openList();
           }}
           className={cn(
-            "flex h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-sm border bg-white/5 px-3.5 text-left text-sm text-cream outline-none transition focus:border-(--gold)/50 focus:bg-white/[0.07]",
+            "flex h-11 w-full cursor-pointer items-center justify-between gap-2 rounded-sm border bg-white/5 px-3.5 text-left text-sm text-cream outline-none transition focus:border-(--gold)/50 focus:bg-white/[0.07] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-(--gold)",
             open
               ? "border-(--gold)/50 bg-white/[0.07]"
               : "border-white/10 hover:border-white/20",
@@ -191,36 +274,62 @@ export const NativeSelect = forwardRef<HTMLSelectElement, Props>(
           />
         </button>
 
+        {/* Mirrors the value for native forms (name/required) and the forwarded ref. */}
+        <select
+          ref={hiddenRef}
+          name={name}
+          required={required}
+          disabled={disabled}
+          value={selectedValue}
+          tabIndex={-1}
+          aria-hidden
+          inert
+          className="pointer-events-none absolute h-px w-px opacity-0"
+          onChange={() => undefined}
+        >
+          {options.map((option) => (
+            <option key={option.value} value={option.value} disabled={option.disabled}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+
         {open && !disabled ? (
           <ul
+            ref={listRef}
             id={listId}
             role="listbox"
             aria-label={ariaLabel}
+            aria-labelledby={ariaLabel ? undefined : ariaLabelledBy}
+            tabIndex={-1}
             className="absolute top-[calc(100%+0.25rem)] left-0 right-0 z-[90] m-0 max-h-64 list-none overflow-y-auto overscroll-contain rounded-sm border border-(--gold)/35 bg-(--bg-elevated) p-1 shadow-[0_16px_48px_rgba(0,0,0,0.65)]"
           >
-            {options.map((option) => {
-              const active = option.value === selectedValue;
+            {options.map((option, index) => {
+              const isSelected = option.value === selectedValue;
+              const highlighted = index === activeIndex;
               return (
-                <li key={option.value} role="option" aria-selected={active} className="m-0 p-0">
-                  <button
-                    type="button"
-                    disabled={option.disabled}
-                    onClick={() => {
-                      if (option.disabled) return;
-                      emitChange(option.value);
-                      setOpen(false);
-                    }}
-                    className={cn(
-                      "flex w-full items-center justify-between gap-2 rounded-sm px-3 py-2.5 text-left text-sm transition",
-                      option.disabled && "cursor-not-allowed opacity-40",
-                      active
-                        ? "bg-(--gold)/15 text-gold"
-                        : "text-cream hover:bg-white/[0.06]",
-                    )}
-                  >
-                    <span className="min-w-0 truncate">{option.label}</span>
-                    {active ? <Check size={14} className="shrink-0" aria-hidden /> : null}
-                  </button>
+                <li
+                  key={option.value}
+                  id={optionId(index)}
+                  data-index={index}
+                  role="option"
+                  aria-selected={isSelected}
+                  aria-disabled={option.disabled || undefined}
+                  // Keep focus on the trigger while clicking an option.
+                  onMouseDown={(event) => event.preventDefault()}
+                  onMouseEnter={() => {
+                    if (!option.disabled) setActiveIndex(index);
+                  }}
+                  onClick={() => commit(index)}
+                  className={cn(
+                    "m-0 flex w-full cursor-pointer items-center justify-between gap-2 rounded-sm px-3 py-2.5 text-left text-sm transition",
+                    option.disabled && "cursor-not-allowed opacity-40",
+                    isSelected ? "text-gold" : "text-cream",
+                    highlighted ? "bg-white/[0.08]" : isSelected && "bg-(--gold)/15",
+                  )}
+                >
+                  <span className="min-w-0 truncate">{option.label}</span>
+                  {isSelected ? <Check size={14} className="shrink-0" aria-hidden /> : null}
                 </li>
               );
             })}

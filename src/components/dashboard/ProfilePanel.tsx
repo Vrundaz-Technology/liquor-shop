@@ -165,7 +165,7 @@ export function ProfilePanel() {
 
             <div className="mt-6 border-t border-white/10 pt-6 sm:mt-8 sm:pt-8">
               <LoyaltyMemberCard birthdayValue={birthday} onBirthdayChange={setBirthday} />
-              <p className="mt-2 text-[11px] text-white/35">
+              <p className="mt-2 text-[11px] text-white/50">
                 Birthday saves with the profile form below.
               </p>
             </div>

@@ -100,7 +100,7 @@ function SignupForm() {
           <span className="mt-1 block text-[11px]">At least 8 characters, with a letter and a number.</span>
         </label>
         <label className="block text-xs text-muted">
-          Referral code <span className="text-white/35">(optional)</span>
+          Referral code <span className="text-white/50">(optional)</span>
           <Input
             className="mt-1 uppercase tracking-wider"
             autoComplete="off"

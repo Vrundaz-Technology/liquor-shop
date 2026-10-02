@@ -46,6 +46,7 @@ export const PERMISSIONS = [
   "loyalty.manage",
   "analytics.view",
   "inventory.transfer",
+  "docs.view",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -323,6 +324,12 @@ export const PERMISSION_META: Record<
     label: "Transfer stock",
     description: "Move inventory between locations",
   },
+  "docs.view": {
+    group: "Documentation",
+    kind: "read",
+    label: "View documentation",
+    description: "Read the system documentation: how every dashboard section and flow works",
+  },
 };
 
 export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
@@ -395,6 +402,7 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     "loyalty.view",
     "loyalty.manage",
     "analytics.view",
+    "docs.view",
   ],
   owner: PERMISSIONS,
 };
@@ -416,6 +424,7 @@ export const PERMISSION_GROUPS = [
   "Analytics",
   "Activity",
   "Users",
+  "Documentation",
 ] as const;
 
 export type PermissionGroup = (typeof PERMISSION_GROUPS)[number];

@@ -12,12 +12,34 @@ import {
 import { getLocationById } from "@/data/locations";
 import { getRequestUser } from "@/lib/auth/require";
 import { hasPermission } from "@/lib/auth/permissions";
+import { clientIp, rateLimit, tooManyRequests } from "@/lib/rate-limit";
+import type { Order } from "@/types";
+
+/** Fields a tracking-code holder (possibly not the buyer) must not see. */
+const PRIVATE_ORDER_FIELDS = [
+  "paymentStatus",
+  "paymentMethod",
+  "paymentProvider",
+  "providerCost",
+  "providerCourierPhone",
+  "assignedStaffId",
+  "organizationId",
+] as const satisfies readonly (keyof Order)[];
+
+function publicTrackingView(order: Order): Order {
+  const view: Order = { ...order };
+  for (const field of PRIVATE_ORDER_FIELDS) delete view[field];
+  if (view.driver) view.driver = { ...view.driver, phone: "", email: undefined };
+  return view;
+}
 
 export async function GET(request: Request) {
   try {
     if (!isDbConfigured()) {
       return NextResponse.json({ error: "Tracking unavailable." }, { status: 503 });
     }
+    const limited = rateLimit(`track:${clientIp(request)}`, { limit: 30, windowMs: 60_000 });
+    if (!limited.ok) return tooManyRequests(limited.retryAfter);
     const { searchParams } = new URL(request.url);
     const code = (searchParams.get("code") ?? searchParams.get("tracking") ?? "")
       .trim()
@@ -60,9 +82,10 @@ export async function GET(request: Request) {
     mapped = withComputedEta(mapped);
 
     const store = getLocationById(mapped.locationId);
+    const isOwnerOrStaff = Boolean(actor && (canStaffView || order.userId === actor.id));
 
     return NextResponse.json({
-      order: mapped,
+      order: isOwnerOrStaff ? mapped : publicTrackingView(mapped),
       statusLabel: customerStatusLabel(mapped),
       steps: buildTrackingSteps(mapped),
       etaLabel: trackingEtaLabel(mapped),

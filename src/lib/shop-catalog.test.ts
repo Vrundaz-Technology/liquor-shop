@@ -1,4 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// The bridge lazy-loads via CommonJS `require("@/…")`, which bypasses Vitest's
+// alias resolution. These tests pass stock in explicitly, so stub it out.
+vi.mock("@/lib/runtime-data-bridge", () => ({
+  runtimeData: () => ({ getRuntimeLocations: () => [], getRuntimeProducts: () => [] }),
+  productData: () => ({ products: [] }),
+}));
 import { filterAndSortProducts, type ShopFilters } from "@/lib/shop-catalog";
 import type { Product } from "@/types";
 

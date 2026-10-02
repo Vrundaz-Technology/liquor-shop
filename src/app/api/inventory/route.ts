@@ -16,6 +16,14 @@ export async function GET() {
     const allowed = await requirePermission("inventory.view");
     if (allowed.error) return allowed.error;
     const inventory = await fetchInventoryState({ includeCost: true });
+    // Stock counts are public, cost price is not: blank it for stores this
+    // user cannot access.
+    if (!hasAllLocationAccess(allowed.user)) {
+      for (const [key, price] of Object.entries(inventory.prices)) {
+        const locationId = key.slice(0, key.indexOf(":"));
+        if (!canAccessLocation(allowed.user, locationId)) price.costPrice = null;
+      }
+    }
     return NextResponse.json(inventory);
   } catch (error) {
     console.error("[GET /api/inventory]", error);

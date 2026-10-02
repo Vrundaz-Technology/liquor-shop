@@ -387,9 +387,9 @@ export function NotificationsPanel() {
           <p className="px-4 py-10 text-center text-sm text-(--danger)">Could not load notifications.</p>
         ) : !items.length ? (
           <div className="flex flex-col items-center px-4 py-12 text-center">
-            <Bell size={28} className="text-white/25" aria-hidden />
+            <Bell size={28} className="text-white/50" aria-hidden />
             <p className="mt-3 text-sm text-muted">No notifications</p>
-            <p className="mt-1 max-w-[18rem] text-xs text-white/35">
+            <p className="mt-1 max-w-[18rem] text-xs text-white/50">
               New orders, stock transfers, and support tickets will show up here.
             </p>
           </div>
@@ -428,7 +428,7 @@ export function NotificationsPanel() {
                         {item.title}
                       </span>
                       <span className="mt-1 block text-xs leading-relaxed text-muted">{item.body}</span>
-                      <span className="mt-1.5 block text-[11px] text-white/35">
+                      <span className="mt-1.5 block text-[11px] text-white/50">
                         {formatStaffNotificationWhen(item.createdAt, "full")}
                       </span>
                     </span>

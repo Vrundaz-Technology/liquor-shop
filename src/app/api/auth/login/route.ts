@@ -15,6 +15,14 @@ export async function POST(request: Request) {
     if (!parsed.success) {
       return NextResponse.json({ error: "Email and password are required." }, { status: 400 });
     }
+    // Per-account limit too, so rotating IPs cannot brute-force one password.
+    const perAccount = rateLimit(`login:acct:${parsed.data.email.trim().toLowerCase()}`, {
+      limit: 10,
+      windowMs: 15 * 60_000,
+    });
+    if (!perAccount.ok) {
+      return tooManyRequests(perAccount.retryAfter, "Too many sign-in attempts. Try again shortly.");
+    }
     const result = await authenticateUser(parsed.data.email, parsed.data.password);
     if (!result.user) {
       return NextResponse.json({ error: result.error }, { status: result.status });
